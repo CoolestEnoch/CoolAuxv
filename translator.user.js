@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    http://tampermonkey.net/
-// @version      10.0
+// @version      v10.1
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    支持网页识屏了
+// @changelog    [v10.1 更新日志] 1.新增网页区域截图识屏与全屏预览功能，你可以按ESC键退出截图模式了。 2.上线实验性液态玻璃 UI 体系，支持高斯模糊与棱镜光感 3.全面适配移动端触摸框选截图，支持高清缩放 4.合并文本模型分类，增加 API Key 显隐切换 5.优化 429 报错拦截与详细 JSON 请求日志打印。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @grant        GM_addStyle
@@ -27,35 +27,32 @@
     // 全局配置与常量
     // ========================================================================
 
-    // 第一排：语言模型 (Language Models)
-    const CHAT_MODELS = [
-        { id: "glm-4-flash", tag: "免费" },
-        { id: "glm-4-flash-250414", tag: "免费" },
+    // 文本模型 (整合了原来的 语言模型 和 推理模型)
+    const TEXT_MODELS = [
+        { id: "glm-4-flash", class: "语言模型", tag: "免费" },
+        { id: "glm-4-flash-250414", class: "语言模型", tag: "免费" },
+        { id: "glm-4.5-flash", class: "推理模型", tag: "免费" },
+        { id: "glm-z1-flash", class: "推理模型", tag: "免费" },
+        { id: "glm-4.7", class: "推理模型", tag: "付费" },
+        { id: "deepseek-r1", class: "推理模型", tag: "付费" },
     ];
 
-    // 第二排：推理模型 (Reasoning Models)
-    const REASONING_MODELS = [
-        { id: "glm-4.5-flash", tag: "免费" },
-        { id: "glm-z1-flash", tag: "免费" },
-        { id: "glm-4.7", tag: "付费" },
-        { id: "deepseek-r1", tag: "付费" },
-    ];
-
-    // 第三排：视觉模型 (Vision Models)
+    // 视觉模型 (添加 class 分类)
     const VISION_MODELS = [
-        { id: "glm-4v-flash", tag: "免费" },
-        { id: "glm-4.1v-thinking-flash ", tag: "免费 - 推理模型" },
+        { id: "glm-4v-flash", class: "通用模型", tag: "免费" },
+        { id: "glm-4.6v-flash", class: "推理模型", tag: "免费" },
+        { id: "glm-4.1v-thinking-flash", class: "推理模型", tag: "免费" },
     ];
 
     const LOG_PRESETS = ["debug", "info", "warn", "error", "none"];
 
     const DEFAULT_API_KEY = "1145141919810哼哼啊啊啊啊啊";
     // 默认模型取语言模型数组的第一个
-    const DEFAULT_MODEL_NAME = CHAT_MODELS[0].id;
+    const DEFAULT_MODEL_NAME = TEXT_MODELS[0].id;
     const DEFAULT_LOG_LEVEL = "debug";
 
     const DEFAULT_VISION_MODEL = "glm-4v-flash";
-    const DEFAULT_PROMPT_VISION = "这张图里有什么？";
+    const DEFAULT_PROMPT_VISION = "请先详细描述这张图，然后再详细解读这张图。";
 
     const DEFAULT_WIN_WIDTH = "480px";
     const DEFAULT_WIN_HEIGHT = "480px";
@@ -67,6 +64,21 @@
 
     const DEFAULT_PROMPT_TRANSLATE = "你是一个翻译引擎。将用户输入直接翻译成中文。如果输入是中文则译为英文。不要输出任何多余的解释。";
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
+
+    const LATEST_CHANGELOG = `
+        <h3 style="margin:0 0 10px 0; color:#a516e8;">🎉 更新日志 ${GM_info.script.version}</h3>
+        <ul style="margin:0; padding-left:20px; color:#555; line-height:1.6; font-size:13px;">
+            <li><b>📸 智能识屏分析：</b>新增区域截图功能，支持 GLM-4V 视觉大模型与流式推理过程，支持识屏后自动拼接翻译/解读提示词。</li>
+            <li><b>🔍 截图预览：</b>增加“预览🔍”功能，支持全屏查看已截取的 Base64 图片，确保识屏范围准确。</li>
+            <li><b>🎨 液态玻璃 UI：</b>实验性支持“iOS 26”风格的高斯模糊、饱和度增强与棱镜折射边缘效果，可在设置中开启。</li>
+            <li><b>📱 全平台适配：</b>深度优化安卓/iOS 触摸框选体验，截图时自动锁死页面滚动，支持高清屏像素缩放。</li>
+            <li><b>⚙️ 界面精简：</b>合并语言/推理模型分类为统一的“文本模型”；新增 API Key 显隐切换按钮以保护隐私。</li>
+            <li><b>🛠️ 性能与健壮性：</b>解决大图截图导致的 UI 假死问题；新增 Error 429 (调用频率限制) 的专门捕获与友好提示。</li>
+            <li><b>🐞 逻辑修复：</b>优化深色模式显示；点击浮窗“译”图标时将自动清空截图缓存，回归纯文本模式。现在你可以按ESC键退出截图模式了。</li>
+        </ul>
+        <div style="margin-top:10px; font-size:12px; color:#999;">(点击下方按钮关闭，下次更新前不再提示)</div>
+    `;
+
 
     // ========================================================================
     // 日志工具
@@ -508,6 +520,18 @@
         background: rgba(255, 255, 255, 0.5) !important;
     }
 
+    /* 识屏按钮 (蓝色系) */
+    .coolauxv-blur-enabled #coolauxv-btn-screenshot {
+        background: rgba(59, 130, 246, 0.75) !important; /* 蓝色半透明 */
+        backdrop-filter: blur(4px);
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+    }
+    .coolauxv-blur-enabled #coolauxv-btn-screenshot:hover {
+        background: rgba(59, 130, 246, 0.9) !important;
+    }
+
+
     /* ============================
        截图功能样式
        ============================ */
@@ -543,6 +567,70 @@
     }
     #coolauxv-shot-ok { background: #a516e8; }
     #coolauxv-shot-cancel { background: #666; }
+
+    /* ============================
+        图片预览层样式
+    ============================ */
+    #coolauxv-img-preview-overlay {
+        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+        background: rgba(0, 0, 0, 0.85); 
+        z-index: 2147483650; /* 比截图层更高 */
+        display: none; 
+        justify-content: center; align-items: center;
+        cursor: zoom-out;
+        backdrop-filter: blur(5px);
+    }
+    #coolauxv-img-preview-overlay img {
+        max-width: 95%; max-height: 95%; 
+        box-shadow: 0 0 30px rgba(0,0,0,0.5); 
+        border-radius: 4px;
+        object-fit: contain;
+    }
+    
+    /* 预览按钮 (透明背景，带边框) */
+    .coolauxv-blur-enabled #coolauxv-btn-preview {
+        background: rgba(255, 255, 255, 0.2) !important;
+        border: 1px solid rgba(255, 255, 255, 0.4) !important;
+        color: #333;
+    }
+    .coolauxv-blur-enabled #coolauxv-btn-preview:hover {
+        background: rgba(255, 255, 255, 0.4) !important;
+    }
+
+
+    /* ============================
+        AI思考中的动画
+    ============================ */
+    @keyframes coolauxv-pulse-anim {
+        0% { opacity: 0.5; }
+        50% { opacity: 1; }
+        100% { opacity: 0.5; }
+    }
+    .coolauxv-pulse {
+        animation: coolauxv-pulse-anim 1.5s infinite ease-in-out;
+    }
+
+    /* 更新日志弹窗样式 */
+    #coolauxv-changelog-overlay {
+        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+        background: rgba(0, 0, 0, 0.5); z-index: 2147483660; /* 确保比主界面高 */
+        display: flex; justify-content: center; align-items: center;
+        backdrop-filter: blur(4px);
+        opacity: 0; transition: opacity 0.3s;
+    }
+    #coolauxv-changelog-box {
+        background: white; width: 400px; max-width: 90%;
+        padding: 20px; border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        transform: scale(0.9); transition: transform 0.3s;
+        text-align: left !important;
+    }
+    #coolauxv-btn-know {
+        background: #a516e8; color: white; border: none;
+        padding: 8px 20px; border-radius: 6px; cursor: pointer;
+        font-weight: bold; margin-top: 15px; width: 100%;
+    }
+    #coolauxv-btn-know:hover { background: #8e12c9; }
 
     `;
 
@@ -583,6 +671,11 @@
                 if (isQuitted) return;
                 e.preventDefault(); e.stopPropagation();
 
+                // 每次点击浮窗图标（重新激活），清空截图和预览状态，回归文本模式
+                capturedImageBase64 = "";
+                const btnPreview = popup.querySelector("#coolauxv-btn-preview");
+                if (btnPreview) btnPreview.style.display = "none";
+
                 cursorBtn.style.display = "none";
                 isIconDismissed = true;
                 lastSelectionText = currentSelection;
@@ -596,6 +689,8 @@
                     floatBall.style.display = "none";
                     resetPopupState();
                     popup.style.display = "flex";
+
+                    checkUpdateAndShowChangelog();
                 }
 
                 const mainView = popup.querySelector("#coolauxv-main-view");
@@ -603,6 +698,7 @@
                 if (mainView) mainView.style.display = "flex";
                 if (settingsView) settingsView.style.display = "none";
 
+                // 点击图标默认执行文本翻译
                 doAction("translate");
             };
             cursorBtn.addEventListener("touchend", onIconClick);
@@ -618,12 +714,17 @@
                 zIndex: "2147483647", cursor: "pointer", boxShadow: "0 4px 15px rgba(0,0,0,0.4)",
                 fontWeight: "bold", fontSize: "18px"
             });
-            floatBall.onclick = () => { if (isQuitted) return; floatBall.style.display = "none"; resetPopupState(); popup.style.display = "flex"; };
+            floatBall.onclick = () => {
+                if (isQuitted) return;
+                floatBall.style.display = "none";
+                resetPopupState();
+                popup.style.display = "flex";
+                checkUpdateAndShowChangelog();
+            };
             document.body.appendChild(floatBall);
 
             popup = document.createElement("div");
             popup.id = "coolauxv-translate-popup";
-            // 初始化背景模糊状态
             if (GM_getValue("coolauxv_enable_blur", DEFAULT_ENABLE_BLUR)) {
                 popup.classList.add("coolauxv-blur-enabled");
             }
@@ -635,20 +736,31 @@
             });
             resetPopupState();
 
-            // 生成模型按钮 HTML
-            const generateModelBtns = (models, fieldName) => {
-                return models.map(m => `
-                    <div class="coolauxv-model-btn" data-field="${fieldName}" data-val="${m.id}">
-                        <span class="coolauxv-model-name">${m.id}</span>
-                        <span class="coolauxv-model-tag">${m.tag}</span>
+            // 生成模型按钮 HTML (带字段区分)
+            const generateGroupedBtns = (models, fieldName) => {
+                // 1. 按 class 分组
+                const groups = {};
+                models.forEach(m => {
+                    if (!groups[m.class]) groups[m.class] = [];
+                    groups[m.class].push(m);
+                });
+
+                // 2. 生成 HTML：每一个 class 一个灰色小标题，下面是一行按钮
+                return Object.keys(groups).map(className => `
+                    <div class="coolauxv-sub-label" style="font-size: 12px; color: #999; margin: 8px 0 4px 0;">${className}</div>
+                    <div class="coolauxv-tag-container">
+                        ${groups[className].map(m => `
+                            <div class="coolauxv-model-btn" data-field="${fieldName}" data-val="${m.id}">
+                                <span class="coolauxv-model-name">${m.id}</span>
+                                <span class="coolauxv-model-tag">${m.tag}</span>
+                            </div>
+                        `).join("")}
                     </div>
                 `).join("");
             };
 
-            const chatBtnsHTML = generateModelBtns(CHAT_MODELS, "coolauxv_model_name");
-            const reasoningBtnsHTML = generateModelBtns(REASONING_MODELS, "coolauxv_model_name");
-            const visionBtnsHTML = generateModelBtns(VISION_MODELS, "coolauxv_model_vision");
-
+            const textModelsHTML = generateGroupedBtns(TEXT_MODELS, "coolauxv_model_name");
+            const visionModelsHTML = generateGroupedBtns(VISION_MODELS, "coolauxv_model_vision");
 
             const currentLogLevel = GM_getValue("coolauxv_log_level", DEFAULT_LOG_LEVEL);
             const logRadioHTML = LOG_PRESETS.map(level => {
@@ -689,7 +801,6 @@
                   <div style="position:relative; width:100%; margin-bottom:10px; flex-shrink:0;">
                       <textarea id="coolauxv-input" placeholder="输入内容..." style="width:100%; height:70px; border:1px solid #ddd; border-radius:8px; padding:8px 24px 8px 8px; box-sizing:border-box; font-size:14px; resize:none; font-family:inherit;"></textarea>
                       <div style="position:absolute; right:2px; top:0; bottom:0; display:flex; flex-direction:column; justify-content:center; gap:4px;">
-                          <span id="coolauxv-btn-screenshot" class="coolauxv-input-ctrl-btn" title="截图并分析">📷</span>
                           <span id="coolauxv-btn-input-clear" class="coolauxv-input-ctrl-btn" title="清空">✕</span>
                           <span id="coolauxv-btn-input-paste" class="coolauxv-input-ctrl-btn" title="粘贴">📋</span>
                       </div>
@@ -698,6 +809,8 @@
                   <div style="display:flex; gap:10px; margin-bottom:10px; flex-shrink:0;">
                      <button id="coolauxv-btn-trans" style="flex:1; background:#f3f4f6; border:1px solid #ddd; padding:10px; border-radius:6px; font-weight:bold; cursor: pointer;">翻译</button>
                      <button id="coolauxv-btn-explain" style="flex:1; background:#a516e8; color:white; border:none; padding:10px; border-radius:6px; font-weight:bold; cursor: pointer;">解读</button>
+                     <button id="coolauxv-btn-screenshot" style="flex:0.4; background:#3b82f6; color:white; border:none; padding:10px; border-radius:6px; font-weight:bold; cursor: pointer; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
+                     <button id="coolauxv-btn-preview" style="display:none; flex:0.3; background:#fff; border:1px solid #ddd; padding:10px; border-radius:6px; cursor: pointer; font-size:14px;" title="预览截图">🔍</button>
                   </div>
                   <div id="coolauxv-content-container">
                       <div id="coolauxv-reasoning-wrapper" class="coolauxv-box-wrapper">
@@ -728,35 +841,31 @@
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">
                         API KEY
-                        <!-- 显隐按钮：margin-left: auto 会把它和后面的按钮一起推到最右边 -->
                         <span id="coolauxv-btn-toggle-key" class="coolauxv-link-btn" style="margin-left:auto; cursor:pointer; user-select:none;">👁️ 显示</span>
                         <a href="https://bigmodel.cn/usercenter/proj-mgmt/apikeys" target="_blank" class="coolauxv-link-btn" title="打开智谱平台获取Key">🔑 获取KEY</a>
                     </label>
-                    <!-- 默认 type 改为 password 以保护隐私 -->
                     <input type="password" id="coolauxv-cfg-key" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="${DEFAULT_API_KEY}">
                 </div>
 
                 <div class="coolauxv-setting-group">
+                    <!-- 黑色大标题：文本模型 -->
                     <label class="coolauxv-setting-label">
-                        模型类型 (Model)
-                        <!-- 价格跳转按钮 -->
-                        <a href="https://bigmodel.cn/pricing" target="_blank" class="coolauxv-link-btn" title="当前界面收录情况有时效性，点击查看最新定价">💵 查看最新定价</a>
+                        文本模型 (Text Models)
+                        <a href="https://bigmodel.cn/pricing" target="_blank" class="coolauxv-link-btn" title="查看定价">💵 定价</a>
                     </label>
                     <input type="text" id="coolauxv-cfg-model" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${DEFAULT_MODEL_NAME}">
 
-                    <!-- 双排显示 -->
-                    <div class="coolauxv-sub-label">语言模型 (快)</div>
-                    <div class="coolauxv-tag-container">${chatBtnsHTML}</div>
-
-                    <div class="coolauxv-sub-label">推理模型 (准)</div>
-                    <div class="coolauxv-tag-container">${reasoningBtnsHTML}</div>
+                    <!-- 插入自动生成的文本模型分组 (包含灰色小标题和按钮) -->
+                    ${textModelsHTML}
                 </div>
-
-                <!-- 视觉模型设置组 -->
+                
                 <div class="coolauxv-setting-group">
-                    <label class="coolauxv-setting-label">视觉模型 (Vision Model)</label>
+                    <!-- 黑色大标题：视觉模型 -->
+                    <label class="coolauxv-setting-label">视觉模型 (Vision Models)</label>
                     <input type="text" id="coolauxv-cfg-model-vision" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${DEFAULT_VISION_MODEL}">
-                    <div class="coolauxv-tag-container">${visionBtnsHTML}</div>
+                    
+                    <!-- 插入自动生成的视觉模型分组 -->
+                    ${visionModelsHTML}
                 </div>
 
                 <div class="coolauxv-setting-group">
@@ -775,7 +884,6 @@
                     </div>
                 </div>
 
-
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">翻译提示词</label>
                     <textarea id="coolauxv-cfg-prompt-trans" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认提示词..."></textarea>
@@ -786,7 +894,6 @@
                     <textarea id="coolauxv-cfg-prompt-explain" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认提示词..."></textarea>
                 </div>
 
-                <!-- 识图提示词设置组 -->
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">识图提示词</label>
                     <textarea id="coolauxv-cfg-prompt-vision" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认: ${DEFAULT_PROMPT_VISION}"></textarea>
@@ -806,7 +913,7 @@
             `;
             document.body.appendChild(popup);
 
-            // 初始化截图层
+            // 截图层
             const screenshotLayer = document.createElement("div");
             screenshotLayer.innerHTML = `
                 <div id="coolauxv-screenshot-overlay">
@@ -819,6 +926,13 @@
             `;
             document.body.appendChild(screenshotLayer);
 
+            // 预览层
+            const previewLayer = document.createElement("div");
+            previewLayer.id = "coolauxv-img-preview-overlay";
+            previewLayer.innerHTML = `<img id="coolauxv-img-preview-el" src="">`;
+            previewLayer.onclick = () => { previewLayer.style.display = "none"; };
+            document.body.appendChild(previewLayer);
+
             setTimeout(() => {
                 bindEvents();
                 bindInputCtrlEvents();
@@ -827,6 +941,19 @@
                 initDragAndResize();
                 initSplitter();
                 initScreenshotEvents();
+
+                // 绑定预览按钮事件
+                const btnPreview = popup.querySelector("#coolauxv-btn-preview");
+                const previewOverlay = document.querySelector("#coolauxv-img-preview-overlay");
+                const previewImg = document.querySelector("#coolauxv-img-preview-el");
+                if (btnPreview && previewOverlay && previewImg) {
+                    btnPreview.onclick = () => {
+                        if (capturedImageBase64) {
+                            previewImg.src = capturedImageBase64;
+                            previewOverlay.style.display = "flex";
+                        }
+                    };
+                }
             }, 0);
 
         } catch (e) {
@@ -843,7 +970,7 @@
 
         if (!mainView || !settingsView) return;
 
-        // --- 切换逻辑核心修改 ---
+        // --- 切换逻辑核心 ---
         if (settingsBtn) {
             settingsBtn.onclick = () => {
                 // 如果设置界面正在显示，则切换回主界面
@@ -863,7 +990,7 @@
         // --- 下面是通用的配置加载与保存逻辑（保持不变）---
 
         const clearableInputs = [
-            "coolauxv-cfg-key", "coolauxv-cfg-model", 
+            "coolauxv-cfg-key", "coolauxv-cfg-model",
             "coolauxv-cfg-model-vision",
             "coolauxv-cfg-width", "coolauxv-cfg-height",
             "coolauxv-cfg-prompt-trans", "coolauxv-cfg-prompt-explain",
@@ -964,6 +1091,7 @@
                 GM_deleteValue("coolauxv_enable_blur");
                 GM_deleteValue("coolauxv_model_vision");
                 GM_deleteValue("coolauxv_prompt_vision");
+                GM_deleteValue("coolauxv_installed_version"); // 重置更新状态
                 loadConfig();
                 // 重置 Radio
                 const defaultRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="debug"]`);
@@ -1104,7 +1232,7 @@
             updateScroll(reasoningDiv, streamReasoningBuffer, isShowRaw);
         }
 
-        // 3. 渲染结果内容 (核心修改点)
+        // 3. 渲染结果内容
         // 只有当有实际文本内容时，才更新结果框
         if (streamTextBuffer) {
             resultDiv.className = isShowRaw ? "coolauxv-scroll-box coolauxv-raw-text" : "coolauxv-scroll-box coolauxv-markdown";
@@ -1413,29 +1541,61 @@
     }
 
 
+    // 版本检测与日志弹窗逻辑
+    function checkUpdateAndShowChangelog() {
+        const currentVer = GM_info.script.version;
+        const lastVer = GM_getValue("coolauxv_installed_version", "0.0");
+
+        // 只有当版本号变更，且弹窗没显示过的时候才执行
+        if (currentVer !== lastVer && !document.getElementById("coolauxv-changelog-overlay")) {
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-changelog-overlay";
+            overlay.innerHTML = `
+                <div id="coolauxv-changelog-box">
+                    ${LATEST_CHANGELOG}
+                    <button id="coolauxv-btn-know">我知道了</button>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            setTimeout(() => {
+                overlay.style.opacity = "1";
+                overlay.querySelector("#coolauxv-changelog-box").style.transform = "scale(1)";
+            }, 10);
+
+            document.getElementById("coolauxv-btn-know").onclick = () => {
+                GM_setValue("coolauxv_installed_version", currentVer);
+                overlay.style.opacity = "0";
+                setTimeout(() => document.body.removeChild(overlay), 300);
+            };
+        }
+    }
+
+
     // ========================================================================
     // 网络引擎 (Stream)
     // ========================================================================
-
     async function doAction(mode) {
         const input = popup.querySelector("#coolauxv-input");
         if (!input) return;
-        const text = input.value.trim();
-        // 获取结果显示框
-        const resultDiv = popup.querySelector("#coolauxv-result");
 
+        // 检查是否有截图缓存
+        if (capturedImageBase64) {
+            doImageAnalysis(mode);
+            return;
+        }
+
+        const text = input.value.trim();
+        const resultDiv = popup.querySelector("#coolauxv-result");
         const config = getActiveConfig();
 
-        // 检测API合法性并拦截
         if (config.apiKey === DEFAULT_API_KEY || !config.apiKey) {
             showNoKeyError(popup.querySelector("#coolauxv-result"));
             return;
         }
 
-        // 检测空输入并拦截
         if (!text) {
             if (resultDiv) {
-                // 显示橙色警告文本
                 resultDiv.innerHTML = "<span style='color:#e65100; font-weight:bold;'>⚠️ 请不要操作空文本...</span>";
             }
             return;
@@ -1454,10 +1614,20 @@
 
         const url = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
         const systemPrompt = mode === "explain" ? config.promptExplain : config.promptTrans;
+
         const payload = {
             model: config.modelName,
             stream: true,
             messages: [{ role: "system", content: systemPrompt }, { role: "user", content: text }]
+        };
+
+        // 序列化并打印请求体 (JSON)
+        const requestBody = JSON.stringify(payload);
+        Logger.debug("🚀 [API Request Data]", requestBody);
+
+        const headers = {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${config.apiKey}`
         };
 
         // 策略 A: Fetch
@@ -1465,11 +1635,17 @@
             Logger.info(`Fetch Model: ${config.modelName}`);
             abortController = new AbortController();
             const response = await fetch(url, {
-                method: "POST", headers: { "Content-Type": "application/json", "Authorization": `Bearer ${config.apiKey}` },
-                body: JSON.stringify(payload), signal: abortController.signal
+                method: "POST",
+                headers: headers,
+                body: requestBody, // 使用已序列化的字符串
+                signal: abortController.signal
             });
 
             if (!response.ok) {
+                if (response.status === 429) {
+                    resultDiv.innerHTML = get429ErrorHTML();
+                    return;
+                }
                 if (response.status === 401 || response.status === 403) throw new Error("AUTH_INVALID");
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -1507,8 +1683,8 @@
 
         gmRequest = GM_xmlhttpRequest({
             method: "POST", url: url,
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${config.apiKey}` },
-            data: JSON.stringify(payload),
+            headers: headers,
+            data: requestBody, // 使用已序列化的字符串
             responseType: 'stream',
             timeout: 600000,
 
@@ -1544,6 +1720,13 @@
             onload: (res) => {
                 if (!isStreamModeActive) {
                     stopRenderLoop();
+
+                    if (res.status === 429) {
+                        const resultDiv = popup.querySelector("#coolauxv-result");
+                        if (resultDiv) resultDiv.innerHTML = get429ErrorHTML();
+                        return;
+                    }
+
                     const fullText = res.responseText || (typeof res.response === 'string' ? res.response : "");
 
                     if (res.status === 401 || res.status === 403) {
@@ -1586,6 +1769,7 @@
             }
         });
     }
+
 
     // 控制推理框的 展开(true) / 收起(false)
     function setReasoningVisibility(visible) {
@@ -1695,15 +1879,15 @@
         const onStart = (e) => {
             // 如果是鼠标右键，忽略
             if (e.type === 'mousedown' && e.button !== 0) return;
-            
+
             // 必须阻止默认行为，防止移动端触发滚动或原生缩放
-            if(e.cancelable) e.preventDefault(); 
+            if (e.cancelable) e.preventDefault();
 
             isSelecting = true;
             const pos = getClientPos(e);
             startX = pos.x;
             startY = pos.y;
-            
+
             selectionBox.style.left = startX + "px";
             selectionBox.style.top = startY + "px";
             selectionBox.style.width = "0px";
@@ -1715,7 +1899,7 @@
         const onMove = (e) => {
             if (!isSelecting) return;
             // 核心：移动端画框时严禁页面滚动
-            if(e.cancelable) e.preventDefault();
+            if (e.cancelable) e.preventDefault();
 
             const pos = getClientPos(e);
             const currentX = pos.x;
@@ -1735,7 +1919,7 @@
         const onEnd = (e) => {
             if (!isSelecting) return;
             isSelecting = false;
-            
+
             const rect = selectionBox.getBoundingClientRect();
             // 防止误触：如果选区太小（比如只是点击了一下），则隐藏选区
             if (rect.width < 10 || rect.height < 10) {
@@ -1747,7 +1931,7 @@
             // 计算工具栏位置，适配屏幕边缘
             let toolTop = rect.bottom + 10;
             let toolLeft = rect.right - 100;
-            
+
             // 如果底部空间不够，翻转到选区上方
             if (toolTop > window.innerHeight - 50) toolTop = rect.top - 45;
             // 如果右边空间不够，靠左一点
@@ -1770,55 +1954,74 @@
 
 
         // 3. 确定按钮逻辑 (保持不变，确保 allowTaint: false)
-        btnOk.onclick = async (e) => {
-            e.stopPropagation(); //再一次防止冒泡
+        // 3. 确定按钮逻辑
+        btnOk.onclick = (e) => {
+            e.stopPropagation();
             const originalText = btnOk.innerText;
+
+            // 1. 先更新 UI，告诉用户正在处理
             btnOk.innerText = "处理中...";
-            
-            const rect = selectionBox.getBoundingClientRect();
-            const scrollX = window.pageXOffset;
-            const scrollY = window.pageYOffset;
+            btnOk.style.opacity = "0.7";
+            btnOk.style.cursor = "wait";
 
-            try {
-                const canvas = await html2canvas(document.body, {
-                    x: rect.left + scrollX,
-                    y: rect.top + scrollY,
-                    width: rect.width,
-                    height: rect.height,
-                    useCORS: true,
-                    allowTaint: false, // 必须 false
-                    logging: false,
-                    scale: window.devicePixelRatio, // 适配高清屏
-                    ignoreElements: (element) => {
-                        return element.id === "coolauxv-screenshot-overlay" || 
-                               element.id === "coolauxv-translate-popup" || 
-                               element.id === "coolauxv-translate-icon";
+            // 2. 使用 setTimeout 将繁重的截图任务推迟到下一次事件循环
+            // 这样浏览器就有机会先把按钮文字渲染成 "处理中..."，解决卡顿感
+            setTimeout(async () => {
+                const rect = selectionBox.getBoundingClientRect();
+                const scrollTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop;
+                const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft || document.body.scrollLeft;
+
+                try {
+                    const canvas = await html2canvas(document.documentElement, {
+                        x: rect.left + scrollLeft,
+                        y: rect.top + scrollTop,
+                        width: rect.width,
+                        height: rect.height,
+                        scrollX: 0,
+                        scrollY: 0,
+                        useCORS: true,
+                        allowTaint: false,
+                        logging: false,
+                        scale: window.devicePixelRatio,
+                        ignoreElements: (element) => {
+                            return element.id === "coolauxv-screenshot-overlay" ||
+                                element.id === "coolauxv-translate-popup" ||
+                                element.id === "coolauxv-translate-icon" ||
+                                element.id === "coolauxv-img-preview-overlay";
+                        }
+                    });
+
+                    capturedImageBase64 = canvas.toDataURL("image/jpeg", 0.8);
+
+                    const btnPreview = popup.querySelector("#coolauxv-btn-preview");
+                    if (btnPreview) btnPreview.style.display = "inline-block";
+
+                    resetScreenshotUI();
+                    popup.style.display = "flex";
+
+                    // 自动填充并调用
+                    const input = popup.querySelector("#coolauxv-input");
+                    const config = getActiveConfig();
+                    if (!input.value.trim()) {
+                        input.value = config.promptVision;
                     }
-                });
 
-                capturedImageBase64 = canvas.toDataURL("image/jpeg", 0.8);
-                
-                resetScreenshotUI();
-                popup.style.display = "flex";
-                btnOk.innerText = originalText;
+                    doImageAnalysis('vision');
 
-                // 自动填充提示词
-                const input = popup.querySelector("#coolauxv-input");
-                const config = getActiveConfig();
-                if (!input.value.trim()) {
-                    input.value = config.promptVision;
+                } catch (err) {
+                    console.error("截图失败:", err);
+                    alert("截图失败: " + err.message);
+                    resetScreenshotUI();
+                    popup.style.display = "flex";
+                } finally {
+                    // 无论成功失败，恢复按钮状态
+                    btnOk.innerText = originalText;
+                    btnOk.style.opacity = "1";
+                    btnOk.style.cursor = "pointer";
                 }
-                
-                doImageAnalysis();
-
-            } catch (err) {
-                console.error("截图失败:", err);
-                alert("截图失败: " + err.message);
-                resetScreenshotUI();
-                popup.style.display = "flex";
-                btnOk.innerText = originalText;
-            }
+            }, 50); // 延时 50ms 足够让浏览器重绘 UI
         };
+
 
         // 4. 取消按钮
         btnCancel.onclick = (e) => {
@@ -1835,86 +2038,119 @@
             document.body.style.cursor = "";
             isSelecting = false;
         }
+        
+        // 5. 按 ESC 键退出截图
+        const onEscPress = (e) => {
+            if (e.key === "Escape" && overlay.style.display === "block") {
+                // 阻止默认行为（防止有些网页 ESC 会触发其他弹窗）
+                e.preventDefault();
+                e.stopPropagation();
+                // 复用取消按钮的逻辑
+                btnCancel.click();
+            }
+        };
+        // 绑定到 document 上
+        document.addEventListener("keydown", onEscPress);
     }
 
 
     // 执行视觉分析 API 请求
-    async function doImageAnalysis() {
+    async function doImageAnalysis(mode = 'vision') {
         if (!capturedImageBase64) {
             alert("未获取到图片数据");
             return;
         }
 
+        const config = getActiveConfig();
+        const input = popup.querySelector("#coolauxv-input");
         const resultDiv = popup.querySelector("#coolauxv-result");
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
-        const config = getActiveConfig();
+
+        let textPrompt = "";
+        const userText = input.value.trim();
+
+        // --- 核心逻辑：Prompt 拼接 ---
+        if (userText) {
+            // 如果用户输入不为空，无论什么模式，都只用用户输入
+            textPrompt = userText;
+            Logger.info("Vision Action: User Input Only");
+        } else {
+            // 用户输入为空，根据模式拼接提示词
+            if (mode === 'translate') {
+                // 翻译模式：识屏提示词 拼到 翻译提示词 后面 -> [Trans] + [Vision]
+                textPrompt = `${config.promptTrans}\n\n${config.promptVision}`;
+                Logger.info("Vision Action: Translate (Trans + Vision)");
+            } else if (mode === 'explain') {
+                // 解读模式：解读提示词 拼到 识屏提示词 后面 -> [Vision] + [Explain]
+                textPrompt = `${config.promptVision}\n\n${config.promptExplain}`;
+                Logger.info("Vision Action: Explain (Vision + Explain)");
+            } else {
+                // 识屏模式：默认识屏提示词
+                textPrompt = config.promptVision;
+                Logger.info("Vision Action: General Analysis");
+            }
+        }
 
         if (!config.apiKey || config.apiKey === DEFAULT_API_KEY) {
             showNoKeyError(resultDiv);
             return;
         }
 
-        // 准备界面状态
         streamTextBuffer = ""; streamReasoningBuffer = ""; lastRenderedText = ""; lastRenderedReasoning = ""; hasReasoning = false;
-        resultDiv.innerHTML = "<span style='color:#888'>🖼️ 正在分析图片...</span>";
-        reasoningDiv.innerHTML = ""; reasoningWrapper.style.display = "none";
-        
-        const url = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
-        
-        // 【修正】使用完整的 Base64 Data URI，不要去掉前缀，因为 API 通常需要知道图片格式
-        // 如果你的 API 确实只需要纯 Base64，请取消下面注释并使用 base64Pure
-        // const base64Pure = capturedImageBase64.split(",")[1];
 
-        // 使用配置的提示词，如果输入框为空则用配置的默认值，如果配置也为空则用常量
-        const input = popup.querySelector("#coolauxv-input");
-        let textPrompt = input.value.trim();
-        if (!textPrompt) {
-            textPrompt = config.promptVision; // 优先使用设置里的提示词
-            input.value = textPrompt; // 回填到输入框让用户看到
-        }
+        // 设置 Loading
+        const loadingHTML = "<span style='color:#888; display:flex; align-items:center; gap:6px;'>⏳ <span class='coolauxv-pulse'>AI 思考中...</span></span>";
+        resultDiv.innerHTML = loadingHTML;
+        reasoningDiv.innerHTML = loadingHTML;
+
+        // 强制显示推理框
+        reasoningWrapper.style.display = "flex";
+        popup.querySelector("#coolauxv-reasoning-toggle-container").style.display = "flex";
+        popup.querySelector("#coolauxv-separator").style.display = "flex";
+
+        const url = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
 
         const payload = {
-            model: config.modelVision, // 确保模型名称正确，智谱视觉模型通常是 glm-4v 或 glm-4v-flash
+            model: config.modelVision,
             messages: [
                 {
                     role: "user",
                     content: [
-                        {
-                            type: "image_url",
-                            image_url: {
-                                // 推荐标准格式：data:image/jpeg;base64,xxxxxx
-                                url: capturedImageBase64 
-                            }
-                        },
-                        {
-                            type: "text",
-                            text: textPrompt
-                        }
+                        { type: "image_url", image_url: { url: capturedImageBase64 } },
+                        { type: "text", text: textPrompt }
                     ]
                 }
             ],
-            // 视觉模型目前可能不支持 thinking 字段，如果报错请注释掉 thinking
-            // thinking: { type: "enabled" }, 
             stream: true
+        };
+
+        // 打印 JSON 请求体
+        const requestBody = JSON.stringify(payload);
+        Logger.debug("📸 [Vision API Data]", requestBody);
+
+        const headers = {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${config.apiKey}`
         };
 
         if (abortController) abortController.abort();
         if (gmRequest && gmRequest.abort) gmRequest.abort();
 
-        Logger.info("Starting Vision API Request...");
+        Logger.info(`Starting Vision API Request (${mode})...`);
 
         gmRequest = GM_xmlhttpRequest({
             method: "POST",
             url: url,
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${config.apiKey}` },
-            data: JSON.stringify(payload),
+            headers: headers,
+            data: requestBody,
             responseType: 'stream',
-            timeout: 120000, 
+            timeout: 120000,
 
             onloadstart: (res) => {
                 if (res.response && res.response.getReader) {
                     resultDiv.innerHTML = "";
+                    reasoningDiv.innerHTML = "";
                     startRenderLoop();
                     const reader = res.response.getReader();
                     const decoder = new TextDecoder("utf-8");
@@ -1940,20 +2176,26 @@
                     })();
                 }
             },
-            
             onload: (res) => {
-                 if (res.status !== 200) {
-                     stopRenderLoop();
-                     Logger.error("API Error", res.responseText);
-                     resultDiv.innerHTML = `<span style='color:red'>API Error ${res.status}: ${res.responseText}</span>`;
-                 }
+                if (res.status === 429) {
+                    stopRenderLoop();
+                    resultDiv.innerHTML = get429ErrorHTML();
+                    reasoningWrapper.style.display = "none";
+                    return;
+                }
+
+                if (res.status !== 200) {
+                    stopRenderLoop();
+                    Logger.error("API Error", res.responseText);
+                    resultDiv.innerHTML = `<span style='color:red'>API Error ${res.status}: ${res.responseText}</span>`;
+                }
             },
-            
-            onerror: (e) => { stopRenderLoop(); resultDiv.innerHTML = "<span style='color:red'>网络连接失败</span>"; }
+            onerror: (e) => {
+                stopRenderLoop();
+                resultDiv.innerHTML = "<span style='color:red'>网络连接失败</span>";
+            }
         });
     }
-
-
 
     function showNoKeyError(container) {
         if (container) container.innerHTML = `
@@ -1977,6 +2219,20 @@
             2. 复制时多复制了空格。<br>
             3. 账户余额不足。<br><br>
             请检查设置或重新 <a href="https://bigmodel.cn/usercenter/proj-mgmt/apikeys" target="_blank" style="color:#3b82f6;">获取 KEY</a>。
+            </div>
+        `;
+    }
+
+    function get429ErrorHTML() {
+        return `
+            <div style="border: 1px solid #ffcc00; background-color: #fffbe6; padding: 10px; border-radius: 6px; margin-top: 5px;">
+                <div style="display:flex; align-items:center; color: #d48806; font-weight: bold; margin-bottom: 5px;">
+                    <span style="font-size:18px; margin-right:6px;">⚠️</span> 调用速度过快 (Error 429)
+                </div>
+                <div style="font-size: 13px; color: #666; line-height: 1.5;">
+                    API 请求频率超过限制。请稍作休息，或者检查您的并发请求数量。<br>
+                    <span style="font-size:12px; color:#999;">(Suggestions: Reduce request frequency)</span>
+                </div>
             </div>
         `;
     }
