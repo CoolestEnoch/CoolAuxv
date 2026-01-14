@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    http://tampermonkey.net/
-// @version      9.7
+// @version      9.8
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v9.7 更新日志] 1.修复宿主CSS污染导致的居中和复选框错乱问题 2.优化推理模型思考状态，未输出结果前始终显示"思考中" 3.日志设置改为直观的单选按钮 4.增加空输入拦截与警告。4.优化日志工具，统一tag管理。5.优化推理框自动收起逻辑，正文开始时自动收起推理框。6.优化推理框大小调整逻辑。
+// @changelog    1.尝试适配高斯模糊背景效果
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @grant        GM_addStyle
@@ -52,6 +52,8 @@
 
     const DEFAULT_SHOW_RAW = false;
     const DEFAULT_SHOW_REASONING = true;
+    const DEFAULT_ENABLE_BLUR = false; // 默认关闭模糊
+
 
     const DEFAULT_PROMPT_TRANSLATE = "你是一个翻译引擎。将用户输入直接翻译成中文。如果输入是中文则译为英文。不要输出任何多余的解释。";
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
@@ -73,7 +75,7 @@
             const targetVal = LEVELS[targetLevel];
             return targetVal >= currentVal;
         },
-        
+
         // 支持自定义 Tag，如果 tag 为空则使用默认值
         _print: (level, tag, args) => {
             if (Logger.shouldLog(level)) {
@@ -88,8 +90,8 @@
         // 保持原有 API 兼容性：不传 Tag，内部默认使用[CoolAuxv]
         // 这样现有的 Logger.info("msg") 调用完全不受影响
         debug: (...args) => Logger._print('debug', null, args),
-        info:  (...args) => Logger._print('info',  null, args),
-        warn:  (...args) => Logger._print('warn',  null, args),
+        info: (...args) => Logger._print('info', null, args),
+        warn: (...args) => Logger._print('warn', null, args),
         error: (...args) => Logger._print('error', null, args),
 
         // 新代码如果需要自定义 Tag，调用这个方法
@@ -209,7 +211,25 @@
         text-align: left !important;
     }
     .coolauxv-setting-group { margin-bottom: 15px; }
-    .coolauxv-setting-label { display: flex; align-items: center; font-weight: bold; margin-bottom: 5px; font-size: 13px; color: #333; flex-wrap: wrap; gap: 8px !important; }
+    /* 设置项标题 Label */
+    .coolauxv-setting-label { 
+        display: flex !important; /* 提升优先级，防止被网站改为 inline-block */
+        align-items: center; 
+        font-weight: bold; 
+        margin-bottom: 5px; 
+        font-size: 13px; 
+        color: #333; 
+        flex-wrap: wrap; 
+        gap: 8px; 
+        
+        /* 核心修复：强制占满整行，防止被网站 CSS 挤压导致文字换行 */
+        width: 100% !important;
+        max-width: none !important;
+        float: none !important;
+        text-align: left !important;
+        box-sizing: border-box !important;
+    }
+
 
     .coolauxv-link-btn {
         font-size: 11px; color: #3b82f6; text-decoration: none;
@@ -224,19 +244,34 @@
         display: flex;
         gap: 15px;
         flex-wrap: wrap;
+        align-items: center; /* 确保垂直居中 */
         margin-top: 5px;
         padding: 5px 0;
+        line-height: normal !important; /* 防止容器行高过大 */
     }
     .coolauxv-radio-label {
-        display: flex;
+        display: inline-flex !important; /* 核心修复：强制内联弹性布局，防止被宿主 block 撑满整行 */
         align-items: center;
         cursor: pointer;
         user-select: none;
         font-size: 13px;
         color: #555;
         transition: color 0.2s;
+        
+        /* 防止宿主 CSS 污染导致的间距变大或换行 */
+        margin: 0 !important;
+        padding: 0 !important;
+        width: auto !important;      /* 防止 width: 100% */
+        min-width: 0 !important;
+        max-width: none !important;
+        float: none !important;
+        border: none !important;
+        background: none !important;
+        text-indent: 0 !important;   /* 防止首行缩进 */
+        height: auto !important;
     }
     .coolauxv-radio-label:hover { color: #3b82f6; }
+
     
     /* 自定义 Radio 输入框样式 */
     .coolauxv-radio-label input[type="radio"] {
@@ -364,6 +399,107 @@
     .coolauxv-github-btn:hover { background-color: #f3f4f6; text-decoration: none; border-color: rgba(27,31,36,0.15); }
     .coolauxv-github-btn svg { fill: currentColor; margin-right: 6px; }
 
+    /* ============================
+    背景模糊 (Glass Effect)
+    ============================ */
+    
+    /* 1. 主窗口：液态光泽 + 智能文字阴影 */
+    .coolauxv-blur-enabled {
+        /* 背景：线性渐变模拟光线扫过的质感 */
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.15)) !important;
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        /* 边框：高亮白边模拟玻璃边缘 */
+        border: 1px solid rgba(255, 255, 255, 0.6) !important;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15) !important;
+        
+        /* 核心需求：给非文本框文字加上白色光晕/阴影，对抗杂乱背景 */
+        text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9), 0 0 1px rgba(255, 255, 255, 0.8) !important;
+    }
+
+    /* 必须重置输入框/代码块内的文字阴影，否则正文会变糊 */
+    .coolauxv-blur-enabled input, 
+    .coolauxv-blur-enabled textarea,
+    .coolauxv-blur-enabled .coolauxv-scroll-box,
+    .coolauxv-blur-enabled pre,
+    .coolauxv-blur-enabled code {
+        text-shadow: none !important;
+    }
+
+    /* 2. 标题栏 & 设置页容器：全透明，透出底层的玻璃感 */
+    .coolauxv-blur-enabled #coolauxv-header,
+    .coolauxv-blur-enabled #coolauxv-settings-view {
+        background: transparent !important;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.3) !important;
+    }
+
+    /* 3. 首页输入框：高对比度 + 气泡感 */
+    .coolauxv-blur-enabled #coolauxv-input {
+        background-color: rgba(255, 255, 255, 0.75) !important; /* 提升不透明度保可读性 */
+        border: 1px solid rgba(255, 255, 255, 0.6) !important;
+        box-shadow: inset 0 1px 4px rgba(0,0,0,0.05); /* 轻微内凹 */
+        color: #000 !important;
+    }
+    .coolauxv-blur-enabled #coolauxv-input:focus {
+        background-color: rgba(255, 255, 255, 0.95) !important; /* 聚焦时几乎不透明 */
+        box-shadow: 0 0 8px rgba(255,255,255,0.8) !important;
+    }
+
+    /* 4. 设置页面的输入框：液态玻璃风格 */
+    .coolauxv-blur-enabled .coolauxv-setting-input {
+        background-color: rgba(255, 255, 255, 0.6) !important; /* 半透明白 */
+        border: 1px solid rgba(255, 255, 255, 0.5) !important;
+        transition: all 0.2s;
+    }
+    .coolauxv-blur-enabled .coolauxv-setting-input:focus {
+        background-color: rgba(255, 255, 255, 0.9) !important;
+        border-color: #3b82f6 !important;
+    }
+
+    /* 5. 结果显示区：为了看清大段文字，背景设为“雾白” */
+    .coolauxv-blur-enabled #coolauxv-content-container {
+        background: transparent !important;
+        border: 1px solid rgba(255, 255, 255, 0.4) !important;
+    }
+    
+    .coolauxv-blur-enabled #coolauxv-reasoning-wrapper {
+        background-color: rgba(248, 249, 250, 0.7) !important; /* 思考区：70% 灰白 */
+        border-bottom: 1px dashed rgba(0, 0, 0, 0.1) !important;
+    }
+
+    .coolauxv-blur-enabled #coolauxv-result-wrapper {
+        background-color: rgba(255, 255, 255, 0.75) !important; /* 结果区：75% 纯白 */
+    }
+
+    /* 6. 按钮定制：半透明磨砂 */
+    /* 翻译按钮 (灰色系) */
+    .coolauxv-blur-enabled #coolauxv-btn-trans {
+        background: rgba(243, 244, 246, 0.65) !important;
+        border: 1px solid rgba(255, 255, 255, 0.6) !important;
+        backdrop-filter: blur(4px);
+    }
+    .coolauxv-blur-enabled #coolauxv-btn-trans:hover {
+        background: rgba(243, 244, 246, 0.9) !important;
+    }
+
+    /* 解读按钮 (紫色系) */
+    .coolauxv-blur-enabled #coolauxv-btn-explain {
+        background: rgba(165, 22, 232, 0.75) !important; /* 紫色半透明 */
+        backdrop-filter: blur(4px);
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        box-shadow: 0 4px 12px rgba(165, 22, 232, 0.25);
+    }
+    .coolauxv-blur-enabled #coolauxv-btn-explain:hover {
+        background: rgba(165, 22, 232, 0.9) !important;
+    }
+
+    /* 7. 分隔条 */
+    .coolauxv-blur-enabled #coolauxv-separator {
+        background: rgba(255, 255, 255, 0.5) !important;
+    }
+
+
+
     `;
 
     GM_addStyle(styles);
@@ -443,6 +579,10 @@
 
             popup = document.createElement("div");
             popup.id = "coolauxv-translate-popup";
+            // 初始化背景模糊状态
+            if (GM_getValue("coolauxv_enable_blur", DEFAULT_ENABLE_BLUR)) {
+                popup.classList.add("coolauxv-blur-enabled");
+            }
             Object.assign(popup.style, {
                 display: "none", flexDirection: "column", position: "fixed",
                 zIndex: "2147483646",
@@ -541,9 +681,12 @@
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">
                         API KEY
+                        <!-- 显隐按钮：margin-left: auto 会把它和后面的按钮一起推到最右边 -->
+                        <span id="coolauxv-btn-toggle-key" class="coolauxv-link-btn" style="margin-left:auto; cursor:pointer; user-select:none;">👁️ 显示</span>
                         <a href="https://bigmodel.cn/usercenter/proj-mgmt/apikeys" target="_blank" class="coolauxv-link-btn" title="打开智谱平台获取Key">🔑 获取KEY</a>
                     </label>
-                    <input type="text" id="coolauxv-cfg-key" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="${DEFAULT_API_KEY}">
+                    <!-- 默认 type 改为 password 以保护隐私 -->
+                    <input type="password" id="coolauxv-cfg-key" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="${DEFAULT_API_KEY}">
                 </div>
 
                 <div class="coolauxv-setting-group">
@@ -589,7 +732,13 @@
                     <textarea id="coolauxv-cfg-prompt-explain" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认提示词..."></textarea>
                 </div>
 
-                <div class="coolauxv-back-btn" id="coolauxv-cfg-back">保存并返回</div>
+                <div class="coolauxv-setting-group">
+                    <label class="coolauxv-setting-label">杂项 (Miscellaneous)</label>
+                    <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                        <input type="checkbox" id="coolauxv-cfg-blur"> 开启窗口背景模糊 (Glass Effect)
+                    </label>
+                </div>
+
                 <div class="coolauxv-reset-btn" id="coolauxv-cfg-reset">⚠️ 重置所有配置</div>
             </div>
 
@@ -616,10 +765,28 @@
         const mainView = popup.querySelector("#coolauxv-main-view");
         const settingsView = popup.querySelector("#coolauxv-settings-view");
         const settingsBtn = popup.querySelector("#coolauxv-settings-btn");
-        const backBtn = popup.querySelector("#coolauxv-cfg-back");
         const resetBtn = popup.querySelector("#coolauxv-cfg-reset");
 
         if (!mainView || !settingsView) return;
+
+        // --- 切换逻辑核心修改 ---
+        if (settingsBtn) {
+            settingsBtn.onclick = () => {
+                // 如果设置界面正在显示，则切换回主界面
+                if (settingsView.style.display === "flex") {
+                    settingsView.style.display = "none";
+                    mainView.style.display = "flex";
+                }
+                // 否则（在主界面），切换到设置界面
+                else {
+                    loadConfig(); // 进入设置时重新加载配置，确保显示最新值
+                    mainView.style.display = "none";
+                    settingsView.style.display = "flex";
+                }
+            };
+        }
+
+        // --- 下面是通用的配置加载与保存逻辑（保持不变）---
 
         const clearableInputs = [
             "coolauxv-cfg-key", "coolauxv-cfg-model", "coolauxv-cfg-width", "coolauxv-cfg-height",
@@ -629,6 +796,9 @@
         clearableInputs.forEach(id => {
             const input = popup.querySelector(`#${id}`);
             if (input) {
+                // 防止重复添加 wrapper (虽然 init 理论上只运行一次，但为了稳健性)
+                if (input.parentNode.classList.contains("coolauxv-input-wrapper")) return;
+
                 const wrapper = document.createElement("div");
                 wrapper.className = "coolauxv-input-wrapper";
                 input.parentNode.insertBefore(wrapper, input);
@@ -649,14 +819,28 @@
         });
 
         const inputKey = popup.querySelector("#coolauxv-cfg-key");
+        // API Key 显隐切换逻辑
+        const btnToggleKey = popup.querySelector("#coolauxv-btn-toggle-key");
+        if (inputKey && btnToggleKey) {
+            btnToggleKey.onclick = () => {
+                if (inputKey.type === "password") {
+                    inputKey.type = "text";
+                    btnToggleKey.innerText = "🔒 隐藏";
+                } else {
+                    inputKey.type = "password";
+                    btnToggleKey.innerText = "👁️ 显示";
+                }
+            };
+        }
         const inputModel = popup.querySelector("#coolauxv-cfg-model");
         const inputWidth = popup.querySelector("#coolauxv-cfg-width");
         const inputHeight = popup.querySelector("#coolauxv-cfg-height");
         const inputPromptTrans = popup.querySelector("#coolauxv-cfg-prompt-trans");
         const inputPromptExplain = popup.querySelector("#coolauxv-cfg-prompt-explain");
-        const tagBtns = popup.querySelectorAll(".coolauxv-tag-btn");
+        const inputBlur = popup.querySelector("#coolauxv-cfg-blur");
         const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
+
         radioBtns.forEach(radio => {
             radio.addEventListener('change', (e) => {
                 if (e.target.checked) {
@@ -676,13 +860,17 @@
             if (inputModel) inputModel.value = GM_getValue("coolauxv_model_name", "");
             if (inputWidth) inputWidth.value = GM_getValue("coolauxv_win_width", "");
             if (inputHeight) inputHeight.value = GM_getValue("coolauxv_win_height", "");
-            // if (inputLogLevel) inputLogLevel.value = GM_getValue("coolauxv_log_level", "");
             if (inputPromptTrans) inputPromptTrans.value = GM_getValue("coolauxv_prompt_trans", "");
             if (inputPromptExplain) inputPromptExplain.value = GM_getValue("coolauxv_prompt_explain", "");
-        };
 
-        if (settingsBtn) settingsBtn.onclick = () => { loadConfig(); mainView.style.display = "none"; settingsView.style.display = "flex"; };
-        if (backBtn) backBtn.onclick = () => { mainView.style.display = "flex"; settingsView.style.display = "none"; };
+            const currentLevel = GM_getValue("coolauxv_log_level", "debug"); // 这里的默认值要与常量一致
+            const targetRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="${currentLevel}"]`);
+            if (targetRadio) targetRadio.checked = true;
+
+            if (inputBlur) {
+                inputBlur.checked = GM_getValue("coolauxv_enable_blur", DEFAULT_ENABLE_BLUR);
+            }
+        };
 
         if (resetBtn) resetBtn.onclick = () => {
             if (confirm("确定要重置所有配置吗？\n所有自定义设置将恢复为默认值。")) {
@@ -693,9 +881,15 @@
                 GM_deleteValue("coolauxv_log_level");
                 GM_deleteValue("coolauxv_prompt_trans");
                 GM_deleteValue("coolauxv_prompt_explain");
+                GM_deleteValue("coolauxv_enable_blur");
                 loadConfig();
-                const defaultRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="${DEFAULT_LOG_LEVEL}"]`);
+                // 重置 Radio
+                const defaultRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="debug"]`);
                 if (defaultRadio) defaultRadio.checked = true;
+                if (inputBlur) {
+                    inputBlur.checked = DEFAULT_ENABLE_BLUR;
+                    toggleBlur(DEFAULT_ENABLE_BLUR);
+                }
                 alert("配置已重置。");
             }
         };
@@ -707,16 +901,30 @@
         if (inputPromptTrans) inputPromptTrans.addEventListener("input", (e) => saveConfig("coolauxv_prompt_trans", e.target.value));
         if (inputPromptExplain) inputPromptExplain.addEventListener("input", (e) => saveConfig("coolauxv_prompt_explain", e.target.value));
 
+        const toggleBlur = (enabled) => {
+            if (enabled) popup.classList.add("coolauxv-blur-enabled");
+            else popup.classList.remove("coolauxv-blur-enabled");
+        };
+
+        if (inputBlur) {
+            inputBlur.addEventListener("change", (e) => {
+                const enabled = e.target.checked;
+                GM_setValue("coolauxv_enable_blur", enabled); // 保存到全局变量
+                toggleBlur(enabled); // 实时应用效果
+            });
+        }
+
         modelBtns.forEach(btn => {
             btn.onclick = () => {
                 const val = btn.dataset.val;
                 if (inputModel) {
                     inputModel.value = val;
-                    inputModel.dispatchEvent(new Event('input')); // 触发 input 事件以保存
+                    inputModel.dispatchEvent(new Event('input'));
                 }
             };
         });
     }
+
 
     function getActiveConfig() {
         return {
@@ -766,11 +974,11 @@
     // 专门用于程序化控制推理框显隐的函数
     function setReasoningVisibility(visible) {
         isShowReasoning = visible; // 更新内部状态
-        
+
         // 同步 UI 上的复选框状态
         const toggle = popup.querySelector("#coolauxv-reasoning-toggle");
         if (toggle) toggle.checked = visible;
-        
+
         // 立即触发一次渲染，避免视觉延迟
         renderContent();
     }
@@ -1067,49 +1275,49 @@
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
         const container = popup.querySelector("#coolauxv-content-container"); // 获取父容器用于计算动态高度
 
-        if(!separator || !reasoningWrapper || !container) return;
+        if (!separator || !reasoningWrapper || !container) return;
 
         let startY, startHeight;
-        
-        const onSplitterDown = (clientY) => { 
-            isSplitterDragging = true; 
-            startY = clientY; 
-            startHeight = reasoningWrapper.offsetHeight; 
+
+        const onSplitterDown = (clientY) => {
+            isSplitterDragging = true;
+            startY = clientY;
+            startHeight = reasoningWrapper.offsetHeight;
             document.body.style.cursor = 'row-resize';
             document.body.style.userSelect = 'none'; // 防止拖拽时选中文字
         };
-        
+
         const onSplitterMove = (clientY) => {
             if (!isSplitterDragging) return;
-            
+
             // 动态计算高度限制
             const containerHeight = container.clientHeight;
             const separatorHeight = separator.offsetHeight;
-            
+
             let newHeight = startHeight + (clientY - startY);
-            
+
             // 限制范围：
             // 最小：0 (允许完全收起至顶部)
             // 最大：容器高度 - 分隔条高度 (允许完全拉到底部)
             const maxLimit = containerHeight - separatorHeight;
-            
+
             newHeight = Math.max(0, Math.min(maxLimit, newHeight));
-            
+
             reasoningWrapper.style.height = newHeight + "px";
         };
-        
-        const onSplitterUp = () => { 
-            if(isSplitterDragging) { 
-                isSplitterDragging = false; 
-                document.body.style.cursor = ''; 
+
+        const onSplitterUp = () => {
+            if (isSplitterDragging) {
+                isSplitterDragging = false;
+                document.body.style.cursor = '';
                 document.body.style.userSelect = '';
             }
         };
 
         separator.addEventListener("mousedown", (e) => { e.preventDefault(); onSplitterDown(e.clientY); });
         separator.addEventListener("touchstart", (e) => { e.preventDefault(); onSplitterDown(e.touches[0].clientY); });
-        document.addEventListener("mousemove", (e) => { if(isSplitterDragging) { e.preventDefault(); onSplitterMove(e.clientY); }});
-        document.addEventListener("touchmove", (e) => { if(isSplitterDragging) { e.preventDefault(); onSplitterMove(e.touches[0].clientY); }});
+        document.addEventListener("mousemove", (e) => { if (isSplitterDragging) { e.preventDefault(); onSplitterMove(e.clientY); } });
+        document.addEventListener("touchmove", (e) => { if (isSplitterDragging) { e.preventDefault(); onSplitterMove(e.touches[0].clientY); } });
         document.addEventListener("mouseup", onSplitterUp);
         document.addEventListener("touchend", onSplitterUp);
     }
@@ -1295,17 +1503,17 @@
         if (isShowReasoning === visible) return;
 
         isShowReasoning = visible;
-        
+
         // 同步 UI 上复选框的勾选状态
         const toggle = popup.querySelector("#coolauxv-reasoning-toggle");
         if (toggle) toggle.checked = visible;
-        
+
         // 每次自动展开时，重置高度为 50%
         if (visible) {
             const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
             if (reasoningWrapper) reasoningWrapper.style.height = "50%";
         }
-        
+
         // 立即触发渲染，更新 DOM 显示
         renderContent();
     }
@@ -1319,13 +1527,13 @@
             try {
                 const data = JSON.parse(jsonStr);
                 const delta = data.choices[0]?.delta;
-                
+
                 // --- 1. 处理推理内容 (自动展开逻辑) ---
                 if (delta?.reasoning_content) {
                     // 回调时机 A：检测到首个推理包
                     // 如果 hasReasoning 为 false，说明这是本轮对话第一次收到推理内容
                     if (!hasReasoning) {
-                        hasReasoning = true; 
+                        hasReasoning = true;
                         // 既然 API 返回了推理内容，说明这是推理模型，立即自动展开
                         Logger.info("检测到推理流，自动展开推理框");
                         setReasoningVisibility(true);
