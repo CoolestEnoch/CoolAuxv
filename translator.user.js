@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    http://tampermonkey.net/
-// @version      9.8
+// @version      10.0
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    1.尝试适配高斯模糊背景效果
+// @changelog    支持网页识屏了
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @grant        GM_addStyle
@@ -13,6 +13,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_setClipboard
 // @require      https://cdn.jsdelivr.net/npm/marked/marked.min.js
+// @require      https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js
 // @connect      open.bigmodel.cn
 // @license      GPL-3.0
 // @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js
@@ -40,12 +41,21 @@
         { id: "deepseek-r1", tag: "付费" },
     ];
 
+    // 第三排：视觉模型 (Vision Models)
+    const VISION_MODELS = [
+        { id: "glm-4v-flash", tag: "免费" },
+        { id: "glm-4.1v-thinking-flash ", tag: "免费 - 推理模型" },
+    ];
+
     const LOG_PRESETS = ["debug", "info", "warn", "error", "none"];
 
     const DEFAULT_API_KEY = "1145141919810哼哼啊啊啊啊啊";
     // 默认模型取语言模型数组的第一个
     const DEFAULT_MODEL_NAME = CHAT_MODELS[0].id;
     const DEFAULT_LOG_LEVEL = "debug";
+
+    const DEFAULT_VISION_MODEL = "glm-4v-flash";
+    const DEFAULT_PROMPT_VISION = "这张图里有什么？";
 
     const DEFAULT_WIN_WIDTH = "480px";
     const DEFAULT_WIN_HEIGHT = "480px";
@@ -157,7 +167,7 @@
     .coolauxv-ctrl-btn:hover { color: #3b82f6; }
     #coolauxv-quit:hover { color: #ef4444; }
 
-    /* 复选框强力修复 */
+    /* 复选框 */
     .coolauxv-toggle-label {
         font-size: 12px; display: flex; align-items: center; cursor: pointer;
         background: #e9ecef; padding: 2px 6px; border-radius: 4px; color: #666;
@@ -167,7 +177,7 @@
     }
     .coolauxv-toggle-label:hover { background: #dee2e6; }
     
-    /* 核心修复：防止宿主 CSS 破坏 Checkbox */
+    /* 防止宿主 CSS 破坏 Checkbox */
     .coolauxv-toggle-label input[type="checkbox"] { 
         margin: 0 4px 0 0 !important; 
         cursor: pointer; 
@@ -222,7 +232,7 @@
         flex-wrap: wrap; 
         gap: 8px; 
         
-        /* 核心修复：强制占满整行，防止被网站 CSS 挤压导致文字换行 */
+        /* 强制占满整行，防止被网站 CSS 挤压导致文字换行 */
         width: 100% !important;
         max-width: none !important;
         float: none !important;
@@ -250,7 +260,7 @@
         line-height: normal !important; /* 防止容器行高过大 */
     }
     .coolauxv-radio-label {
-        display: inline-flex !important; /* 核心修复：强制内联弹性布局，防止被宿主 block 撑满整行 */
+        display: inline-flex !important; /* 强制内联弹性布局，防止被宿主 block 撑满整行 */
         align-items: center;
         cursor: pointer;
         user-select: none;
@@ -498,7 +508,41 @@
         background: rgba(255, 255, 255, 0.5) !important;
     }
 
-
+    /* ============================
+       截图功能样式
+       ============================ */
+    #coolauxv-screenshot-overlay {
+        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+        z-index: 2147483647; cursor: crosshair; display: none;
+        /* 使用大阴影技术来实现"镂空"效果 */
+        pointer-events: auto;
+    }
+    
+    #coolauxv-selection-box {
+        position: absolute;
+        border: 2px solid #a516e8;
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5); /* 核心：周围变暗 */
+        pointer-events: none; /* 让鼠标事件透传给 overlay */
+        z-index: 2147483648;
+        display: none;
+    }
+    
+    #coolauxv-screenshot-toolbar {
+        position: absolute;
+        display: none;
+        gap: 8px;
+        z-index: 2147483649;
+        background: white;
+        padding: 4px;
+        border-radius: 6px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+    }
+    
+    .coolauxv-shot-btn {
+        padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; border: none; color: white;
+    }
+    #coolauxv-shot-ok { background: #a516e8; }
+    #coolauxv-shot-cancel { background: #666; }
 
     `;
 
@@ -592,17 +636,19 @@
             resetPopupState();
 
             // 生成模型按钮 HTML
-            const generateModelBtns = (models) => {
+            const generateModelBtns = (models, fieldName) => {
                 return models.map(m => `
-                    <div class="coolauxv-model-btn" data-field="coolauxv_model_name" data-val="${m.id}">
+                    <div class="coolauxv-model-btn" data-field="${fieldName}" data-val="${m.id}">
                         <span class="coolauxv-model-name">${m.id}</span>
                         <span class="coolauxv-model-tag">${m.tag}</span>
                     </div>
                 `).join("");
             };
 
-            const chatBtnsHTML = generateModelBtns(CHAT_MODELS);
-            const reasoningBtnsHTML = generateModelBtns(REASONING_MODELS);
+            const chatBtnsHTML = generateModelBtns(CHAT_MODELS, "coolauxv_model_name");
+            const reasoningBtnsHTML = generateModelBtns(REASONING_MODELS, "coolauxv_model_name");
+            const visionBtnsHTML = generateModelBtns(VISION_MODELS, "coolauxv_model_vision");
+
 
             const currentLogLevel = GM_getValue("coolauxv_log_level", DEFAULT_LOG_LEVEL);
             const logRadioHTML = LOG_PRESETS.map(level => {
@@ -643,6 +689,7 @@
                   <div style="position:relative; width:100%; margin-bottom:10px; flex-shrink:0;">
                       <textarea id="coolauxv-input" placeholder="输入内容..." style="width:100%; height:70px; border:1px solid #ddd; border-radius:8px; padding:8px 24px 8px 8px; box-sizing:border-box; font-size:14px; resize:none; font-family:inherit;"></textarea>
                       <div style="position:absolute; right:2px; top:0; bottom:0; display:flex; flex-direction:column; justify-content:center; gap:4px;">
+                          <span id="coolauxv-btn-screenshot" class="coolauxv-input-ctrl-btn" title="截图并分析">📷</span>
                           <span id="coolauxv-btn-input-clear" class="coolauxv-input-ctrl-btn" title="清空">✕</span>
                           <span id="coolauxv-btn-input-paste" class="coolauxv-input-ctrl-btn" title="粘贴">📋</span>
                       </div>
@@ -705,6 +752,13 @@
                     <div class="coolauxv-tag-container">${reasoningBtnsHTML}</div>
                 </div>
 
+                <!-- 视觉模型设置组 -->
+                <div class="coolauxv-setting-group">
+                    <label class="coolauxv-setting-label">视觉模型 (Vision Model)</label>
+                    <input type="text" id="coolauxv-cfg-model-vision" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${DEFAULT_VISION_MODEL}">
+                    <div class="coolauxv-tag-container">${visionBtnsHTML}</div>
+                </div>
+
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">窗口初始大小 (Width / Height)</label>
                     <div style="display:flex; gap:10px;">
@@ -732,6 +786,12 @@
                     <textarea id="coolauxv-cfg-prompt-explain" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认提示词..."></textarea>
                 </div>
 
+                <!-- 识图提示词设置组 -->
+                <div class="coolauxv-setting-group">
+                    <label class="coolauxv-setting-label">识图提示词</label>
+                    <textarea id="coolauxv-cfg-prompt-vision" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认: ${DEFAULT_PROMPT_VISION}"></textarea>
+                </div>
+
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">杂项 (Miscellaneous)</label>
                     <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
@@ -746,6 +806,19 @@
             `;
             document.body.appendChild(popup);
 
+            // 初始化截图层
+            const screenshotLayer = document.createElement("div");
+            screenshotLayer.innerHTML = `
+                <div id="coolauxv-screenshot-overlay">
+                    <div id="coolauxv-selection-box"></div>
+                    <div id="coolauxv-screenshot-toolbar">
+                        <button id="coolauxv-shot-ok" class="coolauxv-shot-btn">确定</button>
+                        <button id="coolauxv-shot-cancel" class="coolauxv-shot-btn">取消</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(screenshotLayer);
+
             setTimeout(() => {
                 bindEvents();
                 bindInputCtrlEvents();
@@ -753,6 +826,7 @@
                 initSettingsLogic();
                 initDragAndResize();
                 initSplitter();
+                initScreenshotEvents();
             }, 0);
 
         } catch (e) {
@@ -789,10 +863,12 @@
         // --- 下面是通用的配置加载与保存逻辑（保持不变）---
 
         const clearableInputs = [
-            "coolauxv-cfg-key", "coolauxv-cfg-model", "coolauxv-cfg-width", "coolauxv-cfg-height",
-            "coolauxv-cfg-prompt-trans", "coolauxv-cfg-prompt-explain"
+            "coolauxv-cfg-key", "coolauxv-cfg-model", 
+            "coolauxv-cfg-model-vision",
+            "coolauxv-cfg-width", "coolauxv-cfg-height",
+            "coolauxv-cfg-prompt-trans", "coolauxv-cfg-prompt-explain",
+            "coolauxv-cfg-prompt-vision"
         ];
-
         clearableInputs.forEach(id => {
             const input = popup.querySelector(`#${id}`);
             if (input) {
@@ -833,10 +909,12 @@
             };
         }
         const inputModel = popup.querySelector("#coolauxv-cfg-model");
+        const inputModelVision = popup.querySelector("#coolauxv-cfg-model-vision");
         const inputWidth = popup.querySelector("#coolauxv-cfg-width");
         const inputHeight = popup.querySelector("#coolauxv-cfg-height");
         const inputPromptTrans = popup.querySelector("#coolauxv-cfg-prompt-trans");
         const inputPromptExplain = popup.querySelector("#coolauxv-cfg-prompt-explain");
+        const inputPromptVision = popup.querySelector("#coolauxv-cfg-prompt-vision");
         const inputBlur = popup.querySelector("#coolauxv-cfg-blur");
         const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
@@ -870,6 +948,8 @@
             if (inputBlur) {
                 inputBlur.checked = GM_getValue("coolauxv_enable_blur", DEFAULT_ENABLE_BLUR);
             }
+            if (inputModelVision) inputModelVision.value = GM_getValue("coolauxv_model_vision", "");
+            if (inputPromptVision) inputPromptVision.value = GM_getValue("coolauxv_prompt_vision", "");
         };
 
         if (resetBtn) resetBtn.onclick = () => {
@@ -882,6 +962,8 @@
                 GM_deleteValue("coolauxv_prompt_trans");
                 GM_deleteValue("coolauxv_prompt_explain");
                 GM_deleteValue("coolauxv_enable_blur");
+                GM_deleteValue("coolauxv_model_vision");
+                GM_deleteValue("coolauxv_prompt_vision");
                 loadConfig();
                 // 重置 Radio
                 const defaultRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="debug"]`);
@@ -900,6 +982,8 @@
         if (inputHeight) inputHeight.addEventListener("input", (e) => saveConfig("coolauxv_win_height", e.target.value));
         if (inputPromptTrans) inputPromptTrans.addEventListener("input", (e) => saveConfig("coolauxv_prompt_trans", e.target.value));
         if (inputPromptExplain) inputPromptExplain.addEventListener("input", (e) => saveConfig("coolauxv_prompt_explain", e.target.value));
+        if (inputModelVision) inputModelVision.addEventListener("input", (e) => saveConfig("coolauxv_model_vision", e.target.value));
+        if (inputPromptVision) inputPromptVision.addEventListener("input", (e) => saveConfig("coolauxv_prompt_vision", e.target.value));
 
         const toggleBlur = (enabled) => {
             if (enabled) popup.classList.add("coolauxv-blur-enabled");
@@ -917,9 +1001,13 @@
         modelBtns.forEach(btn => {
             btn.onclick = () => {
                 const val = btn.dataset.val;
-                if (inputModel) {
+                const field = btn.dataset.field;
+                if (field === "coolauxv_model_name" && inputModel) {
                     inputModel.value = val;
                     inputModel.dispatchEvent(new Event('input'));
+                } else if (field === "coolauxv_model_vision" && inputModelVision) {
+                    inputModelVision.value = val;
+                    inputModelVision.dispatchEvent(new Event('input'));
                 }
             };
         });
@@ -931,7 +1019,9 @@
             apiKey: GM_getValue("coolauxv_api_key") || DEFAULT_API_KEY,
             modelName: GM_getValue("coolauxv_model_name") || DEFAULT_MODEL_NAME,
             promptTrans: GM_getValue("coolauxv_prompt_trans") || DEFAULT_PROMPT_TRANSLATE,
-            promptExplain: GM_getValue("coolauxv_prompt_explain") || DEFAULT_PROMPT_EXPLAIN
+            promptExplain: GM_getValue("coolauxv_prompt_explain") || DEFAULT_PROMPT_EXPLAIN,
+            modelVision: GM_getValue("coolauxv_model_vision") || DEFAULT_VISION_MODEL,
+            promptVision: GM_getValue("coolauxv_prompt_vision") || DEFAULT_PROMPT_VISION
         };
     }
 
@@ -1556,6 +1646,314 @@
             }
         }
     }
+
+    // ========================================================================
+    // 截图与视觉分析模块
+    // ========================================================================
+
+    let capturedImageBase64 = ""; // 存储截图 Base64
+    let isSelecting = false;
+    let startX, startY;
+
+    function initScreenshotEvents() {
+        const btnShot = popup.querySelector("#coolauxv-btn-screenshot");
+        const overlay = document.querySelector("#coolauxv-screenshot-overlay");
+        const selectionBox = document.querySelector("#coolauxv-selection-box");
+        const toolbar = document.querySelector("#coolauxv-screenshot-toolbar");
+        const btnOk = document.querySelector("#coolauxv-shot-ok");
+        const btnCancel = document.querySelector("#coolauxv-shot-cancel");
+
+        if (!btnShot || !overlay) return;
+
+        // 工具栏防穿透：阻止所有鼠标和触摸事件冒泡
+        // 这样点击按钮时，绝对不会触发 overlay 的"重新开始框选"逻辑
+        const stopProp = (e) => e.stopPropagation();
+        ['mousedown', 'mouseup', 'click', 'touchstart', 'touchend'].forEach(evt => {
+            toolbar.addEventListener(evt, stopProp);
+        });
+
+        // 1. 激活截图模式
+        btnShot.onclick = () => {
+            popup.style.display = "none";
+            overlay.style.display = "block";
+            document.body.style.cursor = "crosshair";
+            selectionBox.style.display = "none";
+            toolbar.style.display = "none";
+            document.body.style.overflow = "hidden"; // 锁死滚动
+        };
+
+        // 坐标获取助手：兼容鼠标和触摸
+        const getClientPos = (e) => {
+            if (e.touches && e.touches.length > 0) {
+                return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }
+            return { x: e.clientX, y: e.clientY };
+        };
+
+        // --- 统一的动作处理函数 ---
+
+        const onStart = (e) => {
+            // 如果是鼠标右键，忽略
+            if (e.type === 'mousedown' && e.button !== 0) return;
+            
+            // 必须阻止默认行为，防止移动端触发滚动或原生缩放
+            if(e.cancelable) e.preventDefault(); 
+
+            isSelecting = true;
+            const pos = getClientPos(e);
+            startX = pos.x;
+            startY = pos.y;
+            
+            selectionBox.style.left = startX + "px";
+            selectionBox.style.top = startY + "px";
+            selectionBox.style.width = "0px";
+            selectionBox.style.height = "0px";
+            selectionBox.style.display = "block";
+            toolbar.style.display = "none";
+        };
+
+        const onMove = (e) => {
+            if (!isSelecting) return;
+            // 核心：移动端画框时严禁页面滚动
+            if(e.cancelable) e.preventDefault();
+
+            const pos = getClientPos(e);
+            const currentX = pos.x;
+            const currentY = pos.y;
+
+            const width = Math.abs(currentX - startX);
+            const height = Math.abs(currentY - startY);
+            const left = Math.min(currentX, startX);
+            const top = Math.min(currentY, startY);
+
+            selectionBox.style.left = left + "px";
+            selectionBox.style.top = top + "px";
+            selectionBox.style.width = width + "px";
+            selectionBox.style.height = height + "px";
+        };
+
+        const onEnd = (e) => {
+            if (!isSelecting) return;
+            isSelecting = false;
+            
+            const rect = selectionBox.getBoundingClientRect();
+            // 防止误触：如果选区太小（比如只是点击了一下），则隐藏选区
+            if (rect.width < 10 || rect.height < 10) {
+                selectionBox.style.display = "none";
+                return;
+            }
+
+            toolbar.style.display = "flex";
+            // 计算工具栏位置，适配屏幕边缘
+            let toolTop = rect.bottom + 10;
+            let toolLeft = rect.right - 100;
+            
+            // 如果底部空间不够，翻转到选区上方
+            if (toolTop > window.innerHeight - 50) toolTop = rect.top - 45;
+            // 如果右边空间不够，靠左一点
+            if (toolLeft < 10) toolLeft = 10;
+
+            toolbar.style.top = toolTop + "px";
+            toolbar.style.left = toolLeft + "px";
+        };
+
+        // 绑定双端事件
+        // passive: false 是为了允许我们在 touchmove 中调用 preventDefault()
+        overlay.addEventListener("mousedown", onStart);
+        overlay.addEventListener("touchstart", onStart, { passive: false });
+
+        overlay.addEventListener("mousemove", onMove);
+        overlay.addEventListener("touchmove", onMove, { passive: false });
+
+        overlay.addEventListener("mouseup", onEnd);
+        overlay.addEventListener("touchend", onEnd);
+
+
+        // 3. 确定按钮逻辑 (保持不变，确保 allowTaint: false)
+        btnOk.onclick = async (e) => {
+            e.stopPropagation(); //再一次防止冒泡
+            const originalText = btnOk.innerText;
+            btnOk.innerText = "处理中...";
+            
+            const rect = selectionBox.getBoundingClientRect();
+            const scrollX = window.pageXOffset;
+            const scrollY = window.pageYOffset;
+
+            try {
+                const canvas = await html2canvas(document.body, {
+                    x: rect.left + scrollX,
+                    y: rect.top + scrollY,
+                    width: rect.width,
+                    height: rect.height,
+                    useCORS: true,
+                    allowTaint: false, // 必须 false
+                    logging: false,
+                    scale: window.devicePixelRatio, // 适配高清屏
+                    ignoreElements: (element) => {
+                        return element.id === "coolauxv-screenshot-overlay" || 
+                               element.id === "coolauxv-translate-popup" || 
+                               element.id === "coolauxv-translate-icon";
+                    }
+                });
+
+                capturedImageBase64 = canvas.toDataURL("image/jpeg", 0.8);
+                
+                resetScreenshotUI();
+                popup.style.display = "flex";
+                btnOk.innerText = originalText;
+
+                // 自动填充提示词
+                const input = popup.querySelector("#coolauxv-input");
+                const config = getActiveConfig();
+                if (!input.value.trim()) {
+                    input.value = config.promptVision;
+                }
+                
+                doImageAnalysis();
+
+            } catch (err) {
+                console.error("截图失败:", err);
+                alert("截图失败: " + err.message);
+                resetScreenshotUI();
+                popup.style.display = "flex";
+                btnOk.innerText = originalText;
+            }
+        };
+
+        // 4. 取消按钮
+        btnCancel.onclick = (e) => {
+            e.stopPropagation();
+            resetScreenshotUI();
+            popup.style.display = "flex";
+        };
+
+        function resetScreenshotUI() {
+            overlay.style.display = "none";
+            selectionBox.style.display = "none";
+            toolbar.style.display = "none";
+            document.body.style.overflow = ""; // 恢复滚动
+            document.body.style.cursor = "";
+            isSelecting = false;
+        }
+    }
+
+
+    // 执行视觉分析 API 请求
+    async function doImageAnalysis() {
+        if (!capturedImageBase64) {
+            alert("未获取到图片数据");
+            return;
+        }
+
+        const resultDiv = popup.querySelector("#coolauxv-result");
+        const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
+        const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
+        const config = getActiveConfig();
+
+        if (!config.apiKey || config.apiKey === DEFAULT_API_KEY) {
+            showNoKeyError(resultDiv);
+            return;
+        }
+
+        // 准备界面状态
+        streamTextBuffer = ""; streamReasoningBuffer = ""; lastRenderedText = ""; lastRenderedReasoning = ""; hasReasoning = false;
+        resultDiv.innerHTML = "<span style='color:#888'>🖼️ 正在分析图片...</span>";
+        reasoningDiv.innerHTML = ""; reasoningWrapper.style.display = "none";
+        
+        const url = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+        
+        // 【修正】使用完整的 Base64 Data URI，不要去掉前缀，因为 API 通常需要知道图片格式
+        // 如果你的 API 确实只需要纯 Base64，请取消下面注释并使用 base64Pure
+        // const base64Pure = capturedImageBase64.split(",")[1];
+
+        // 使用配置的提示词，如果输入框为空则用配置的默认值，如果配置也为空则用常量
+        const input = popup.querySelector("#coolauxv-input");
+        let textPrompt = input.value.trim();
+        if (!textPrompt) {
+            textPrompt = config.promptVision; // 优先使用设置里的提示词
+            input.value = textPrompt; // 回填到输入框让用户看到
+        }
+
+        const payload = {
+            model: config.modelVision, // 确保模型名称正确，智谱视觉模型通常是 glm-4v 或 glm-4v-flash
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        {
+                            type: "image_url",
+                            image_url: {
+                                // 推荐标准格式：data:image/jpeg;base64,xxxxxx
+                                url: capturedImageBase64 
+                            }
+                        },
+                        {
+                            type: "text",
+                            text: textPrompt
+                        }
+                    ]
+                }
+            ],
+            // 视觉模型目前可能不支持 thinking 字段，如果报错请注释掉 thinking
+            // thinking: { type: "enabled" }, 
+            stream: true
+        };
+
+        if (abortController) abortController.abort();
+        if (gmRequest && gmRequest.abort) gmRequest.abort();
+
+        Logger.info("Starting Vision API Request...");
+
+        gmRequest = GM_xmlhttpRequest({
+            method: "POST",
+            url: url,
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${config.apiKey}` },
+            data: JSON.stringify(payload),
+            responseType: 'stream',
+            timeout: 120000, 
+
+            onloadstart: (res) => {
+                if (res.response && res.response.getReader) {
+                    resultDiv.innerHTML = "";
+                    startRenderLoop();
+                    const reader = res.response.getReader();
+                    const decoder = new TextDecoder("utf-8");
+                    let buffer = "";
+
+                    (async function readStream() {
+                        try {
+                            while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+                                const chunk = decoder.decode(value, { stream: true });
+                                buffer += chunk;
+                                const lines = buffer.split(/\r?\n/);
+                                buffer = lines.pop();
+                                for (const line of lines) processLine(line);
+                            }
+                        } catch (e) {
+                            Logger.error("Stream Error", e);
+                            resultDiv.innerHTML += `<br><span style='color:red'>流读取错误: ${e.message}</span>`;
+                        } finally {
+                            stopRenderLoop();
+                        }
+                    })();
+                }
+            },
+            
+            onload: (res) => {
+                 if (res.status !== 200) {
+                     stopRenderLoop();
+                     Logger.error("API Error", res.responseText);
+                     resultDiv.innerHTML = `<span style='color:red'>API Error ${res.status}: ${res.responseText}</span>`;
+                 }
+            },
+            
+            onerror: (e) => { stopRenderLoop(); resultDiv.innerHTML = "<span style='color:red'>网络连接失败</span>"; }
+        });
+    }
+
+
 
     function showNoKeyError(container) {
         if (container) container.innerHTML = `
