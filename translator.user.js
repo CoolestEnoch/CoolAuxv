@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
-// @namespace    http://tampermonkey.net/
-// @version      v10.1
+// @namespace    https://github.com/CoolestEnoch/CoolAuxv
+// @version      v10.2
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v10.1 更新日志] 1.新增网页区域截图识屏与全屏预览功能，你可以按ESC键退出截图模式了。 2.上线实验性液态玻璃 UI 体系，支持高斯模糊与棱镜光感 3.全面适配移动端触摸框选截图，支持高清缩放 4.合并文本模型分类，增加 API Key 显隐切换 5.优化 429 报错拦截与详细 JSON 请求日志打印。
+// @changelog    [v10.2 更新日志] 1.修复大量渲染问题(公式/矩阵/表格/图片)；2.新增“新截屏算法”开关(需手动开启以修复滚动选区错位)；3.统一流体玻璃视觉风格；4.优化识屏交互(加载提示/快捷键)；4.优化提示框布局。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @grant        GM_addStyle
@@ -12,11 +12,16 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_setClipboard
+// @grant        GM_getResourceText
 // @require      https://cdn.jsdelivr.net/npm/marked/marked.min.js
 // @require      https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js
+// @require      https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js
+// @require      https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js
+// @resource     katexCSS https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css
 // @connect      open.bigmodel.cn
 // @license      GPL-3.0
 // @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js
+// @updateURL    https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.meta.js
 // ==/UserScript==
 
 
@@ -59,24 +64,27 @@
 
     const DEFAULT_SHOW_RAW = false;
     const DEFAULT_SHOW_REASONING = true;
-    const DEFAULT_ENABLE_BLUR = false; // 默认关闭模糊
+    const DEFAULT_ENABLE_BLUR_GLASS = false; // 默认关闭模糊
+    const DEFAULT_USE_NEW_SCREENSHOT = false; // 默认使用老逻辑截图
 
 
     const DEFAULT_PROMPT_TRANSLATE = "你是一个翻译引擎。将用户输入直接翻译成中文。如果输入是中文则译为英文。不要输出任何多余的解释。";
-    const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
+    const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
-        <h3 style="margin:0 0 10px 0; color:#a516e8;">🎉 更新日志 ${GM_info.script.version}</h3>
-        <ul style="margin:0; padding-left:20px; color:#555; line-height:1.6; font-size:13px;">
-            <li><b>📸 智能识屏分析：</b>新增区域截图功能，支持 GLM-4V 视觉大模型与流式推理过程，支持识屏后自动拼接翻译/解读提示词。</li>
-            <li><b>🔍 截图预览：</b>增加“预览🔍”功能，支持全屏查看已截取的 Base64 图片，确保识屏范围准确。</li>
-            <li><b>🎨 液态玻璃 UI：</b>实验性支持“iOS 26”风格的高斯模糊、饱和度增强与棱镜折射边缘效果，可在设置中开启。</li>
-            <li><b>📱 全平台适配：</b>深度优化安卓/iOS 触摸框选体验，截图时自动锁死页面滚动，支持高清屏像素缩放。</li>
-            <li><b>⚙️ 界面精简：</b>合并语言/推理模型分类为统一的“文本模型”；新增 API Key 显隐切换按钮以保护隐私。</li>
-            <li><b>🛠️ 性能与健壮性：</b>解决大图截图导致的 UI 假死问题；新增 Error 429 (调用频率限制) 的专门捕获与友好提示。</li>
-            <li><b>🐞 逻辑修复：</b>优化深色模式显示；点击浮窗“译”图标时将自动清空截图缓存，回归纯文本模式。现在你可以按ESC键退出截图模式了。</li>
-        </ul>
-        <div style="margin-top:10px; font-size:12px; color:#999;">(点击下方按钮关闭，下次更新前不再提示)</div>
+        本次更新主要集中在底层渲染引擎的修复与交互逻辑的优化。
+        ## 🛠️ 渲染引擎修复
+        *   **公式支持**：引入 KaTeX 引擎，修复了 LaTeX 数学公式无法渲染的问题，重点解决了矩阵换行失败及占位符冲突导致的显示错误。
+        *   **Markdown 修正**：修复了 Markdown 表格缺失边框、图片在部分网页无法显示的问题。
+        ## 📸 识屏选区修复
+        *   **滚动错位修复**：针对长页面滚动后截图选区偏移的问题，引入了“冻结屏幕”新算法。
+        *   ⚠️ **注意**：该修复作为一个实验性功能上线，**需要在设置中手动勾选“使用新截屏算法”才能生效**。
+        ## ⏳ 交互体验优化
+        *   **状态反馈**：点击识屏后新增“请稍候”加载提示，并修复了光标状态切换逻辑（等待转圈 -> 十字准星），明确告知就绪状态。
+        *   **快捷键**：截图模式下支持按 **空格** 或 **回车** 确认选区，按 **ESC** 退出。
+        *   **提示框**：优化了提示框布局，更加紧凑清晰。
+        ## 💧 视觉统一
+        *   **流体玻璃 (Blur Glass)**：统一了 UI 风格，现在“加载提示框”和“模型选择按钮”也会跟随全局设置应用磨砂背景效果。
     `;
 
 
@@ -422,11 +430,10 @@
     .coolauxv-github-btn svg { fill: currentColor; margin-right: 6px; }
 
     /* ============================
-    背景模糊 (Glass Effect)
+    流体玻璃 (Blur Glass Effect)
     ============================ */
-    
-    /* 1. 主窗口：液态光泽 + 智能文字阴影 */
-    .coolauxv-blur-enabled {
+    /* 1. 主窗口容器 */
+    .coolauxv-blur-glass-enabled {
         /* 背景：线性渐变模拟光线扫过的质感 */
         background: linear-gradient(135deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0.15)) !important;
         backdrop-filter: blur(10px);
@@ -439,95 +446,130 @@
         text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9), 0 0 1px rgba(255, 255, 255, 0.8) !important;
     }
 
-    /* 必须重置输入框/代码块内的文字阴影，否则正文会变糊 */
-    .coolauxv-blur-enabled input, 
-    .coolauxv-blur-enabled textarea,
-    .coolauxv-blur-enabled .coolauxv-scroll-box,
-    .coolauxv-blur-enabled pre,
-    .coolauxv-blur-enabled code {
+    /* 重置输入框/代码块内的文字阴影 */
+    .coolauxv-blur-glass-enabled input, 
+    .coolauxv-blur-glass-enabled textarea,
+    .coolauxv-blur-glass-enabled .coolauxv-scroll-box,
+    .coolauxv-blur-glass-enabled pre,
+    .coolauxv-blur-glass-enabled code,
+    .coolauxv-blur-glass-enabled .coolauxv-model-btn {
         text-shadow: none !important;
     }
 
     /* 2. 标题栏 & 设置页容器：全透明，透出底层的玻璃感 */
-    .coolauxv-blur-enabled #coolauxv-header,
-    .coolauxv-blur-enabled #coolauxv-settings-view {
+    .coolauxv-blur-glass-enabled #coolauxv-header,
+    .coolauxv-blur-glass-enabled #coolauxv-settings-view {
         background: transparent !important;
         border-bottom: 1px solid rgba(255, 255, 255, 0.3) !important;
     }
 
     /* 3. 首页输入框：高对比度 + 气泡感 */
-    .coolauxv-blur-enabled #coolauxv-input {
-        background-color: rgba(255, 255, 255, 0.75) !important; /* 提升不透明度保可读性 */
+    .coolauxv-blur-glass-enabled #coolauxv-input {
+        background-color: rgba(255, 255, 255, 0.75) !important;
         border: 1px solid rgba(255, 255, 255, 0.6) !important;
-        box-shadow: inset 0 1px 4px rgba(0,0,0,0.05); /* 轻微内凹 */
+        box-shadow: inset 0 1px 4px rgba(0,0,0,0.05);
         color: #000 !important;
     }
-    .coolauxv-blur-enabled #coolauxv-input:focus {
-        background-color: rgba(255, 255, 255, 0.95) !important; /* 聚焦时几乎不透明 */
+    .coolauxv-blur-glass-enabled #coolauxv-input:focus {
+        background-color: rgba(255, 255, 255, 0.95) !important;
         box-shadow: 0 0 8px rgba(255,255,255,0.8) !important;
     }
 
     /* 4. 设置页面的输入框：液态玻璃风格 */
-    .coolauxv-blur-enabled .coolauxv-setting-input {
-        background-color: rgba(255, 255, 255, 0.6) !important; /* 半透明白 */
+    .coolauxv-blur-glass-enabled .coolauxv-setting-input {
+        background-color: rgba(255, 255, 255, 0.6) !important;
         border: 1px solid rgba(255, 255, 255, 0.5) !important;
         transition: all 0.2s;
     }
-    .coolauxv-blur-enabled .coolauxv-setting-input:focus {
+    .coolauxv-blur-glass-enabled .coolauxv-setting-input:focus {
         background-color: rgba(255, 255, 255, 0.9) !important;
         border-color: #3b82f6 !important;
     }
 
-    /* 5. 结果显示区：为了看清大段文字，背景设为“雾白” */
-    .coolauxv-blur-enabled #coolauxv-content-container {
+    /* 5. 结果显示区：雾白背景 */
+    .coolauxv-blur-glass-enabled #coolauxv-content-container {
         background: transparent !important;
         border: 1px solid rgba(255, 255, 255, 0.4) !important;
     }
     
-    .coolauxv-blur-enabled #coolauxv-reasoning-wrapper {
-        background-color: rgba(248, 249, 250, 0.7) !important; /* 思考区：70% 灰白 */
+    .coolauxv-blur-glass-enabled #coolauxv-reasoning-wrapper {
+        background-color: rgba(248, 249, 250, 0.7) !important;
         border-bottom: 1px dashed rgba(0, 0, 0, 0.1) !important;
     }
 
-    .coolauxv-blur-enabled #coolauxv-result-wrapper {
-        background-color: rgba(255, 255, 255, 0.75) !important; /* 结果区：75% 纯白 */
+    .coolauxv-blur-glass-enabled #coolauxv-result-wrapper {
+        background-color: rgba(255, 255, 255, 0.75) !important;
     }
 
-    /* 6. 按钮定制：半透明磨砂 */
-    /* 翻译按钮 (灰色系) */
-    .coolauxv-blur-enabled #coolauxv-btn-trans {
+    /* 6. 功能按钮：半透明磨砂 */
+    .coolauxv-blur-glass-enabled #coolauxv-btn-trans {
         background: rgba(243, 244, 246, 0.65) !important;
         border: 1px solid rgba(255, 255, 255, 0.6) !important;
         backdrop-filter: blur(4px);
     }
-    .coolauxv-blur-enabled #coolauxv-btn-trans:hover {
+    .coolauxv-blur-glass-enabled #coolauxv-btn-trans:hover {
         background: rgba(243, 244, 246, 0.9) !important;
     }
 
-    /* 解读按钮 (紫色系) */
-    .coolauxv-blur-enabled #coolauxv-btn-explain {
-        background: rgba(165, 22, 232, 0.75) !important; /* 紫色半透明 */
+    .coolauxv-blur-glass-enabled #coolauxv-btn-explain {
+        background: rgba(165, 22, 232, 0.75) !important;
         backdrop-filter: blur(4px);
         border: 1px solid rgba(255, 255, 255, 0.3) !important;
         box-shadow: 0 4px 12px rgba(165, 22, 232, 0.25);
     }
-    .coolauxv-blur-enabled #coolauxv-btn-explain:hover {
+    .coolauxv-blur-glass-enabled #coolauxv-btn-explain:hover {
         background: rgba(165, 22, 232, 0.9) !important;
+    }
+    
+    .coolauxv-blur-glass-enabled #coolauxv-btn-screenshot {
+        background: rgba(59, 130, 246, 0.75) !important;
+        backdrop-filter: blur(4px);
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+    }
+    .coolauxv-blur-glass-enabled #coolauxv-btn-screenshot:hover {
+        background: rgba(59, 130, 246, 0.9) !important;
+    }
+    
+    .coolauxv-blur-glass-enabled #coolauxv-btn-preview {
+        background: rgba(255, 255, 255, 0.2) !important;
+        border: 1px solid rgba(255, 255, 255, 0.4) !important;
+        color: #333;
+    }
+    .coolauxv-blur-glass-enabled #coolauxv-btn-preview:hover {
+        background: rgba(255, 255, 255, 0.4) !important;
     }
 
     /* 7. 分隔条 */
-    .coolauxv-blur-enabled #coolauxv-separator {
+    .coolauxv-blur-glass-enabled #coolauxv-separator {
         background: rgba(255, 255, 255, 0.5) !important;
+    }
+    
+    /* 8. 模型按钮样式 (特定) */
+    .coolauxv-model-btn.coolauxv-blur-glass-style-btn {
+        background: rgba(220, 245, 255, 0.25) !important;
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(179, 224, 255, 0.4) !important;
+        box-shadow: 0 4px 12px rgba(0, 102, 255, 0.15);
+        color: #0055d4 !important;
+        transition: all 0.2s ease;
+    }
+    .coolauxv-model-btn.coolauxv-blur-glass-style-btn:hover {
+        background: rgba(220, 245, 255, 0.5) !important;
+        border-color: rgba(179, 224, 255, 0.8) !important;
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(0, 102, 255, 0.25);
     }
 
     /* 识屏按钮 (蓝色系) */
-    .coolauxv-blur-enabled #coolauxv-btn-screenshot {
+    .coolauxv-blur-glass-enabled #coolauxv-btn-screenshot {
         background: rgba(59, 130, 246, 0.75) !important; /* 蓝色半透明 */
         backdrop-filter: blur(4px);
         border: 1px solid rgba(255, 255, 255, 0.3) !important;
         box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
     }
-    .coolauxv-blur-enabled #coolauxv-btn-screenshot:hover {
+    .coolauxv-blur-glass-enabled #coolauxv-btn-screenshot:hover {
         background: rgba(59, 130, 246, 0.9) !important;
     }
 
@@ -545,10 +587,43 @@
     #coolauxv-selection-box {
         position: absolute;
         border: 2px solid #a516e8;
-        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5); /* 核心：周围变暗 */
-        pointer-events: none; /* 让鼠标事件透传给 overlay */
+        /* 核心：背景透明，利用超大阴影压暗周围，形成聚光灯效果 */
+        background: transparent !important; 
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5) !important; 
+        pointer-events: none;
         z-index: 2147483648;
         display: none;
+    }
+    
+    /* === 截图加载时的提示 === */
+    /* 1. 默认状态：纯灰蒙版 (Dark Mode style) */
+    #coolauxv-loading-toast {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        /* 使用 Flex 布局居中内容 */
+        display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+        padding: 20px 30px; border-radius: 12px; font-size: 14px; z-index: 2147483655;
+        
+        background: rgba(40, 40, 40, 0.9); /* 纯深灰色，不带模糊 */
+        color: #fff;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        
+        transition: all 0.3s ease; /* 添加过渡动画 */
+    }
+
+    /* 2. 激活状态：流体玻璃 (Blur Glass) */
+    /* 当添加了 .coolauxv-blur-glass-style 类时生效 */
+    #coolauxv-loading-toast.coolauxv-blur-glass-style {
+        /* 模拟 iOS 风格的亮色毛玻璃 */
+        background: rgba(255, 255, 255, 0.25) !important;
+        backdrop-filter: blur(15px) !important;
+        -webkit-backdrop-filter: blur(15px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.5) !important;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15) !important;
+        
+        /* 玻璃背景通常较亮，文字改为深色以保证对比度 */
+        color: #1f2937 !important; 
+        text-shadow: 0 1px 1px rgba(255, 255, 255, 0.8);
     }
     
     #coolauxv-screenshot-toolbar {
@@ -588,12 +663,12 @@
     }
     
     /* 预览按钮 (透明背景，带边框) */
-    .coolauxv-blur-enabled #coolauxv-btn-preview {
+    .coolauxv-blur-glass-enabled #coolauxv-btn-preview {
         background: rgba(255, 255, 255, 0.2) !important;
         border: 1px solid rgba(255, 255, 255, 0.4) !important;
         color: #333;
     }
-    .coolauxv-blur-enabled #coolauxv-btn-preview:hover {
+    .coolauxv-blur-glass-enabled #coolauxv-btn-preview:hover {
         background: rgba(255, 255, 255, 0.4) !important;
     }
 
@@ -632,9 +707,53 @@
     }
     #coolauxv-btn-know:hover { background: #8e12c9; }
 
+    /* Markdown 表格样式 */
+    .coolauxv-markdown table {
+        border-collapse: collapse;
+        width: 100%;
+        margin: 15px 0;
+        display: block;
+        overflow-x: auto;
+    }
+    .coolauxv-markdown th, .coolauxv-markdown td {
+        border: 1px solid #dfe2e5;
+        padding: 6px 13px;
+        font-size: 13px;
+    }
+    .coolauxv-markdown th {
+        background-color: #f3f4f6;
+        font-weight: bold;
+    }
+    .coolauxv-markdown tr:nth-child(2n) {
+        background-color: #f8f9fa;
+    }
+
+    /* KaTeX 公式容器 */
+    .katex-display {
+        overflow-x: auto;
+        overflow-y: hidden;
+        margin: 10px 0;
+        padding: 5px 0;
+    }
+
+    /* Markdown 图片显示问题 */
+    .coolauxv-markdown img {
+        display: block !important;       /* 强制显示，对抗宿主网页隐藏图片的 CSS */
+        max-width: 100% !important;      /* 限制最大宽度，防止撑破容器 */
+        height: auto !important;         /* 高度自适应 */
+        border-radius: 6px;              /* 圆角美化 */
+        margin: 10px 0;                  /* 上下间距 */
+        box-shadow: 0 2px 10px rgba(0,0,0,0.1); /* 轻微阴影，增加层次感 */
+        border: 1px solid rgba(0,0,0,0.05);     /* 极淡边框 */
+        background-color: #fafafa;              /* 加载失败时的背景色 */
+    }
+
     `;
 
     GM_addStyle(styles);
+
+    const katexCSS = GM_getResourceText("katexCSS");
+    if (katexCSS) GM_addStyle(katexCSS);
 
     // --- 2. 状态变量 ---
     let popup, floatBall, cursorBtn;
@@ -725,8 +844,8 @@
 
             popup = document.createElement("div");
             popup.id = "coolauxv-translate-popup";
-            if (GM_getValue("coolauxv_enable_blur", DEFAULT_ENABLE_BLUR)) {
-                popup.classList.add("coolauxv-blur-enabled");
+            if (GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS)) {
+                popup.classList.add("coolauxv-blur-glass-enabled");
             }
             Object.assign(popup.style, {
                 display: "none", flexDirection: "column", position: "fixed",
@@ -902,8 +1021,17 @@
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">杂项 (Miscellaneous)</label>
                     <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                        <input type="checkbox" id="coolauxv-cfg-blur"> 开启窗口背景模糊 (Glass Effect)
+                        <input type="checkbox" id="coolauxv-cfg-blur-glass"> 流体玻璃 (Blur Glass)
                     </label>
+                </div>
+
+                <!-- 实验性功能 Group -->
+                <div class="coolauxv-setting-group">
+                    <label class="coolauxv-setting-label" style="color:#e65100;">🧪 实验性功能 (Experimental)</label>
+                    <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                        <input type="checkbox" id="coolauxv-cfg-new-screenshot"> 使用新截屏算法
+                    </label>
+                    <div style="font-size:11px; color:#999; margin-top:4px;">如遇截屏错位，请打开此选项，但可能引入新的性能和兼容性问题。</div>
                 </div>
 
                 <div class="coolauxv-reset-btn" id="coolauxv-cfg-reset">⚠️ 重置所有配置</div>
@@ -912,6 +1040,21 @@
             <div id="coolauxv-resize-handle"><svg id="coolauxv-resize-icon" viewBox="0 0 10 10"><path d="M10 10 L10 2 L2 10 Z" /></svg></div>
             `;
             document.body.appendChild(popup);
+
+            // 截图加载提示
+            const loadingToast = document.createElement("div");
+            loadingToast.id = "coolauxv-loading-toast";
+            if (GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS)) {
+                loadingToast.classList.add("coolauxv-blur-glass-style");
+            }
+            loadingToast.innerHTML = `
+                <div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
+                    <div class="coolauxv-pulse" style="font-size:24px;">📸</div>
+                    <div>正在初始化识屏...</div>
+                    <div style="font-size:11px; opacity:0.8;">加载截图中，请耐心等待</div>
+                </div>
+            `;
+            document.body.appendChild(loadingToast);
 
             // 截图层
             const screenshotLayer = document.createElement("div");
@@ -987,8 +1130,7 @@
             };
         }
 
-        // --- 下面是通用的配置加载与保存逻辑（保持不变）---
-
+        // --- 通用的配置加载与保存逻辑 ---
         const clearableInputs = [
             "coolauxv-cfg-key", "coolauxv-cfg-model",
             "coolauxv-cfg-model-vision",
@@ -1042,9 +1184,10 @@
         const inputPromptTrans = popup.querySelector("#coolauxv-cfg-prompt-trans");
         const inputPromptExplain = popup.querySelector("#coolauxv-cfg-prompt-explain");
         const inputPromptVision = popup.querySelector("#coolauxv-cfg-prompt-vision");
-        const inputBlur = popup.querySelector("#coolauxv-cfg-blur");
+        const inputBlurGlass = popup.querySelector("#coolauxv-cfg-blur-glass"); 
         const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
+        const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
 
         radioBtns.forEach(radio => {
             radio.addEventListener('change', (e) => {
@@ -1072,8 +1215,11 @@
             const targetRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="${currentLevel}"]`);
             if (targetRadio) targetRadio.checked = true;
 
-            if (inputBlur) {
-                inputBlur.checked = GM_getValue("coolauxv_enable_blur", DEFAULT_ENABLE_BLUR);
+            if (inputBlurGlass) {
+                inputBlurGlass.checked = GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS);
+            }
+            if (inputNewScreenshot) {
+                inputNewScreenshot.checked = GM_getValue("coolauxv_use_new_screenshot", DEFAULT_USE_NEW_SCREENSHOT);
             }
             if (inputModelVision) inputModelVision.value = GM_getValue("coolauxv_model_vision", "");
             if (inputPromptVision) inputPromptVision.value = GM_getValue("coolauxv_prompt_vision", "");
@@ -1088,18 +1234,21 @@
                 GM_deleteValue("coolauxv_log_level");
                 GM_deleteValue("coolauxv_prompt_trans");
                 GM_deleteValue("coolauxv_prompt_explain");
-                GM_deleteValue("coolauxv_enable_blur");
                 GM_deleteValue("coolauxv_model_vision");
                 GM_deleteValue("coolauxv_prompt_vision");
+                GM_deleteValue("coolauxv_use_new_screenshot");
+                GM_deleteValue("coolauxv_enable_blur_glass");
                 GM_deleteValue("coolauxv_installed_version"); // 重置更新状态
                 loadConfig();
                 // 重置 Radio
                 const defaultRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="debug"]`);
                 if (defaultRadio) defaultRadio.checked = true;
-                if (inputBlur) {
-                    inputBlur.checked = DEFAULT_ENABLE_BLUR;
-                    toggleBlur(DEFAULT_ENABLE_BLUR);
+                if (inputBlurGlass) {
+                    inputBlurGlass.checked = DEFAULT_ENABLE_BLUR_GLASS;
+                    toggleBlurGlass(DEFAULT_ENABLE_BLUR_GLASS);
                 }
+                // 重置 Checkbox 状态
+                if (inputNewScreenshot) inputNewScreenshot.checked = false;
                 alert("配置已重置。");
             }
         };
@@ -1113,16 +1262,50 @@
         if (inputModelVision) inputModelVision.addEventListener("input", (e) => saveConfig("coolauxv_model_vision", e.target.value));
         if (inputPromptVision) inputPromptVision.addEventListener("input", (e) => saveConfig("coolauxv_prompt_vision", e.target.value));
 
-        const toggleBlur = (enabled) => {
-            if (enabled) popup.classList.add("coolauxv-blur-enabled");
-            else popup.classList.remove("coolauxv-blur-enabled");
+        const toggleBlurGlass = (enabled) => {
+            // 主窗口
+            if (enabled) popup.classList.add("coolauxv-blur-glass-enabled");
+            else popup.classList.remove("coolauxv-blur-glass-enabled");
+
+            // Loading 提示
+            const toast = document.getElementById("coolauxv-loading-toast");
+            if (toast) {
+                if (enabled) toast.classList.add("coolauxv-blur-glass-style");
+                else toast.classList.remove("coolauxv-blur-glass-style");
+            }
+
+            // 模型选择按钮
+            const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
+            modelBtns.forEach(btn => {
+                if (enabled) btn.classList.add("coolauxv-blur-glass-style-btn");
+                else btn.classList.remove("coolauxv-blur-glass-style-btn");
+            });
         };
 
-        if (inputBlur) {
-            inputBlur.addEventListener("change", (e) => {
+        if (inputBlurGlass) {
+            inputBlurGlass.addEventListener("change", (e) => {
                 const enabled = e.target.checked;
-                GM_setValue("coolauxv_enable_blur", enabled); // 保存到全局变量
-                toggleBlur(enabled); // 实时应用效果
+                GM_setValue("coolauxv_enable_blur_glass", enabled); // 保存到全局变量
+                if (enabled) {
+                    showModal(
+                        "⚠️ 兼容性警告",
+                        "⚠️ 如遇性能或兼容性问题请关闭此选项。"
+                    );
+                }
+                toggleBlurGlass(enabled); // 实时应用效果
+            });
+        }
+
+        if (inputNewScreenshot) {
+            inputNewScreenshot.addEventListener("change", (e) => {
+                const enabled = e.target.checked;
+                GM_setValue("coolauxv_use_new_screenshot", enabled);
+                if (enabled) {
+                    showModal(
+                        "⚠️ 实验性功能警告",
+                        "在装有 Canvas Blocker 类插件的浏览器或 Brave 等带指纹屏蔽功能的浏览器上，旧截屏算法可能存在错位问题。此选项旨在尝试解决此类错误，但可能存在性能和兼容性问题（网页无响应、获取到的界面全是条纹等），如遇兼容性问题请授权访问 Canvas 信息，或关闭对应浏览器插件。"
+                    );
+                }
             });
         }
 
@@ -1139,6 +1322,7 @@
                 }
             };
         });
+        toggleBlurGlass(GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS));
     }
 
 
@@ -1180,14 +1364,70 @@
 
     function updateScroll(element, newContentHTML, isRaw) {
         const isNearBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 30;
+
         if (isRaw) {
             element.innerText = newContentHTML;
         } else {
-            try { element.innerHTML = marked.parse(newContentHTML); }
-            catch (e) { element.innerText = newContentHTML; }
+            try {
+                // === 核心渲染逻辑 ===
+
+                // 1. 数学公式保护 (Math Protection)
+                // 使用纯字母数字的占位符 (如 KATEXBLOCK0END)，避免 Markdown 解析器将其识别为粗体/斜体
+                const mathBlocks = [];
+                let protectedText = newContentHTML
+                    // 保护 $$...$$ 和 \[...\] (块级公式，支持换行)
+                    .replace(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g, (match) => {
+                        mathBlocks.push(match);
+                        return `KATEXBLOCK${mathBlocks.length - 1}END`;
+                    })
+                    // 保护 \(...\) (行内公式)
+                    .replace(/(\\\([\s\S]*?\\\))/g, (match) => {
+                        mathBlocks.push(match);
+                        return `KATEXBLOCK${mathBlocks.length - 1}END`;
+                    })
+                    // 保护 $...$ (行内公式)
+                    // (?!\s) 和 (?<!\s) 用于防止匹配货币符号 (例如: $100 vs $200)
+                    .replace(/(\$(?!\s)[^$\n]+?(?<!\s)\$)/g, (match) => {
+                        mathBlocks.push(match);
+                        return `KATEXBLOCK${mathBlocks.length - 1}END`;
+                    });
+
+                // 2. Markdown 解析
+                let htmlContent = marked.parse(protectedText, {
+                    gfm: true,
+                    breaks: true
+                });
+
+                // 3. 还原数学公式
+                // 查找刚才生成的纯文本占位符，替换回原始 LaTeX 代码
+                htmlContent = htmlContent.replace(/KATEXBLOCK(\d+)END/g, (match, index) => {
+                    return mathBlocks[index];
+                });
+
+                element.innerHTML = htmlContent;
+
+                // 4. KaTeX 公式渲染
+                if (typeof renderMathInElement !== 'undefined') {
+                    renderMathInElement(element, {
+                        delimiters: [
+                            { left: '$$', right: '$$', display: true },
+                            { left: '\\[', right: '\\]', display: true },
+                            { left: '$', right: '$', display: false },
+                            { left: '\\(', right: '\\)', display: false }
+                        ],
+                        throwOnError: false,
+                        ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code"]
+                    });
+                }
+            } catch (e) {
+                console.error("Render Error:", e);
+                element.innerText = newContentHTML;
+            }
         }
+
         if (isNearBottom || newContentHTML.length < 50) element.scrollTop = element.scrollHeight;
     }
+
 
     // 专门用于程序化控制推理框显隐的函数
     function setReasoningVisibility(visible) {
@@ -1540,37 +1780,126 @@
         document.addEventListener("touchend", onSplitterUp);
     }
 
+    // ============================
+    // 通用弹窗组件 (H1标题 + 完整 Markdown 层级支持)
+    // ============================
+    function showModal(title, content) {
+        if (!title && !content) {
+            console.warn("[CoolAuxv] showModal: Title and content cannot both be empty.");
+            return;
+        }
 
-    // 版本检测与日志弹窗逻辑
+        const existing = document.getElementById("coolauxv-modal-overlay");
+        if (existing) document.body.removeChild(existing);
+
+        const overlay = document.createElement("div");
+        overlay.id = "coolauxv-modal-overlay";
+        Object.assign(overlay.style, {
+            position: "fixed", top: "0", left: "0", width: "100vw", height: "100vh",
+            background: "rgba(0, 0, 0, 0.5)", zIndex: "2147483660",
+            display: "flex", justifyContent: "center", alignItems: "center",
+            backdropFilter: "blur(4px)", opacity: "0", transition: "opacity 0.3s"
+        });
+
+        // --- 内容处理 ---
+        let renderedBody = "";
+        if (content) {
+            let str = String(content);
+            // 智能去缩进
+            const lines = str.split('\n');
+            while (lines.length && !lines[0].trim()) lines.shift();
+            while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+            if (lines.length > 0) {
+                const minIndent = lines.reduce((min, line) => {
+                    if (!line.trim()) return min;
+                    const indent = line.match(/^\s*/)[0].length;
+                    return indent < min ? indent : min;
+                }, Infinity);
+                if (minIndent !== Infinity && minIndent > 0) {
+                    str = lines.map(line => line.length >= minIndent ? line.slice(minIndent) : line).join('\n');
+                } else {
+                    str = lines.join('\n');
+                }
+            }
+
+            // Markdown 渲染
+            if (typeof marked !== 'undefined') {
+                try {
+                    renderedBody = marked.parse(str, { gfm: true, breaks: true });
+                } catch (e) {
+                    const escapeHTML = (s) => s.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+                    renderedBody = `<div style="white-space: pre-wrap; word-break: break-word;">${escapeHTML(str)}</div>`;
+                }
+            } else {
+                const escapeHTML = (s) => s.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+                renderedBody = `<div style="white-space: pre-wrap; word-break: break-word;">${escapeHTML(str)}</div>`;
+            }
+        }
+
+        // --- 构建 DOM ---
+        // 使用 flex 布局确保长内容可滚动
+        // 注入局部 <style> 确保 Markdown 标题 (h1-h6) 样式正确
+        let innerHTML = `
+            <div id="coolauxv-modal-box" style="user-select: none; background: white; width: 450px; max-width: 90%; max-height: 85vh; display: flex; flex-direction: column; padding: 20px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); transform: scale(0.9); transition: transform 0.3s; text-align: left !important; color:#333;">
+                <style>
+                    /* 局部样式：确保弹窗内 Markdown 标题层级分明，不被全局样式重置 */
+                    .coolauxv-markdown-body h1 { font-size: 1.6em; margin: 0.6em 0 0.4em 0; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; font-weight: bold; }
+                    .coolauxv-markdown-body h2 { font-size: 1.4em; margin: 0.8em 0 0.4em 0; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; font-weight: bold; }
+                    .coolauxv-markdown-body h3 { font-size: 1.25em; margin: 0.8em 0 0.4em 0; font-weight: bold; }
+                    .coolauxv-markdown-body h4 { font-size: 1.1em; margin: 0.8em 0 0.4em 0; font-weight: bold; }
+                    .coolauxv-markdown-body h5 { font-size: 1em; margin: 1em 0 0.2em 0; font-weight: bold; color: #555; }
+                    .coolauxv-markdown-body h6 { font-size: 0.9em; margin: 1em 0 0.2em 0; font-weight: bold; color: #777; }
+                    .coolauxv-markdown-body p { margin: 0.5em 0; line-height: 1.6; }
+                    .coolauxv-markdown-body ul, .coolauxv-markdown-body ol { padding-left: 20px; margin: 0.5em 0; }
+                    .coolauxv-markdown-body li { margin: 0.3em 0; }
+                    .coolauxv-markdown-body code { background: #f0f0f0; padding: 2px 4px; border-radius: 4px; font-family: monospace; color: #c0392b; }
+                </style>
+        `;
+
+        if (title) {
+            // 弹窗主标题：使用 H1，字号加大
+            innerHTML += `<h1 style="margin:0 0 10px 0; font-size: 22px; color:#a516e8; border-bottom:1px solid #eee; padding-bottom:10px; flex-shrink: 0; line-height: 1.3;">${title}</h1>`;
+        }
+
+        if (renderedBody) {
+            // 内容区域：支持滚动，字号适中
+            innerHTML += `<div class="coolauxv-markdown-body" style="font-size:14px; color:#444; overflow-y: auto; flex: 1; padding-right: 5px;">${renderedBody}</div>`;
+        }
+
+        innerHTML += `<button id="coolauxv-modal-close" style="background: #a516e8; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 15px; width: 100%; flex-shrink: 0;">确定</button>`;
+        innerHTML += `</div>`;
+
+        overlay.innerHTML = innerHTML;
+        document.body.appendChild(overlay);
+
+        setTimeout(() => {
+            overlay.style.opacity = "1";
+            const box = overlay.querySelector("#coolauxv-modal-box");
+            if (box) box.style.transform = "scale(1)";
+        }, 10);
+
+        const closeModal = () => {
+            overlay.style.opacity = "0";
+            setTimeout(() => {
+                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            }, 300);
+        };
+
+        const closeBtn = document.getElementById("coolauxv-modal-close");
+        if (closeBtn) closeBtn.onclick = closeModal;
+        overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
+    }
+
+    // 版本检测与日志弹窗逻辑 (使用通用弹窗)
     function checkUpdateAndShowChangelog() {
         const currentVer = GM_info.script.version;
         const lastVer = GM_getValue("coolauxv_installed_version", "0.0");
 
-        // 只有当版本号变更，且弹窗没显示过的时候才执行
-        if (currentVer !== lastVer && !document.getElementById("coolauxv-changelog-overlay")) {
-            const overlay = document.createElement("div");
-            overlay.id = "coolauxv-changelog-overlay";
-            overlay.innerHTML = `
-                <div id="coolauxv-changelog-box">
-                    ${LATEST_CHANGELOG}
-                    <button id="coolauxv-btn-know">我知道了</button>
-                </div>
-            `;
-            document.body.appendChild(overlay);
-
-            setTimeout(() => {
-                overlay.style.opacity = "1";
-                overlay.querySelector("#coolauxv-changelog-box").style.transform = "scale(1)";
-            }, 10);
-
-            document.getElementById("coolauxv-btn-know").onclick = () => {
-                GM_setValue("coolauxv_installed_version", currentVer);
-                overlay.style.opacity = "0";
-                setTimeout(() => document.body.removeChild(overlay), 300);
-            };
+        if (currentVer !== lastVer) {
+            showModal(`🎉 更新日志 ${currentVer}`, LATEST_CHANGELOG);
+            GM_setValue("coolauxv_installed_version", currentVer);
         }
     }
-
 
     // ========================================================================
     // 网络引擎 (Stream)
@@ -1840,53 +2169,129 @@
     let startX, startY;
 
     function initScreenshotEvents() {
+        let fullScreenCanvas = null;
+        let bgDataUrl = "";
+        let isNewAlgoMode = false;
+
         const btnShot = popup.querySelector("#coolauxv-btn-screenshot");
         const overlay = document.querySelector("#coolauxv-screenshot-overlay");
         const selectionBox = document.querySelector("#coolauxv-selection-box");
         const toolbar = document.querySelector("#coolauxv-screenshot-toolbar");
         const btnOk = document.querySelector("#coolauxv-shot-ok");
         const btnCancel = document.querySelector("#coolauxv-shot-cancel");
+        const loadingToast = document.querySelector("#coolauxv-loading-toast");
 
         if (!btnShot || !overlay) return;
 
-        // 工具栏防穿透：阻止所有鼠标和触摸事件冒泡
-        // 这样点击按钮时，绝对不会触发 overlay 的"重新开始框选"逻辑
         const stopProp = (e) => e.stopPropagation();
         ['mousedown', 'mouseup', 'click', 'touchstart', 'touchend'].forEach(evt => {
             toolbar.addEventListener(evt, stopProp);
         });
 
-        // 1. 激活截图模式
+        // ============================
+        // 1. 点击截图按钮 (入口)
+        // ============================
         btnShot.onclick = () => {
+            isNewAlgoMode = GM_getValue("coolauxv_use_new_screenshot", false);
+
             popup.style.display = "none";
-            overlay.style.display = "block";
-            document.body.style.cursor = "crosshair";
-            selectionBox.style.display = "none";
-            toolbar.style.display = "none";
-            document.body.style.overflow = "hidden"; // 锁死滚动
+            if (loadingToast) loadingToast.style.display = "flex";
+            document.body.style.cursor = "wait";
+
+            setTimeout(async () => {
+                try {
+                    overlay.style.display = "block";
+                    // 强制 Loading 状态
+                    overlay.style.cursor = "wait";
+
+                    selectionBox.style.display = "none";
+                    toolbar.style.display = "none";
+                    document.body.style.overflow = "hidden";
+
+                    if (isNewAlgoMode) {
+                        // >>>>>> 新逻辑：全屏截图 >>>>>>
+
+                        // 获取兼容的 Scroll 位置
+                        const scrollTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+                        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft || document.body.scrollLeft || 0;
+
+                        fullScreenCanvas = await html2canvas(document.documentElement, {
+                            // 裁切起点：绝对坐标
+                            x: scrollLeft,
+                            y: scrollTop,
+                            width: window.innerWidth,
+                            height: window.innerHeight,
+
+                            // 禁止 html2canvas 内部偏移
+                            scrollX: 0,
+                            scrollY: 0,
+
+                            useCORS: true,
+                            scale: window.devicePixelRatio,
+                            allowTaint: false,
+                            logging: false,
+                            ignoreElements: (element) => {
+                                const id = element.id;
+                                return id === "coolauxv-screenshot-overlay" ||
+                                    id === "coolauxv-translate-popup" ||
+                                    id === "coolauxv-translate-icon" ||
+                                    id === "coolauxv-img-preview-overlay" ||
+                                    id === "coolauxv-loading-toast";
+                            }
+                        });
+
+                        bgDataUrl = fullScreenCanvas.toDataURL();
+
+                        overlay.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(${bgDataUrl})`;
+                        overlay.style.backgroundPosition = "0 0";
+                        overlay.style.backgroundRepeat = "no-repeat";
+                        overlay.style.backgroundSize = "100% 100%";
+                        overlay.style.backgroundColor = "transparent";
+                    } else {
+                        // >>>>>> 老逻辑 >>>>>>
+                        overlay.style.backgroundImage = "none";
+                        overlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
+                    }
+
+                    // 恢复十字光标
+                    overlay.style.cursor = "crosshair";
+                    document.body.style.cursor = "crosshair";
+
+                } catch (err) {
+                    console.error("识屏初始化失败:", err);
+                    alert("识屏初始化失败，请重试。");
+                    resetScreenshotUI();
+                    popup.style.display = "flex";
+                } finally {
+                    if (loadingToast) loadingToast.style.display = "none";
+                }
+            }, 100);
         };
 
-        // 坐标获取助手：兼容鼠标和触摸
+        // ============================
+        // 2. 选区交互
+        // ============================
         const getClientPos = (e) => {
-            if (e.touches && e.touches.length > 0) {
-                return { x: e.touches[0].clientX, y: e.touches[0].clientY };
-            }
+            if (e.touches && e.touches.length > 0) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
             return { x: e.clientX, y: e.clientY };
         };
 
-        // --- 统一的动作处理函数 ---
-
         const onStart = (e) => {
-            // 如果是鼠标右键，忽略
             if (e.type === 'mousedown' && e.button !== 0) return;
-
-            // 必须阻止默认行为，防止移动端触发滚动或原生缩放
             if (e.cancelable) e.preventDefault();
-
             isSelecting = true;
+
             const pos = getClientPos(e);
-            startX = pos.x;
-            startY = pos.y;
+            startX = pos.x; startY = pos.y;
+
+            if (isNewAlgoMode) {
+                overlay.style.backgroundImage = `url(${bgDataUrl})`;
+            } else {
+                overlay.style.backgroundColor = "transparent";
+            }
+
+            selectionBox.style.background = "transparent";
+            selectionBox.style.boxShadow = "0 0 0 9999px rgba(0, 0, 0, 0.5)";
 
             selectionBox.style.left = startX + "px";
             selectionBox.style.top = startY + "px";
@@ -1898,161 +2303,152 @@
 
         const onMove = (e) => {
             if (!isSelecting) return;
-            // 核心：移动端画框时严禁页面滚动
             if (e.cancelable) e.preventDefault();
-
             const pos = getClientPos(e);
-            const currentX = pos.x;
-            const currentY = pos.y;
-
-            const width = Math.abs(currentX - startX);
-            const height = Math.abs(currentY - startY);
-            const left = Math.min(currentX, startX);
-            const top = Math.min(currentY, startY);
-
-            selectionBox.style.left = left + "px";
-            selectionBox.style.top = top + "px";
-            selectionBox.style.width = width + "px";
-            selectionBox.style.height = height + "px";
+            const w = Math.abs(pos.x - startX);
+            const h = Math.abs(pos.y - startY);
+            const l = Math.min(pos.x, startX);
+            const t = Math.min(pos.y, startY);
+            selectionBox.style.left = l + "px";
+            selectionBox.style.top = t + "px";
+            selectionBox.style.width = w + "px";
+            selectionBox.style.height = h + "px";
         };
 
-        const onEnd = (e) => {
+        const onEnd = () => {
             if (!isSelecting) return;
             isSelecting = false;
 
             const rect = selectionBox.getBoundingClientRect();
-            // 防止误触：如果选区太小（比如只是点击了一下），则隐藏选区
             if (rect.width < 10 || rect.height < 10) {
                 selectionBox.style.display = "none";
+                if (isNewAlgoMode) {
+                    overlay.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(${bgDataUrl})`;
+                } else {
+                    overlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
+                }
                 return;
             }
 
             toolbar.style.display = "flex";
-            // 计算工具栏位置，适配屏幕边缘
-            let toolTop = rect.bottom + 10;
-            let toolLeft = rect.right - 100;
-
-            // 如果底部空间不够，翻转到选区上方
-            if (toolTop > window.innerHeight - 50) toolTop = rect.top - 45;
-            // 如果右边空间不够，靠左一点
-            if (toolLeft < 10) toolLeft = 10;
-
-            toolbar.style.top = toolTop + "px";
-            toolbar.style.left = toolLeft + "px";
+            let t = rect.bottom + 10; let l = rect.right - 100;
+            if (t > window.innerHeight - 50) t = rect.top - 45;
+            if (l < 10) l = 10;
+            toolbar.style.top = t + "px"; toolbar.style.left = l + "px";
         };
 
-        // 绑定双端事件
-        // passive: false 是为了允许我们在 touchmove 中调用 preventDefault()
         overlay.addEventListener("mousedown", onStart);
         overlay.addEventListener("touchstart", onStart, { passive: false });
-
         overlay.addEventListener("mousemove", onMove);
         overlay.addEventListener("touchmove", onMove, { passive: false });
-
         overlay.addEventListener("mouseup", onEnd);
         overlay.addEventListener("touchend", onEnd);
 
-
-        // 3. 确定按钮逻辑 (保持不变，确保 allowTaint: false)
-        // 3. 确定按钮逻辑
+        // ============================
+        // 3. 确定 / 取消 / 快捷键
+        // ============================
         btnOk.onclick = (e) => {
-            e.stopPropagation();
+            if (e) e.stopPropagation();
+            if (selectionBox.style.display === "none") return;
+
+            const rect = selectionBox.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
             const originalText = btnOk.innerText;
 
-            // 1. 先更新 UI，告诉用户正在处理
             btnOk.innerText = "处理中...";
             btnOk.style.opacity = "0.7";
             btnOk.style.cursor = "wait";
 
-            // 2. 使用 setTimeout 将繁重的截图任务推迟到下一次事件循环
-            // 这样浏览器就有机会先把按钮文字渲染成 "处理中..."，解决卡顿感
             setTimeout(async () => {
-                const rect = selectionBox.getBoundingClientRect();
-                const scrollTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop;
-                const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft || document.body.scrollLeft;
-
                 try {
-                    const canvas = await html2canvas(document.documentElement, {
-                        x: rect.left + scrollLeft,
-                        y: rect.top + scrollTop,
-                        width: rect.width,
-                        height: rect.height,
-                        scrollX: 0,
-                        scrollY: 0,
-                        useCORS: true,
-                        allowTaint: false,
-                        logging: false,
-                        scale: window.devicePixelRatio,
-                        ignoreElements: (element) => {
-                            return element.id === "coolauxv-screenshot-overlay" ||
-                                element.id === "coolauxv-translate-popup" ||
-                                element.id === "coolauxv-translate-icon" ||
-                                element.id === "coolauxv-img-preview-overlay";
-                        }
-                    });
-
-                    capturedImageBase64 = canvas.toDataURL("image/jpeg", 0.8);
+                    if (isNewAlgoMode) {
+                        if (!fullScreenCanvas) throw new Error("Canvas丢失");
+                        const cropCanvas = document.createElement("canvas");
+                        cropCanvas.width = rect.width * dpr;
+                        cropCanvas.height = rect.height * dpr;
+                        const ctx = cropCanvas.getContext("2d");
+                        ctx.drawImage(fullScreenCanvas, rect.left * dpr, rect.top * dpr, cropCanvas.width, cropCanvas.height, 0, 0, cropCanvas.width, cropCanvas.height);
+                        capturedImageBase64 = cropCanvas.toDataURL("image/jpeg", 0.8);
+                    } else {
+                        // 老算法也加上 scrollX/Y: 0 以防万一
+                        const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+                        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
+                        const canvas = await html2canvas(document.documentElement, {
+                            x: rect.left + scrollLeft,
+                            y: rect.top + scrollTop,
+                            width: rect.width,
+                            height: rect.height,
+                            scrollX: 0,
+                            scrollY: 0,
+                            useCORS: true, allowTaint: false, logging: false, scale: dpr,
+                            ignoreElements: (el) => {
+                                const id = el.id;
+                                return id === "coolauxv-screenshot-overlay" ||
+                                    id === "coolauxv-translate-popup" ||
+                                    id === "coolauxv-translate-icon" ||
+                                    id === "coolauxv-img-preview-overlay" ||
+                                    id === "coolauxv-loading-toast";
+                            }
+                        });
+                        capturedImageBase64 = canvas.toDataURL("image/jpeg", 0.8);
+                    }
 
                     const btnPreview = popup.querySelector("#coolauxv-btn-preview");
                     if (btnPreview) btnPreview.style.display = "inline-block";
-
                     resetScreenshotUI();
                     popup.style.display = "flex";
 
-                    // 自动填充并调用
                     const input = popup.querySelector("#coolauxv-input");
                     const config = getActiveConfig();
-                    if (!input.value.trim()) {
-                        input.value = config.promptVision;
-                    }
-
+                    if (!input.value.trim()) input.value = config.promptVision;
                     doImageAnalysis('vision');
 
                 } catch (err) {
-                    console.error("截图失败:", err);
+                    console.error("截图处理失败:", err);
                     alert("截图失败: " + err.message);
                     resetScreenshotUI();
                     popup.style.display = "flex";
                 } finally {
-                    // 无论成功失败，恢复按钮状态
                     btnOk.innerText = originalText;
                     btnOk.style.opacity = "1";
                     btnOk.style.cursor = "pointer";
                 }
-            }, 50); // 延时 50ms 足够让浏览器重绘 UI
+            }, 50);
         };
 
-
-        // 4. 取消按钮
-        btnCancel.onclick = (e) => {
-            e.stopPropagation();
-            resetScreenshotUI();
-            popup.style.display = "flex";
-        };
+        btnCancel.onclick = (e) => { if (e) e.stopPropagation(); resetScreenshotUI(); popup.style.display = "flex"; };
 
         function resetScreenshotUI() {
             overlay.style.display = "none";
+            overlay.style.backgroundImage = "none";
+            overlay.style.backgroundColor = "transparent";
+            overlay.style.cursor = "";
             selectionBox.style.display = "none";
             toolbar.style.display = "none";
-            document.body.style.overflow = ""; // 恢复滚动
+            document.body.style.overflow = "";
             document.body.style.cursor = "";
             isSelecting = false;
+            fullScreenCanvas = null;
+            bgDataUrl = "";
+            if (loadingToast) loadingToast.style.display = "none";
         }
-        
-        // 5. 按 ESC 键退出截图
-        const onEscPress = (e) => {
-            if (e.key === "Escape" && overlay.style.display === "block") {
-                // 阻止默认行为（防止有些网页 ESC 会触发其他弹窗）
-                e.preventDefault();
-                e.stopPropagation();
-                // 复用取消按钮的逻辑
-                btnCancel.click();
+
+        const onKeyDown = (e) => {
+            if (overlay.style.display === "block") {
+                if (e.key === "Escape") {
+                    e.preventDefault(); e.stopPropagation();
+                    btnCancel.click();
+                }
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault(); e.stopPropagation();
+                    if (selectionBox.style.display === "block") {
+                        btnOk.click();
+                    }
+                }
             }
         };
-        // 绑定到 document 上
-        document.addEventListener("keydown", onEscPress);
+        document.addEventListener("keydown", onKeyDown);
     }
-
 
     // 执行视觉分析 API 请求
     async function doImageAnalysis(mode = 'vision') {
