@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v10.2
+// @version      v10.3
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v10.2 更新日志] 1.修复大量渲染问题(公式/矩阵/表格/图片)；2.新增“新截屏算法”开关(需手动开启以修复滚动选区错位)；3.统一流体玻璃视觉风格；4.优化识屏交互(加载提示/快捷键)；4.优化提示框布局。
+// @changelog    [v10.3 更新日志] 1.新增提示词追加模式开关。2.视觉升级: 模型选择按钮引入了动态。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @grant        GM_addStyle
@@ -72,20 +72,17 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
-        本次更新主要集中在底层渲染引擎的修复与交互逻辑的优化。
-        ## 🛠️ 渲染引擎修复
-        *   **公式支持**：引入 KaTeX 引擎，修复了 LaTeX 数学公式无法渲染的问题，重点解决了矩阵换行失败及占位符冲突导致的显示错误。
-        *   **Markdown 修正**：修复了 Markdown 表格缺失边框、图片在部分网页无法显示的问题。
-        ## 📸 识屏选区修复
-        *   **滚动错位修复**：针对长页面滚动后截图选区偏移的问题，引入了“冻结屏幕”新算法。
-        *   ⚠️ **注意**：该修复作为一个实验性功能上线，**需要在设置中手动勾选“使用新截屏算法”才能生效**。
-        ## ⏳ 交互体验优化
-        *   **状态反馈**：点击识屏后新增“请稍候”加载提示，并修复了光标状态切换逻辑（等待转圈 -> 十字准星），明确告知就绪状态。
-        *   **快捷键**：截图模式下支持按 **空格** 或 **回车** 确认选区，按 **ESC** 退出。
-        *   **提示框**：优化了提示框布局，更加紧凑清晰。
-        ## 💧 视觉统一
-        *   **流体玻璃 (Blur Glass)**：统一了 UI 风格，现在“加载提示框”和“模型选择按钮”也会跟随全局设置应用磨砂背景效果。
+        v10.3 版本更新：自定义能力与视觉体验的双重升级。
+        ## ⚙️ 提示词逻辑增强
+        *   **新增“追加”模式**：在设置翻译、解读、识图提示词时，新增了 **“追加”** 复选框。
+            *   ☑️ **勾选时**：你的自定义指令将**追加**在默认提示词末尾（适合补充额外要求）。
+            *   ⬜ **未勾选**：你的自定义指令将**完全替换**默认提示词（适合重写特定场景）。
+        ## 🎨 动态视觉升级
+        *   **Material You 配色**：模型选择按钮引入了类 Android 12 的 **Monet 动态取色引擎**。
+        *   **智能色彩**：不再使用固定颜色，而是根据标签（如“免费”、“付费”）自动生成独特的 **莫兰迪/粉彩风格** 配色。
+        *   **高对比度**：采用 Tone 96 极浅背景配合 Tone 10 极深文字，在保持界面清爽雅致的同时，确保文字清晰可读。
     `;
+
 
 
     // ========================================================================
@@ -341,14 +338,23 @@
     .coolauxv-tag-container { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
     .coolauxv-model-btn {
         display: flex; flex-direction: column; align-items: center; justify-content: center;
-        background: #eeffff; color: #0066ff; border: 1px solid #b3e0ff;
-        padding: 4px 10px; border-radius: 8px; cursor: pointer; user-select: none;
-        min-width: 80px; transition: background 0.2s;
+        
+        /* 仅保留布局，严禁出现 background/color */
+        padding: 4px 10px; border-radius: 12px; /* 圆角改大一点，符合 Android 12 风格 */
+        cursor: pointer; user-select: none;
+        min-width: 80px; 
+        
+        /* 动画 */
+        transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
         text-align: center !important;
     }
-    .coolauxv-model-btn:hover { background: #d6f5ff; }
+    .coolauxv-model-btn:hover {
+        filter: brightness(0.95); /* 稍微变暗 */
+        transform: scale(1.02);   /* 轻微放大 */
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05); /* 轻微浮起 */
+    }
     .coolauxv-model-name { font-size: 12px; font-weight: bold; }
-    .coolauxv-model-tag { font-size: 10px; color: #5599ff; margin-top: 1px; }
+    .coolauxv-model-tag { font-size: 10px; margin-top: 1px; }
 
     .coolauxv-tag-btn {
         font-size: 11px; background: #f3f4f6; color: #333; border: 1px solid #ddd;
@@ -552,7 +558,6 @@
         -webkit-backdrop-filter: blur(8px);
         border: 1px solid rgba(179, 224, 255, 0.4) !important;
         box-shadow: 0 4px 12px rgba(0, 102, 255, 0.15);
-        color: #0055d4 !important;
         transition: all 0.2s ease;
     }
     .coolauxv-model-btn.coolauxv-blur-glass-style-btn:hover {
@@ -856,24 +861,65 @@
             resetPopupState();
 
             // 生成模型按钮 HTML (带字段区分)
+            // 根据tag动态颜色，确保高对比度
+            const stringToColorStyles = (str) => {
+                let hash = 0;
+                for (let i = 0; i < str.length; i++) {
+                    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+                }
+
+                // 1. 色相：0 - 360
+                const h = Math.abs(hash % 360);
+
+                // 2. 饱和度：锁定在 25% - 40% 的低饱和度区间
+                // 这种“灰调”是 Material You 高级感的关键
+                const s = 25 + (Math.abs(hash) % 15);
+
+                return {
+                    // Surface Container (Tone 96): 极浅的粉彩背景
+                    bg: `hsl(${h}, ${s}%, 96%)`,
+
+                    // Outline (Tone 85): 稍微深一点的边框
+                    border: `hsl(${h}, ${s}%, 85%)`,
+
+                    // On Surface (Tone 10): 极深的文字，确保 100% 可读性
+                    // 饱和度稍微加高一点(s+10)让文字不显得脏
+                    text: `hsl(${h}, ${s + 10}%, 15%)`,
+
+                    // Tag 小字 (Tone 40): 中等深度，不抢主标题风头
+                    tag: `hsl(${h}, ${s + 20}%, 40%)`
+                };
+            };
+
             const generateGroupedBtns = (models, fieldName) => {
-                // 1. 按 class 分组
                 const groups = {};
                 models.forEach(m => {
                     if (!groups[m.class]) groups[m.class] = [];
                     groups[m.class].push(m);
                 });
 
-                // 2. 生成 HTML：每一个 class 一个灰色小标题，下面是一行按钮
                 return Object.keys(groups).map(className => `
                     <div class="coolauxv-sub-label" style="font-size: 12px; color: #999; margin: 8px 0 4px 0;">${className}</div>
                     <div class="coolauxv-tag-container">
-                        ${groups[className].map(m => `
-                            <div class="coolauxv-model-btn" data-field="${fieldName}" data-val="${m.id}">
+                                                ${groups[className].map(m => {
+                    const c = stringToColorStyles(m.tag);
+                    return `
+                            <!-- 
+                                样式逻辑：
+                                1. 背景色极浅 (bg)
+                                2. 边框很淡 (border)
+                                3. 文字极深 (text) - 这会覆盖内部所有文字颜色
+                            -->
+                            <div class="coolauxv-model-btn" data-field="${fieldName}" data-val="${m.id}" data-tag="${m.tag}"
+                                 style="background:${c.bg}; border: 1px solid ${c.border}; color:${c.text};">
+                                 
                                 <span class="coolauxv-model-name">${m.id}</span>
-                                <span class="coolauxv-model-tag">${m.tag}</span>
+                                
+                                <!-- Tag 使用次级颜色，或者直接继承主色 -->
+                                <span class="coolauxv-model-tag" style="color:${c.tag}">${m.tag}</span>
                             </div>
-                        `).join("")}
+                            `;
+                }).join("")}
                     </div>
                 `).join("");
             };
@@ -1004,17 +1050,32 @@
                 </div>
 
                 <div class="coolauxv-setting-group">
-                    <label class="coolauxv-setting-label">翻译提示词</label>
+                    <label class="coolauxv-setting-label">
+                        翻译提示词
+                        <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                            <input type="checkbox" id="coolauxv-cfg-append-trans"> 追加
+                        </label>
+                    </label>
                     <textarea id="coolauxv-cfg-prompt-trans" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认提示词..."></textarea>
                 </div>
 
                 <div class="coolauxv-setting-group">
-                    <label class="coolauxv-setting-label">解读提示词</label>
+                    <label class="coolauxv-setting-label">
+                        解读提示词
+                        <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                            <input type="checkbox" id="coolauxv-cfg-append-explain"> 追加
+                        </label>
+                    </label>
                     <textarea id="coolauxv-cfg-prompt-explain" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认提示词..."></textarea>
                 </div>
 
                 <div class="coolauxv-setting-group">
-                    <label class="coolauxv-setting-label">识图提示词</label>
+                    <label class="coolauxv-setting-label">
+                        识图提示词
+                        <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                            <input type="checkbox" id="coolauxv-cfg-append-vision"> 追加
+                        </label>
+                    </label>
                     <textarea id="coolauxv-cfg-prompt-vision" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认: ${DEFAULT_PROMPT_VISION}"></textarea>
                 </div>
 
@@ -1184,7 +1245,10 @@
         const inputPromptTrans = popup.querySelector("#coolauxv-cfg-prompt-trans");
         const inputPromptExplain = popup.querySelector("#coolauxv-cfg-prompt-explain");
         const inputPromptVision = popup.querySelector("#coolauxv-cfg-prompt-vision");
-        const inputBlurGlass = popup.querySelector("#coolauxv-cfg-blur-glass"); 
+        const inputAppendTrans = popup.querySelector("#coolauxv-cfg-append-trans");
+        const inputAppendExplain = popup.querySelector("#coolauxv-cfg-append-explain");
+        const inputAppendVision = popup.querySelector("#coolauxv-cfg-append-vision");
+        const inputBlurGlass = popup.querySelector("#coolauxv-cfg-blur-glass");
         const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
@@ -1210,6 +1274,9 @@
             if (inputHeight) inputHeight.value = GM_getValue("coolauxv_win_height", "");
             if (inputPromptTrans) inputPromptTrans.value = GM_getValue("coolauxv_prompt_trans", "");
             if (inputPromptExplain) inputPromptExplain.value = GM_getValue("coolauxv_prompt_explain", "");
+            if (inputAppendTrans) inputAppendTrans.checked = GM_getValue("coolauxv_append_trans", false);
+            if (inputAppendExplain) inputAppendExplain.checked = GM_getValue("coolauxv_append_explain", false);
+            if (inputAppendVision) inputAppendVision.checked = GM_getValue("coolauxv_append_vision", false);
 
             const currentLevel = GM_getValue("coolauxv_log_level", "debug"); // 这里的默认值要与常量一致
             const targetRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="${currentLevel}"]`);
@@ -1236,6 +1303,9 @@
                 GM_deleteValue("coolauxv_prompt_explain");
                 GM_deleteValue("coolauxv_model_vision");
                 GM_deleteValue("coolauxv_prompt_vision");
+                GM_deleteValue("coolauxv_append_trans");
+                GM_deleteValue("coolauxv_append_explain");
+                GM_deleteValue("coolauxv_append_vision");
                 GM_deleteValue("coolauxv_use_new_screenshot");
                 GM_deleteValue("coolauxv_enable_blur_glass");
                 GM_deleteValue("coolauxv_installed_version"); // 重置更新状态
@@ -1249,6 +1319,9 @@
                 }
                 // 重置 Checkbox 状态
                 if (inputNewScreenshot) inputNewScreenshot.checked = false;
+                if (inputAppendTrans) inputAppendTrans.checked = false;
+                if (inputAppendExplain) inputAppendExplain.checked = false;
+                if (inputAppendVision) inputAppendVision.checked = false;
                 alert("配置已重置。");
             }
         };
@@ -1261,6 +1334,9 @@
         if (inputPromptExplain) inputPromptExplain.addEventListener("input", (e) => saveConfig("coolauxv_prompt_explain", e.target.value));
         if (inputModelVision) inputModelVision.addEventListener("input", (e) => saveConfig("coolauxv_model_vision", e.target.value));
         if (inputPromptVision) inputPromptVision.addEventListener("input", (e) => saveConfig("coolauxv_prompt_vision", e.target.value));
+        if (inputAppendTrans) inputAppendTrans.addEventListener("change", (e) => GM_setValue("coolauxv_append_trans", e.target.checked));
+        if (inputAppendExplain) inputAppendExplain.addEventListener("change", (e) => GM_setValue("coolauxv_append_explain", e.target.checked));
+        if (inputAppendVision) inputAppendVision.addEventListener("change", (e) => GM_setValue("coolauxv_append_vision", e.target.checked));
 
         const toggleBlurGlass = (enabled) => {
             // 主窗口
@@ -1325,15 +1401,31 @@
         toggleBlurGlass(GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS));
     }
 
-
     function getActiveConfig() {
+        // 辅助函数：处理提示词逻辑
+        // 如果自定义为空 -> 用默认
+        // 如果自定义不为空：
+        //    -> 勾选了追加 -> 默认 + 换行 + 自定义
+        //    -> 没勾选追加 -> 自定义
+        const getFinalPrompt = (keyCustom, keyAppend, defaultText) => {
+            const custom = GM_getValue(keyCustom, "").trim();
+            const isAppend = GM_getValue(keyAppend, false);
+
+            if (!custom) return defaultText;
+            if (isAppend) return defaultText + "\n" + custom;
+            return custom;
+        };
+
         return {
             apiKey: GM_getValue("coolauxv_api_key") || DEFAULT_API_KEY,
             modelName: GM_getValue("coolauxv_model_name") || DEFAULT_MODEL_NAME,
-            promptTrans: GM_getValue("coolauxv_prompt_trans") || DEFAULT_PROMPT_TRANSLATE,
-            promptExplain: GM_getValue("coolauxv_prompt_explain") || DEFAULT_PROMPT_EXPLAIN,
+
+            // 使用辅助函数生成最终提示词
+            promptTrans: getFinalPrompt("coolauxv_prompt_trans", "coolauxv_append_trans", DEFAULT_PROMPT_TRANSLATE),
+            promptExplain: getFinalPrompt("coolauxv_prompt_explain", "coolauxv_append_explain", DEFAULT_PROMPT_EXPLAIN),
+
             modelVision: GM_getValue("coolauxv_model_vision") || DEFAULT_VISION_MODEL,
-            promptVision: GM_getValue("coolauxv_prompt_vision") || DEFAULT_PROMPT_VISION
+            promptVision: getFinalPrompt("coolauxv_prompt_vision", "coolauxv_append_vision", DEFAULT_PROMPT_VISION)
         };
     }
 
