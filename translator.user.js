@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v10.3
+// @version      v10.4
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v10.3 更新日志] 1.新增提示词追加模式开关。2.视觉升级: 模型选择按钮引入了动态。
+// @changelog    [v10.4 更新日志] 1.识屏核心重构，新增 v1/v2/v3 三档选择器，v3 模式完美支持 Chrome 内置 PDF 阅读器截图。2.新增悬浮球常驻开关，优化用户交互体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @grant        GM_addStyle
@@ -65,22 +65,22 @@
     const DEFAULT_SHOW_RAW = false;
     const DEFAULT_SHOW_REASONING = true;
     const DEFAULT_ENABLE_BLUR_GLASS = false; // 默认关闭模糊
-    const DEFAULT_USE_NEW_SCREENSHOT = false; // 默认使用老逻辑截图
+    const DEFAULT_USE_NEW_SCREENSHOT = "v1"; // 默认使用老逻辑截图
 
 
     const DEFAULT_PROMPT_TRANSLATE = "你是一个翻译引擎。将用户输入直接翻译成中文。如果输入是中文则译为英文。不要输出任何多余的解释。";
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
-        v10.3 版本更新：自定义能力与视觉体验的双重升级。
-        ## ⚙️ 提示词逻辑增强
-        *   **新增“追加”模式**：在设置翻译、解读、识图提示词时，新增了 **“追加”** 复选框。
-            *   ☑️ **勾选时**：你的自定义指令将**追加**在默认提示词末尾（适合补充额外要求）。
-            *   ⬜ **未勾选**：你的自定义指令将**完全替换**默认提示词（适合重写特定场景）。
-        ## 🎨 动态视觉升级
-        *   **Material You 配色**：模型选择按钮引入了类 Android 12 的 **Monet 动态取色引擎**。
-        *   **智能色彩**：不再使用固定颜色，而是根据标签（如“免费”、“付费”）自动生成独特的 **莫兰迪/粉彩风格** 配色。
-        *   **高对比度**：采用 Tone 96 极浅背景配合 Tone 10 极深文字，在保持界面清爽雅致的同时，确保文字清晰可读。
+        v10.4 版本更新：识屏算法更新与悬浮求常驻
+        ## 📸 识屏核心重构
+        *   **算法版本升级**：废弃原“新截屏算法”开关，升级为 **v1/v2/v3** 三档选择器。
+        *   **v3 强力模式**：引入原生屏幕共享 (getDisplayMedia) 技术，**完美解决 Chrome 内置 PDF 阅读器**、视频及受保护页面截图全黑的问题。
+        *   **智能防抖**：v3 模式内置智能延迟，自动规避“正在共享此标签页”的系统弹窗，确保截图画面纯净。
+        ## 🧩 体验与交互优化
+        *   **悬浮球常驻**：新增“悬浮球常驻”开关，关闭主窗口后悬浮球依然显示，随时待命。
+        *   **自动清理机制**：在常驻模式下关闭窗口时，自动清空截图缓存并重置预览状态，防止误操作。
+        *   **UI 细节微调**：优化设置页布局，修复了部分选项未对齐的问题。
     `;
 
 
@@ -847,6 +847,11 @@
             };
             document.body.appendChild(floatBall);
 
+            // 如果开启了悬浮球常驻，且主窗口未显示（初始化时肯定未显示），则显示悬浮球
+            if (GM_getValue("coolauxv_persistent_ball", false)) {
+                floatBall.style.display = "block";
+            }
+
             popup = document.createElement("div");
             popup.id = "coolauxv-translate-popup";
             if (GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS)) {
@@ -1081,19 +1086,36 @@
 
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">杂项 (Miscellaneous)</label>
-                    <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                        <input type="checkbox" id="coolauxv-cfg-blur-glass"> 流体玻璃 (Blur Glass)
-                    </label>
+                    <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center;">
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-cfg-blur-glass"> 流体玻璃 (Blur Glass)
+                        </label>
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-cfg-persistent-ball"> 悬浮球常驻
+                        </label>
+                    </div>
                 </div>
 
                 <!-- 实验性功能 Group -->
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label" style="color:#e65100;">🧪 实验性功能 (Experimental)</label>
-                    <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                        <input type="checkbox" id="coolauxv-cfg-new-screenshot"> 使用新截屏算法
-                    </label>
-                    <div style="font-size:11px; color:#999; margin-top:4px;">如遇截屏错位，请打开此选项，但可能引入新的性能和兼容性问题。</div>
+                    
+                    <!-- 第一行：标签 + 下拉框 (Flex横向排列) -->
+                    <div style="display:flex; align-items:center; gap:10px; margin-top:5px;">
+                        <span style="font-size:13px; color:#555;">截屏算法版本</span>
+                        <select id="coolauxv-cfg-new-screenshot" style="padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:12px; background:#fff;">
+                            <option value="v1">v1 (默认 - 旧算法)</option>
+                            <option value="v2">v2 (html2canvas 全屏)</option>
+                            <option value="v3">v3 (原生接口 - 屏幕共享)</option>
+                        </select>
+                    </div>
+
+                    <!-- 第二行：提示文字 (独立div，Block纵向排列) -->
+                    <div style="display:block; margin-top:6px; font-size:11px; color:#999; line-height:1.4;">
+                        v1: 兼容性最好; v2: 修复错位; v3: 更通用，但Android可能不能用
+                    </div>
                 </div>
+
 
                 <div class="coolauxv-reset-btn" id="coolauxv-cfg-reset">⚠️ 重置所有配置</div>
             </div>
@@ -1249,6 +1271,7 @@
         const inputAppendExplain = popup.querySelector("#coolauxv-cfg-append-explain");
         const inputAppendVision = popup.querySelector("#coolauxv-cfg-append-vision");
         const inputBlurGlass = popup.querySelector("#coolauxv-cfg-blur-glass");
+        const inputPersistentBall = popup.querySelector("#coolauxv-cfg-persistent-ball");
         const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
@@ -1285,8 +1308,15 @@
             if (inputBlurGlass) {
                 inputBlurGlass.checked = GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS);
             }
+            if (inputPersistentBall) {
+                inputPersistentBall.checked = GM_getValue("coolauxv_persistent_ball", false);
+            }
             if (inputNewScreenshot) {
-                inputNewScreenshot.checked = GM_getValue("coolauxv_use_new_screenshot", DEFAULT_USE_NEW_SCREENSHOT);
+                let val = GM_getValue("coolauxv_use_new_screenshot", DEFAULT_USE_NEW_SCREENSHOT);
+                // 兼容旧版配置 (true->v2, false->v1)
+                if (val === true) val = "v2";
+                if (val === false) val = "v1";
+                inputNewScreenshot.value = val;
             }
             if (inputModelVision) inputModelVision.value = GM_getValue("coolauxv_model_vision", "");
             if (inputPromptVision) inputPromptVision.value = GM_getValue("coolauxv_prompt_vision", "");
@@ -1308,6 +1338,7 @@
                 GM_deleteValue("coolauxv_append_vision");
                 GM_deleteValue("coolauxv_use_new_screenshot");
                 GM_deleteValue("coolauxv_enable_blur_glass");
+                GM_deleteValue("coolauxv_persistent_ball");
                 GM_deleteValue("coolauxv_installed_version"); // 重置更新状态
                 loadConfig();
                 // 重置 Radio
@@ -1317,8 +1348,9 @@
                     inputBlurGlass.checked = DEFAULT_ENABLE_BLUR_GLASS;
                     toggleBlurGlass(DEFAULT_ENABLE_BLUR_GLASS);
                 }
+                if (inputPersistentBall) inputPersistentBall.checked = false;
                 // 重置 Checkbox 状态
-                if (inputNewScreenshot) inputNewScreenshot.checked = false;
+                if (inputNewScreenshot) inputNewScreenshot.value = DEFAULT_USE_NEW_SCREENSHOT;
                 if (inputAppendTrans) inputAppendTrans.checked = false;
                 if (inputAppendExplain) inputAppendExplain.checked = false;
                 if (inputAppendVision) inputAppendVision.checked = false;
@@ -1372,15 +1404,30 @@
             });
         }
 
+        if (inputPersistentBall) {
+            inputPersistentBall.addEventListener("change", (e) => {
+                const enabled = e.target.checked;
+                GM_setValue("coolauxv_persistent_ball", enabled);
+
+                // 实时生效逻辑：
+                // 如果开启常驻，且主窗口是关闭状态，则立即显示悬浮球
+                // 如果关闭常驻，且主窗口是关闭状态，则立即隐藏悬浮球
+                // (注：如果主窗口是打开状态，悬浮球本就应该隐藏，不受此影响，等窗口关闭时再判断)
+                if (popup.style.display !== "flex") {
+                    floatBall.style.display = enabled ? "block" : "none";
+                }
+            });
+        }
+
         if (inputNewScreenshot) {
             inputNewScreenshot.addEventListener("change", (e) => {
-                const enabled = e.target.checked;
-                GM_setValue("coolauxv_use_new_screenshot", enabled);
-                if (enabled) {
-                    showModal(
-                        "⚠️ 实验性功能警告",
-                        "在装有 Canvas Blocker 类插件的浏览器或 Brave 等带指纹屏蔽功能的浏览器上，旧截屏算法可能存在错位问题。此选项旨在尝试解决此类错误，但可能存在性能和兼容性问题（网页无响应、获取到的界面全是条纹等），如遇兼容性问题请授权访问 Canvas 信息，或关闭对应浏览器插件。"
-                    );
+                const val = e.target.value;
+                GM_setValue("coolauxv_use_new_screenshot", val);
+                if (val === "v2") {
+                    showModal("⚠️ 实验性功能警告", "在装有 Canvas Blocker 类插件的浏览器或 Brave 等带指纹屏蔽功能的浏览器上，旧截屏算法可能存在错位问题。此选项旨在尝试解决此类错误，但可能存在性能和兼容性问题（网页无响应、获取到的界面全是条纹等），如遇兼容性问题请授权访问 Canvas 信息，或关闭对应浏览器插件。");
+                }
+                if (val === "v3") {
+                    showModal("⚠️ 实验性功能警告", "⚠️ Android没法用这个功能属正常情况，用不了别报bug。⚠️\n\nv3 模式调用浏览器【屏幕共享】接口。点击识屏后，请在浏览器弹窗中选择【当前标签页】或【整个屏幕】。\n\n优点：所见即所得，完美还原渲染。\n缺点：每次都需要手动点击授权。");
                 }
             });
         }
@@ -1595,7 +1642,28 @@
 
     function stopRenderLoop() { isRendering = false; renderContent(); }
     function minimizeWindow() { popup.style.display = "none"; floatBall.style.display = "block"; }
-    function closeWindow() { popup.style.display = "none"; floatBall.style.display = "none"; }
+    function closeWindow() {
+        popup.style.display = "none";
+
+        const isPersistent = GM_getValue("coolauxv_persistent_ball", false);
+
+        // 当悬浮球常驻开启 且 当前存在截图数据时
+        if (isPersistent && capturedImageBase64) {
+            capturedImageBase64 = ""; // 清空 Base64
+
+            // 同时隐藏预览按钮，确保状态同步
+            const btnPreview = popup.querySelector("#coolauxv-btn-preview");
+            if (btnPreview) btnPreview.style.display = "none";
+        }
+
+        // 悬浮球显示逻辑
+        if (isPersistent) {
+            floatBall.style.display = "block";
+        } else {
+            floatBall.style.display = "none";
+        }
+    }
+
     function quitScript() { if (confirm("确定要退出吗？")) { popup.style.display = "none"; floatBall.style.display = "none"; cursorBtn.style.display = "none"; isQuitted = true; } }
 
     function bindEvents() {
@@ -2263,8 +2331,13 @@
     function initScreenshotEvents() {
         let fullScreenCanvas = null;
         let bgDataUrl = "";
-        let isNewAlgoMode = false;
+        let isSelecting = false;
+        let startX, startY;
+        let algoVer = "v1";
 
+        // ============================================
+        // DOM 元素获取
+        // ============================================
         const btnShot = popup.querySelector("#coolauxv-btn-screenshot");
         const overlay = document.querySelector("#coolauxv-screenshot-overlay");
         const selectionBox = document.querySelector("#coolauxv-selection-box");
@@ -2280,48 +2353,112 @@
             toolbar.addEventListener(evt, stopProp);
         });
 
-        // ============================
+        // ============================================
         // 1. 点击截图按钮 (入口)
-        // ============================
-        btnShot.onclick = () => {
-            isNewAlgoMode = GM_getValue("coolauxv_use_new_screenshot", false);
+        // ============================================
+        btnShot.onclick = async () => {
+            let cfgVer = GM_getValue("coolauxv_use_new_screenshot", DEFAULT_USE_NEW_SCREENSHOT);
+            if (cfgVer === true) cfgVer = "v2";
+            if (cfgVer === false) cfgVer = "v1";
+            algoVer = cfgVer;
 
             popup.style.display = "none";
-            if (loadingToast) loadingToast.style.display = "flex";
-            document.body.style.cursor = "wait";
+            if (loadingToast) {
+                loadingToast.innerHTML = `
+                    <div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
+                        <div class="coolauxv-pulse" style="font-size:24px;">📸</div>
+                        <div>${algoVer === 'v3' ? '请在浏览器弹窗中<br>允许“共享此标签页”' : '正在初始化识屏...'}</div>
+                    </div>
+                `;
+                loadingToast.style.display = "flex";
+            }
+            if (algoVer !== 'v3') document.body.style.cursor = "wait";
 
             setTimeout(async () => {
                 try {
-                    overlay.style.display = "block";
-                    // 强制 Loading 状态
-                    overlay.style.cursor = "wait";
-
                     selectionBox.style.display = "none";
                     toolbar.style.display = "none";
                     document.body.style.overflow = "hidden";
 
-                    if (isNewAlgoMode) {
-                        // >>>>>> 新逻辑：全屏截图 >>>>>>
+                    // --- v3: 原生屏幕共享 API ---
+                    if (algoVer === "v3") {
+                        try {
+                            // 1. 发起屏幕共享请求
+                            const stream = await navigator.mediaDevices.getDisplayMedia({
+                                video: { cursor: "never" },
+                                audio: false
+                            });
 
-                        // 获取兼容的 Scroll 位置
-                        const scrollTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
-                        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft || document.body.scrollLeft || 0;
+                            // [核心修复] 获取流成功后，立即隐藏提示弹窗，防止被截进去
+                            if (loadingToast) loadingToast.style.display = "none";
+
+                            // [核心修复] 必须等待一小会儿(如200ms)，确保：
+                            // 1. DOM 隐藏动作完成渲染
+                            // 2. 视频流更新了这一帧（去除了弹窗的画面）
+                            await new Promise(resolve => setTimeout(resolve, 200));
+
+                            // 2. 从流中捕获一帧
+                            const video = document.createElement("video");
+                            video.srcObject = stream;
+                            await video.play();
+
+                            fullScreenCanvas = document.createElement("canvas");
+                            fullScreenCanvas.width = video.videoWidth;
+                            fullScreenCanvas.height = video.videoHeight;
+                            const ctx = fullScreenCanvas.getContext("2d");
+                            ctx.drawImage(video, 0, 0);
+
+                            // 停止共享
+                            stream.getTracks().forEach(track => track.stop());
+                            video.srcObject = null;
+
+                            bgDataUrl = fullScreenCanvas.toDataURL("image/jpeg", 0.9);
+
+                            // 设置 Overlay
+                            overlay.style.display = "block";
+                            overlay.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(${bgDataUrl})`;
+                            overlay.style.backgroundPosition = "center";
+                            overlay.style.backgroundRepeat = "no-repeat";
+                            overlay.style.backgroundSize = "contain";
+                            overlay.style.backgroundColor = "rgba(0,0,0,0.8)";
+
+                        } catch (err) {
+                            console.warn("v3 screen share error:", err);
+
+                            // 先恢复界面状态
+                            resetScreenshotUI();
+                            popup.style.display = "flex";
+
+                            // 判断错误类型并弹窗提示
+                            if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                                // 用户点击了“取消”或“禁止”
+                                showModal(
+                                    "⚠️ 授权被拒绝",
+                                    "您取消了屏幕共享授权，v3 识屏模式无法工作。\n\n请重新点击识屏，并在浏览器弹窗中选择 **“当前标签页”** 后点击 **“允许”**。"
+                                );
+                            } else {
+                                // 其他未知错误 (如环境不支持、浏览器策略限制等)
+                                showModal(
+                                    "❌ 识屏启动失败",
+                                    `⚠️ Android没法用这个功能属正常情况，用不了别报bug。⚠️\n\n无法启动屏幕共享 (v3模式)。\n\n错误信息: ${err.message || err.name}\n\n建议尝试 v1 或 v2 模式，或检查浏览器权限设置。`
+                                );
+                            }
+                            return;
+                        }
+
+                    }
+
+                    // --- v2: html2canvas 全屏 ---
+                    else if (algoVer === "v2") {
+                        overlay.style.display = "block";
+                        const scrollTop = window.pageYOffset || document.documentElement.scrollTop || 0;
+                        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft || 0;
 
                         fullScreenCanvas = await html2canvas(document.documentElement, {
-                            // 裁切起点：绝对坐标
-                            x: scrollLeft,
-                            y: scrollTop,
-                            width: window.innerWidth,
-                            height: window.innerHeight,
-
-                            // 禁止 html2canvas 内部偏移
-                            scrollX: 0,
-                            scrollY: 0,
-
-                            useCORS: true,
-                            scale: window.devicePixelRatio,
-                            allowTaint: false,
-                            logging: false,
+                            x: scrollLeft, y: scrollTop,
+                            width: window.innerWidth, height: window.innerHeight,
+                            scrollX: 0, scrollY: 0,
+                            useCORS: true, scale: window.devicePixelRatio, allowTaint: false, logging: false,
                             ignoreElements: (element) => {
                                 const id = element.id;
                                 return id === "coolauxv-screenshot-overlay" ||
@@ -2334,24 +2471,27 @@
 
                         bgDataUrl = fullScreenCanvas.toDataURL();
 
+                        // [修改] 统一样式逻辑
                         overlay.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(${bgDataUrl})`;
-                        overlay.style.backgroundPosition = "0 0";
+                        overlay.style.backgroundPosition = "center";
                         overlay.style.backgroundRepeat = "no-repeat";
-                        overlay.style.backgroundSize = "100% 100%";
-                        overlay.style.backgroundColor = "transparent";
-                    } else {
-                        // >>>>>> 老逻辑 >>>>>>
+                        overlay.style.backgroundSize = "contain";
+                        overlay.style.backgroundColor = "rgba(0,0,0,0.8)";
+                    }
+
+                    // --- v1: 旧版 ---
+                    else {
+                        overlay.style.display = "block";
                         overlay.style.backgroundImage = "none";
                         overlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
                     }
 
-                    // 恢复十字光标
                     overlay.style.cursor = "crosshair";
                     document.body.style.cursor = "crosshair";
 
                 } catch (err) {
                     console.error("识屏初始化失败:", err);
-                    alert("识屏初始化失败，请重试。");
+                    alert("识屏初始化失败: " + err.message);
                     resetScreenshotUI();
                     popup.style.display = "flex";
                 } finally {
@@ -2360,9 +2500,9 @@
             }, 100);
         };
 
-        // ============================
+        // ============================================
         // 2. 选区交互
-        // ============================
+        // ============================================
         const getClientPos = (e) => {
             if (e.touches && e.touches.length > 0) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
             return { x: e.clientX, y: e.clientY };
@@ -2376,7 +2516,7 @@
             const pos = getClientPos(e);
             startX = pos.x; startY = pos.y;
 
-            if (isNewAlgoMode) {
+            if (algoVer === "v2" || algoVer === "v3") {
                 overlay.style.backgroundImage = `url(${bgDataUrl})`;
             } else {
                 overlay.style.backgroundColor = "transparent";
@@ -2414,7 +2554,7 @@
             const rect = selectionBox.getBoundingClientRect();
             if (rect.width < 10 || rect.height < 10) {
                 selectionBox.style.display = "none";
-                if (isNewAlgoMode) {
+                if (algoVer === "v2" || algoVer === "v3") {
                     overlay.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(${bgDataUrl})`;
                 } else {
                     overlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
@@ -2436,9 +2576,9 @@
         overlay.addEventListener("mouseup", onEnd);
         overlay.addEventListener("touchend", onEnd);
 
-        // ============================
-        // 3. 确定 / 取消 / 快捷键
-        // ============================
+        // ============================================
+        // 3. 确定 / 取消 (核心算法升级)
+        // ============================================
         btnOk.onclick = (e) => {
             if (e) e.stopPropagation();
             if (selectionBox.style.display === "none") return;
@@ -2453,16 +2593,57 @@
 
             setTimeout(async () => {
                 try {
-                    if (isNewAlgoMode) {
+                    // --- 裁剪逻辑 (v2 / v3) ---
+                    if (algoVer === "v2" || algoVer === "v3") {
                         if (!fullScreenCanvas) throw new Error("Canvas丢失");
+
                         const cropCanvas = document.createElement("canvas");
+                        // 目标尺寸：物理像素
                         cropCanvas.width = rect.width * dpr;
                         cropCanvas.height = rect.height * dpr;
                         const ctx = cropCanvas.getContext("2d");
-                        ctx.drawImage(fullScreenCanvas, rect.left * dpr, rect.top * dpr, cropCanvas.width, cropCanvas.height, 0, 0, cropCanvas.width, cropCanvas.height);
+
+                        // 1. 获取视口和图片尺寸
+                        const viewW = window.innerWidth;
+                        const viewH = window.innerHeight;
+                        const imgW = fullScreenCanvas.width;
+                        const imgH = fullScreenCanvas.height;
+
+                        // 2. 计算 CSS 中 background-size: contain 后的实际渲染尺寸
+                        // contain 逻辑：取宽高缩放比中较小的那个
+                        const scale = Math.min(viewW / imgW, viewH / imgH);
+
+                        const renderedW = imgW * scale;
+                        const renderedH = imgH * scale;
+
+                        // 3. 计算居中导致的偏移量 (Black Bars)
+                        const offsetX = (viewW - renderedW) / 2;
+                        const offsetY = (viewH - renderedH) / 2;
+
+                        // 4. 坐标映射: 屏幕坐标 -> 图片内部相对坐标 -> 原始 Canvas 坐标
+                        // rect.left 是相对于视口的坐标
+                        // 减去 offsetX 得到相对于渲染图片的坐标
+                        // 除以 scale (或乘以 imgW/renderedW) 还原为原始 Canvas 坐标
+
+                        let sourceX = (rect.left - offsetX) / scale;
+                        let sourceY = (rect.top - offsetY) / scale;
+                        let sourceW = rect.width / scale;
+                        let sourceH = rect.height / scale;
+
+                        // 5. 边界保护 (防止选区画到了黑边上导致报错或黑图)
+                        // 虽然 Canvas drawImage 允许源坐标越界(不报错但空白)，但为了严谨最好限制
+                        // 简单的处理交给 drawImage 自身即可，它会自动忽略越界部分
+
+                        ctx.drawImage(
+                            fullScreenCanvas,
+                            sourceX, sourceY, sourceW, sourceH,
+                            0, 0, cropCanvas.width, cropCanvas.height
+                        );
+
                         capturedImageBase64 = cropCanvas.toDataURL("image/jpeg", 0.8);
-                    } else {
-                        // 老算法也加上 scrollX/Y: 0 以防万一
+                    }
+                    // --- 裁剪逻辑 (v1) ---
+                    else {
                         const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
                         const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft;
                         const canvas = await html2canvas(document.documentElement, {
@@ -2470,8 +2651,7 @@
                             y: rect.top + scrollTop,
                             width: rect.width,
                             height: rect.height,
-                            scrollX: 0,
-                            scrollY: 0,
+                            scrollX: 0, scrollY: 0,
                             useCORS: true, allowTaint: false, logging: false, scale: dpr,
                             ignoreElements: (el) => {
                                 const id = el.id;
@@ -2508,7 +2688,11 @@
             }, 50);
         };
 
-        btnCancel.onclick = (e) => { if (e) e.stopPropagation(); resetScreenshotUI(); popup.style.display = "flex"; };
+        btnCancel.onclick = (e) => {
+            if (e) e.stopPropagation();
+            resetScreenshotUI();
+            popup.style.display = "flex";
+        };
 
         function resetScreenshotUI() {
             overlay.style.display = "none";
@@ -2541,6 +2725,7 @@
         };
         document.addEventListener("keydown", onKeyDown);
     }
+
 
     // 执行视觉分析 API 请求
     async function doImageAnalysis(mode = 'vision') {
