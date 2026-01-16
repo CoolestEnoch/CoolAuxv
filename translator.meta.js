@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v10.4
+// @version      v10.4.1
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v10.4 更新日志] 1.识屏核心重构，新增 v1/v2/v3 三档选择器，v3 模式完美支持 Chrome 内置 PDF 阅读器截图。2.新增悬浮球常驻开关，优化用户交互体验。
+// @changelog    [v10.4.1 更新日志] 1.更新v3识屏算法提示。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @grant        GM_addStyle
