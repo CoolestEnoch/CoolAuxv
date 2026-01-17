@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v10.4.2
+// @version      v10.5
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v10.4.2 更新日志] 1.悬浮球可以拖动了。2.悬浮球可以常驻了。3.修复截屏等待时光标未变更的问题。4.默认日志等级改为none
+// @changelog    [v10.5 更新日志] 1.可以打开本地PDF文件了！
 // @author       github@CoolestEnoch
 // @match        *://*/*
+// @match        https://mozilla.github.io/pdf.js/web/viewer.html*
+// @grant        unsafeWindow
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -72,16 +74,15 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
-        v10.4.2 版本更新：交互细节优化
-        ## 🖱️ 悬浮球体验升级
-        *   **自由拖拽**：新增 **[悬浮球可拖动]** 开关（在杂项设置中）。开启后可随意拖动悬浮球（位置仅在当前页面临时生效，刷新重置）。
-        *   **智能同步**：优化多标签页切换时的状态同步，修复了关闭“常驻”功能后其他页面不同步的问题。
-        *   **交互修复**：修复了关闭拖拽功能后可能导致悬浮球无法点击的 Bug，并禁止了球体文字被意外选中。
-        ## 📸 识屏体验优化
-        *   **交互修复**：修复了点击“识屏”后光标异常的问题。
-        *   **自动清理**：关闭主窗口时自动清空输入框和截图缓存，防止误触旧内容。
-        ## 🪵 其他更改
-        *   **日志工具**：默认日志等级修改为 'none'。
+        PDF 阅读增强与体验升级
+        ## 🆕 PDF 阅读工具箱
+        *   **本地文件在线阅读**：突破浏览器限制，支持选择本地 PDF 文件，直接在 Mozilla 在线阅读器（PDF.js）中打开。
+            *   采用 **Blob URL + 极速传输** 方案，大文件秒开，无视沙箱跨域报错。
+            *   新增“握手协议”与前端加载悬浮窗，杜绝白屏假死现象。
+        *   **在线链接跳转**：支持快速输入 URL 打开在线 PDF。
+        ## 🎨 UI 与交互优化
+        *   **按钮风格统一**：重构了所有功能按钮（翻译、解读、识屏等）的样式，统一采用现代化设计，增加悬停反馈与流体玻璃质感。
+        *   **全场景覆盖**：修复了 PDFJS 阅读器页面无法显示“译”悬浮球的问题，现在可以在阅读 PDF 时直接划词翻译。
     `;
 
     // ========================================================================
@@ -124,6 +125,95 @@
         // 用法: Logger.custom("自定义标签", "info", "消息内容...")
         custom: (tag, level, ...args) => Logger._print(level, tag, args)
     };
+
+    // ========================================================================
+    // 特殊逻辑：PDF.js Viewer 注入 (接收端 - 极速版)
+    // ========================================================================
+    if (location.href.includes("mozilla.github.io/pdf.js/web/viewer.html")) {
+        const isBlur = GM_getValue("coolauxv_enable_blur_glass", false);
+        const appWindow = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+
+        // 1. 创建进度悬浮窗
+        const loader = document.createElement("div");
+        loader.id = "coolauxv-pdf-loader";
+        Object.assign(loader.style, {
+            position: "fixed", top: "20px", left: "50%", transform: "translateX(-50%)",
+            padding: "12px 24px", borderRadius: "12px", zIndex: "9999",
+            display: "none", // 默认显示
+            flexDirection: "column", alignItems: "center", gap: "8px",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.2)", transition: "all 0.3s ease",
+            background: isBlur ? "rgba(255, 255, 255, 0.65)" : "rgba(255, 255, 255, 0.95)",
+            backdropFilter: isBlur ? "blur(12px)" : "none",
+            border: "1px solid rgba(255,255,255,0.5)",
+            color: "#333", fontSize: "14px", fontWeight: "600"
+        });
+
+        loader.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span class="coolauxv-spinner">⚡</span>
+                <span>正在打开文件...</span>
+            </div>
+            <style>@keyframes spin { 100% { transform: rotate(360deg); } } .coolauxv-spinner { display:inline-block; animation: spin 1s linear infinite; }</style>
+        `;
+        document.body.appendChild(loader);
+
+        // 2. 主动握手逻辑
+        // 只要页面加载了，就疯狂告诉 opener 我准备好了 (每100ms发一次，直到收到数据为止，防止丢包)
+        const readyInterval = setInterval(() => {
+            if (window.opener) {
+                window.opener.postMessage({ type: "PDF_I_AM_READY" }, "*");
+            }
+        }, 100);
+
+        window.addEventListener("message", async (event) => {
+            // 收到数据
+            if (event.data && event.data.type === "OPEN_PDF_BLOB") {
+                clearInterval(readyInterval); // 停止呼叫
+                loader.style.display = "flex";
+
+                try {
+                    // 等待 App 初始化
+                    const waitForApp = () => new Promise(resolve => {
+                        const check = () => {
+                            if (appWindow.PDFViewerApplication && appWindow.PDFViewerApplication.open) resolve(appWindow.PDFViewerApplication);
+                            else setTimeout(check, 50); // 缩短检查间隔
+                        };
+                        check();
+                    });
+                    const pdfApp = await waitForApp();
+
+                    // --- 极速深拷贝逻辑 ---
+                    const sandboxData = new Uint8Array(event.data.buffer);
+                    const pageData = new appWindow.Uint8Array(sandboxData.length);
+                    pageData.set(sandboxData);
+
+                    await pdfApp.open(pageData);
+
+                    // 成功回执
+                    if (event.source) event.source.postMessage({ type: "PDF_OPENED_ACK" }, "*");
+
+                    // 隐藏 Loader
+                    loader.innerHTML = "✅ 加载完成";
+                    setTimeout(() => { loader.style.opacity = "0"; setTimeout(() => loader.style.display = "none", 300); }, 800);
+
+                } catch (e) {
+                    console.error(e);
+                    // 兼容模式兜底
+                    try {
+                        const sandboxData = new Uint8Array(event.data.buffer);
+                        const pageData = new appWindow.Uint8Array(sandboxData.length);
+                        pageData.set(sandboxData);
+                        await appWindow.PDFViewerApplication.open({ data: pageData });
+                        if (event.source) event.source.postMessage({ type: "PDF_OPENED_ACK" }, "*");
+                        loader.style.display = "none";
+                    } catch (e2) {
+                        alert("错误: " + e.message);
+                    }
+                }
+            }
+        });
+        // return;
+    }
 
 
 
@@ -355,11 +445,6 @@
     .coolauxv-model-name { font-size: 12px; font-weight: bold; }
     .coolauxv-model-tag { font-size: 10px; margin-top: 1px; }
 
-    .coolauxv-tag-btn {
-        font-size: 11px; background: #f3f4f6; color: #333; border: 1px solid #ddd;
-        padding: 2px 8px; border-radius: 10px; cursor: pointer; user-select: none;
-    }
-    .coolauxv-tag-btn:hover { background: #e5e7eb; }
     .coolauxv-sub-label { font-size: 11px; color: #888; width: 100%; margin: 8px 0 4px 0; font-weight: normal; text-align: left !important; }
 
     .coolauxv-back-btn { margin-top: 20px; padding: 10px; background: #f3f4f6; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-weight: bold; text-align: center !important; color: #555; }
@@ -412,6 +497,45 @@
         text-align: center; line-height: 1; transition: color 0.2s;
     }
     .coolauxv-input-ctrl-btn:hover { color: #3b82f6; background: #f0f7ff; border-radius: 4px; }
+
+    /* ============================
+       统一按钮风格 (Action Buttons)
+       ============================ */
+    .coolauxv-action-btn {
+        display: flex; align-items: center; justify-content: center;
+        padding: 8px 12px; border-radius: 8px;
+        cursor: pointer; user-select: none;
+        font-size: 13px; font-weight: 600;
+        transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+        border: 1px solid rgba(0,0,0,0.1);
+        background: #f9fafb; color: #374151;
+        text-align: center !important;
+        position: relative; overflow: hidden;
+    }
+
+    /* 悬停效果：轻微浮起 + 变色 */
+    .coolauxv-action-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-color: rgba(0,0,0,0.15);
+        background: #fff;
+    }
+    
+    /* 点击效果 */
+    .coolauxv-action-btn:active {
+        transform: scale(0.98);
+        background: #f3f4f6;
+    }
+
+    /* 特定颜色的变种 (通过 style 覆盖，但保留 hover 动画) */
+    .coolauxv-btn-primary { background: #e0f2fe; color: #0284c7; border-color: #bae6fd; }
+    .coolauxv-btn-primary:hover { background: #bae6fd; }
+
+    .coolauxv-btn-purple { background: #f3e8ff; color: #9333ea; border-color: #d8b4fe; }
+    .coolauxv-btn-purple:hover { background: #d8b4fe; }
+
+    .coolauxv-btn-blue { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
+    .coolauxv-btn-blue:hover { background: #bfdbfe; }
 
     /* Markdown 强制样式 */
     .coolauxv-markdown, .coolauxv-raw-text { text-align: left !important; }
@@ -1050,11 +1174,19 @@
                   </div>
 
                   <div style="display:flex; gap:10px; margin-bottom:10px; flex-shrink:0;">
-                     <button id="coolauxv-btn-trans" style="flex:1; background:#f3f4f6; border:1px solid #ddd; padding:10px; border-radius:6px; font-weight:bold; cursor: pointer;">翻译</button>
-                     <button id="coolauxv-btn-explain" style="flex:1; background:#a516e8; color:white; border:none; padding:10px; border-radius:6px; font-weight:bold; cursor: pointer;">解读</button>
-                     <button id="coolauxv-btn-screenshot" style="flex:0.4; background:#3b82f6; color:white; border:none; padding:10px; border-radius:6px; font-weight:bold; cursor: pointer; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
-                     <button id="coolauxv-btn-preview" style="display:none; flex:0.3; background:#fff; border:1px solid #ddd; padding:10px; border-radius:6px; cursor: pointer; font-size:14px;" title="预览截图">🔍</button>
+                      <!-- 翻译按钮：默认灰色风格 -->
+                      <button id="coolauxv-btn-trans" class="coolauxv-action-btn" style="flex:1;">翻译</button>
+                          
+                      <!-- 解读按钮：紫色风格 -->
+                      <button id="coolauxv-btn-explain" class="coolauxv-action-btn coolauxv-btn-purple" style="flex:1;">解读</button>
+                          
+                      <!-- 识屏按钮：蓝色风格 -->
+                      <button id="coolauxv-btn-screenshot" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
+                          
+                      <!-- 预览按钮：默认风格 -->
+                      <button id="coolauxv-btn-preview" class="coolauxv-action-btn" style="display:none; flex:0.3; font-size:14px;" title="预览截图">🔍</button>
                   </div>
+
                   <div id="coolauxv-content-container">
                       <div id="coolauxv-reasoning-wrapper" class="coolauxv-box-wrapper">
                           <span class="coolauxv-copy-btn" data-type="reasoning" title="复制思考过程">📋</span>
@@ -1156,6 +1288,26 @@
                     </label>
                     <textarea id="coolauxv-cfg-prompt-vision" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认: ${DEFAULT_PROMPT_VISION}"></textarea>
                 </div>
+
+                <div class="coolauxv-setting-group">
+                    <label class="coolauxv-setting-label">PDF 阅读工具 (PDF.js Onilne)</label>
+                    <div class="coolauxv-input-wrapper">
+                        <input type="text" id="coolauxv-pdf-url" class="coolauxv-setting-input" placeholder="输入在线 PDF 链接...">
+                        <span class="coolauxv-clear-icon" id="coolauxv-btn-clear-pdf">×</span>
+                    </div>
+                    <div style="display:flex; gap:10px; margin-top:8px;">
+                        <!-- 在线链接按钮：默认风格 -->
+                        <button id="coolauxv-btn-pdf-link" class="coolauxv-action-btn" style="flex:1;">🌐 打开网络链接</button>
+
+                        <!-- 本地加载按钮：主色调风格 (浅蓝) -->
+                        <button id="coolauxv-btn-pdf-local-online" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">🚀 在线加载本地文件</button>
+
+                        <input type="file" id="coolauxv-input-pdf-file" accept=".pdf" style="display:none;">
+                    </div>
+
+                    <div style="font-size:11px; color:#999; margin-top:4px;">提示：本地文件将通过内存传输至 Mozilla 在线阅读器渲染，不消耗流量。</div>
+                </div>
+
 
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">杂项 (Miscellaneous)</label>
@@ -1346,6 +1498,11 @@
         const inputAppendTrans = popup.querySelector("#coolauxv-cfg-append-trans");
         const inputAppendExplain = popup.querySelector("#coolauxv-cfg-append-explain");
         const inputAppendVision = popup.querySelector("#coolauxv-cfg-append-vision");
+        const inputPdfUrl = popup.querySelector("#coolauxv-pdf-url");
+        const btnClearPdf = popup.querySelector("#coolauxv-btn-clear-pdf");
+        const btnPdfLink = popup.querySelector("#coolauxv-btn-pdf-link");
+        const inputPdfFile = popup.querySelector("#coolauxv-input-pdf-file");
+        const btnPdfLocalOnline = popup.querySelector("#coolauxv-btn-pdf-local-online");
         const inputBlurGlass = popup.querySelector("#coolauxv-cfg-blur-glass");
         const inputPersistentBall = popup.querySelector("#coolauxv-cfg-persistent-ball");
         const inputDraggableBall = popup.querySelector("#coolauxv-cfg-draggable-ball");
@@ -1472,6 +1629,82 @@
             });
         };
 
+        // pdf阅读器
+        // UI 交互：清空按钮
+        if (inputPdfUrl && btnClearPdf) {
+            inputPdfUrl.addEventListener("input", () => btnClearPdf.style.display = inputPdfUrl.value ? "block" : "none");
+            btnClearPdf.onclick = () => { inputPdfUrl.value = ""; btnClearPdf.style.display = "none"; inputPdfUrl.focus(); };
+        }
+
+        // 功能1：打开网络链接
+        if (btnPdfLink && inputPdfUrl) {
+            btnPdfLink.onclick = () => {
+                const url = inputPdfUrl.value.trim();
+                if (!url) return alert("请先输入链接");
+                window.open(`https://mozilla.github.io/pdf.js/web/viewer.html?file=${encodeURIComponent(url)}`, '_blank');
+            };
+        }
+
+        // 功能2：在线加载本地文件 (跨窗口通信版)
+        // 修正后的“在线加载本地文件”逻辑 (极速发送端)
+        if (btnPdfLocalOnline && inputPdfFile) {
+            btnPdfLocalOnline.onclick = () => inputPdfFile.click();
+
+            inputPdfFile.onchange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                const originalBtnText = "🚀 在线加载本地文件";
+                btnPdfLocalOnline.innerText = "读取文件中...";
+
+                reader.onload = function (evt) {
+                    const buffer = evt.target.result;
+                    btnPdfLocalOnline.innerText = "等待新窗口...";
+
+                    const viewerWin = window.open("https://mozilla.github.io/pdf.js/web/viewer.html?file=", "_blank");
+                    if (!viewerWin) { alert("请允许弹窗"); btnPdfLocalOnline.innerText = originalBtnText; return; }
+
+                    // 定义消息处理函数
+                    const msgHandler = (event) => {
+                        // 1. 收到新窗口的就绪信号
+                        if (event.data && event.data.type === "PDF_I_AM_READY") {
+                            // 立即发送！不等待！
+                            // 第三个参数 [buffer] 是 Transferable List，意味着直接移交内存控制权，速度极快
+                            viewerWin.postMessage({
+                                type: "OPEN_PDF_BLOB",
+                                buffer: buffer
+                            }, "*", [buffer]);
+
+                            btnPdfLocalOnline.innerText = "⚡ 数据已发送";
+                        }
+
+                        // 2. 收到新窗口的成功回执
+                        if (event.data && event.data.type === "PDF_OPENED_ACK") {
+                            window.removeEventListener("message", msgHandler);
+                            btnPdfLocalOnline.innerText = "✅ 完成";
+                            setTimeout(() => btnPdfLocalOnline.innerText = originalBtnText, 2000);
+                        }
+                    };
+
+                    window.addEventListener("message", msgHandler);
+
+                    // 兜底：如果5秒还没反应，提示用户
+                    setTimeout(() => {
+                        if (btnPdfLocalOnline.innerText === "等待新窗口...") {
+                            btnPdfLocalOnline.innerText = "❌ 连接超时";
+                            setTimeout(() => btnPdfLocalOnline.innerText = originalBtnText, 2000);
+                        }
+                    }, 8000);
+                };
+                reader.readAsArrayBuffer(file);
+                inputPdfFile.value = '';
+            };
+        }
+
+
+
+        // 流体玻璃
         if (inputBlurGlass) {
             inputBlurGlass.addEventListener("change", (e) => {
                 const enabled = e.target.checked;
@@ -1486,6 +1719,7 @@
             });
         }
 
+        // 常驻悬浮球
         if (inputPersistentBall) {
             inputPersistentBall.addEventListener("change", (e) => {
                 const enabled = e.target.checked;
@@ -1501,6 +1735,7 @@
             });
         }
 
+        // 可拖动悬浮球
         if (inputDraggableBall) {
             inputDraggableBall.addEventListener("change", (e) => {
                 const enabled = e.target.checked;
@@ -1512,6 +1747,7 @@
             });
         }
 
+        // 实验性截屏算法
         if (inputNewScreenshot) {
             inputNewScreenshot.addEventListener("change", (e) => {
                 const val = e.target.value;

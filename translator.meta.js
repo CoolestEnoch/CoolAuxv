@@ -1,11 +1,13 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v10.4.2
+// @version      v10.5
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v10.4.2 更新日志] 1.悬浮球可以拖动了。2.悬浮球可以常驻了。3.修复截屏等待时光标未变更的问题。
+// @changelog    [v10.5 更新日志] 1.可以打开本地PDF文件了！
 // @author       github@CoolestEnoch
 // @match        *://*/*
+// @match        https://mozilla.github.io/pdf.js/web/viewer.html*
+// @grant        unsafeWindow
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
