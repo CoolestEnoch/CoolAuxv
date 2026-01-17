@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v10.4.1
+// @version      v10.4.2
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v10.4.1 更新日志] 1.更新v3识屏算法提示。
+// @changelog    [v10.4.2 更新日志] 1.悬浮球可以拖动了。2.悬浮球可以常驻了。3.修复截屏等待时光标未变更的问题。4.默认日志等级改为none
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @grant        GM_addStyle
@@ -54,7 +54,7 @@
     const DEFAULT_API_KEY = "1145141919810哼哼啊啊啊啊啊";
     // 默认模型取语言模型数组的第一个
     const DEFAULT_MODEL_NAME = TEXT_MODELS[0].id;
-    const DEFAULT_LOG_LEVEL = "debug";
+    const DEFAULT_LOG_LEVEL = "none";
 
     const DEFAULT_VISION_MODEL = "glm-4v-flash";
     const DEFAULT_PROMPT_VISION = "请先详细描述这张图，然后再详细解读这张图。";
@@ -72,18 +72,17 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
-        v10.4 版本更新：识屏算法更新与悬浮求常驻
-        ## 📸 识屏核心重构
-        *   **算法版本升级**：废弃原“新截屏算法”开关，升级为 **v1/v2/v3** 三档选择器。
-        *   **v3 强力模式**：引入原生屏幕共享 (getDisplayMedia) 技术，**完美解决 Chrome 内置 PDF 阅读器**、视频及受保护页面截图全黑的问题。
-        *   **智能防抖**：v3 模式内置智能延迟，自动规避“正在共享此标签页”的系统弹窗，确保截图画面纯净。
-        ## 🧩 体验与交互优化
-        *   **悬浮球常驻**：新增“悬浮球常驻”开关，关闭主窗口后悬浮球依然显示，随时待命。
-        *   **自动清理机制**：在常驻模式下关闭窗口时，自动清空截图缓存并重置预览状态，防止误操作。
-        *   **UI 细节微调**：优化设置页布局，修复了部分选项未对齐的问题。
+        v10.4.2 版本更新：交互细节优化
+        ## 🖱️ 悬浮球体验升级
+        *   **自由拖拽**：新增 **[悬浮球可拖动]** 开关（在杂项设置中）。开启后可随意拖动悬浮球（位置仅在当前页面临时生效，刷新重置）。
+        *   **智能同步**：优化多标签页切换时的状态同步，修复了关闭“常驻”功能后其他页面不同步的问题。
+        *   **交互修复**：修复了关闭拖拽功能后可能导致悬浮球无法点击的 Bug，并禁止了球体文字被意外选中。
+        ## 📸 识屏体验优化
+        *   **交互修复**：修复了点击“识屏”后光标异常的问题。
+        *   **自动清理**：关闭主窗口时自动清空输入框和截图缓存，防止误触旧内容。
+        ## 🪵 其他更改
+        *   **日志工具**：默认日志等级修改为 'none'。
     `;
-
-
 
     // ========================================================================
     // 日志工具
@@ -836,15 +835,89 @@
                 width: "50px", height: "50px", background: "linear-gradient(135deg, #a516e8, #6610f2)",
                 color: "white", borderRadius: "50%", textAlign: "center", lineHeight: "50px",
                 zIndex: "2147483647", cursor: "pointer", boxShadow: "0 4px 15px rgba(0,0,0,0.4)",
-                fontWeight: "bold", fontSize: "18px"
+                fontWeight: "bold", fontSize: "18px",
+                userSelect: "none", webkitUserSelect: "none", touchAction: "none" // touchAction 防止移动端滚动
             });
-            floatBall.onclick = () => {
+            // 状态变量
+            let isBallDraggable = GM_getValue("coolauxv_draggable_ball", false);
+            let isBallDragging = false;
+            let ballHasMoved = false; // 用于区分点击和拖拽
+            let ballStartX, ballStartY, ballInitLeft, ballInitTop;
+            // 1. 点击事件（增加防误触判断）
+            floatBall.onclick = (e) => {
+                if (ballHasMoved) return; // 如果是拖拽操作，不触发点击
                 if (isQuitted) return;
+
+                // 恢复默认操作
                 floatBall.style.display = "none";
                 resetPopupState();
                 popup.style.display = "flex";
                 checkUpdateAndShowChangelog();
             };
+            // 2. 拖拽事件处理函数
+            const onBallDown = (e) => {
+                ballHasMoved = false;
+                // 如果未开启拖拽功能，直接返回
+                const canDrag = GM_getValue("coolauxv_draggable_ball", false);
+                if (!canDrag) return;
+
+                isBallDragging = true;
+                ballHasMoved = false;
+
+                // 兼容鼠标和触摸
+                const clientX = e.clientX || e.touches[0].clientX;
+                const clientY = e.clientY || e.touches[0].clientY;
+
+                const rect = floatBall.getBoundingClientRect();
+
+                // 关键：开始拖拽时，将定位从 bottom/right 切换为 left/top，防止坐标跳变
+                floatBall.style.bottom = 'auto';
+                floatBall.style.right = 'auto';
+                floatBall.style.left = rect.left + 'px';
+                floatBall.style.top = rect.top + 'px';
+
+                ballStartX = clientX;
+                ballStartY = clientY;
+                ballInitLeft = rect.left;
+                ballInitTop = rect.top;
+
+                e.preventDefault(); // 防止选中文本
+            };
+
+            const onBallMove = (e) => {
+                if (!isBallDragging) return;
+
+                const clientX = e.clientX || e.touches[0].clientX;
+                const clientY = e.clientY || e.touches[0].clientY;
+
+                const dx = clientX - ballStartX;
+                const dy = clientY - ballStartY;
+
+                // 只有移动距离超过 2px 才视为拖拽（防止手抖）
+                if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+                    ballHasMoved = true;
+                }
+
+                floatBall.style.left = (ballInitLeft + dx) + 'px';
+                floatBall.style.top = (ballInitTop + dy) + 'px';
+
+                e.preventDefault();
+            };
+
+            const onBallUp = () => {
+                isBallDragging = false;
+            };
+
+            // 3. 绑定监听
+            floatBall.addEventListener("mousedown", onBallDown);
+            floatBall.addEventListener("touchstart", onBallDown, { passive: false });
+
+            // 绑定到 document 以防止拖出球体范围失效
+            document.addEventListener("mousemove", onBallMove);
+            document.addEventListener("touchmove", onBallMove, { passive: false });
+            document.addEventListener("mouseup", onBallUp);
+            document.addEventListener("touchend", onBallUp);
+
             document.body.appendChild(floatBall);
 
             // 如果开启了悬浮球常驻，且主窗口未显示（初始化时肯定未显示），则显示悬浮球
@@ -1093,6 +1166,9 @@
                         <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
                             <input type="checkbox" id="coolauxv-cfg-persistent-ball"> 悬浮球常驻
                         </label>
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-cfg-draggable-ball"> 悬浮球可拖动
+                        </label>
                     </div>
                 </div>
 
@@ -1272,6 +1348,7 @@
         const inputAppendVision = popup.querySelector("#coolauxv-cfg-append-vision");
         const inputBlurGlass = popup.querySelector("#coolauxv-cfg-blur-glass");
         const inputPersistentBall = popup.querySelector("#coolauxv-cfg-persistent-ball");
+        const inputDraggableBall = popup.querySelector("#coolauxv-cfg-draggable-ball");
         const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
@@ -1301,7 +1378,7 @@
             if (inputAppendExplain) inputAppendExplain.checked = GM_getValue("coolauxv_append_explain", false);
             if (inputAppendVision) inputAppendVision.checked = GM_getValue("coolauxv_append_vision", false);
 
-            const currentLevel = GM_getValue("coolauxv_log_level", "debug"); // 这里的默认值要与常量一致
+            const currentLevel = GM_getValue("coolauxv_log_level", DEFAULT_LOG_LEVEL); // 这里的默认值要与常量一致
             const targetRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="${currentLevel}"]`);
             if (targetRadio) targetRadio.checked = true;
 
@@ -1310,6 +1387,9 @@
             }
             if (inputPersistentBall) {
                 inputPersistentBall.checked = GM_getValue("coolauxv_persistent_ball", false);
+            }
+            if (inputDraggableBall) {
+                inputDraggableBall.checked = GM_getValue("coolauxv_draggable_ball", false);
             }
             if (inputNewScreenshot) {
                 let val = GM_getValue("coolauxv_use_new_screenshot", DEFAULT_USE_NEW_SCREENSHOT);
@@ -1339,16 +1419,18 @@
                 GM_deleteValue("coolauxv_use_new_screenshot");
                 GM_deleteValue("coolauxv_enable_blur_glass");
                 GM_deleteValue("coolauxv_persistent_ball");
+                GM_deleteValue("coolauxv_draggable_ball");
                 GM_deleteValue("coolauxv_installed_version"); // 重置更新状态
                 loadConfig();
                 // 重置 Radio
-                const defaultRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="debug"]`);
+                const defaultRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="${DEFAULT_LOG_LEVEL}"]`);
                 if (defaultRadio) defaultRadio.checked = true;
                 if (inputBlurGlass) {
                     inputBlurGlass.checked = DEFAULT_ENABLE_BLUR_GLASS;
                     toggleBlurGlass(DEFAULT_ENABLE_BLUR_GLASS);
                 }
                 if (inputPersistentBall) inputPersistentBall.checked = false;
+                if (inputDraggableBall) inputDraggableBall.checked = false;
                 // 重置 Checkbox 状态
                 if (inputNewScreenshot) inputNewScreenshot.value = DEFAULT_USE_NEW_SCREENSHOT;
                 if (inputAppendTrans) inputAppendTrans.checked = false;
@@ -1416,6 +1498,17 @@
                 if (popup.style.display !== "flex") {
                     floatBall.style.display = enabled ? "block" : "none";
                 }
+            });
+        }
+
+        if (inputDraggableBall) {
+            inputDraggableBall.addEventListener("change", (e) => {
+                const enabled = e.target.checked;
+                GM_setValue("coolauxv_draggable_ball", enabled);
+                // 实时更新 initUI 作用域中的变量
+                // 注意：由于 isBallDraggable 是在 initUI 中定义的局部变量，
+                // 这里的修改无法直接生效，除非我们将变量提升，或者用一种简单的 hack：
+                // 更好的方式是：在 onBallDown 函数里直接读 Checkbox 的状态或 GM_getValue
             });
         }
 
@@ -1645,18 +1738,19 @@
     function closeWindow() {
         popup.style.display = "none";
 
+        // 1. 清空输入框文本
+        const input = popup.querySelector("#coolauxv-input");
+        if (input) input.value = "";
+
+        // 2. 清空识屏数据
+        capturedImageBase64 = "";
+
+        // 3. 隐藏预览按钮
+        const btnPreview = popup.querySelector("#coolauxv-btn-preview");
+        if (btnPreview) btnPreview.style.display = "none";
+
+        // --- 悬浮球常驻逻辑 ---
         const isPersistent = GM_getValue("coolauxv_persistent_ball", false);
-
-        // 当悬浮球常驻开启 且 当前存在截图数据时
-        if (isPersistent && capturedImageBase64) {
-            capturedImageBase64 = ""; // 清空 Base64
-
-            // 同时隐藏预览按钮，确保状态同步
-            const btnPreview = popup.querySelector("#coolauxv-btn-preview");
-            if (btnPreview) btnPreview.style.display = "none";
-        }
-
-        // 悬浮球显示逻辑
         if (isPersistent) {
             floatBall.style.display = "block";
         } else {
@@ -1729,6 +1823,20 @@
         });
 
         window.addEventListener("scroll", () => { if (cursorBtn.style.display === 'flex') cursorBtn.style.display = 'none'; });
+        // --- 标签页激活时同步悬浮球状态 ---
+        document.addEventListener("visibilitychange", () => {
+            // 当标签页变为可见时
+            if (!document.hidden && !isQuitted) {
+                const isPersistent = GM_getValue("coolauxv_persistent_ball", false);
+                const isPopupVisible = popup.style.display === "flex";
+
+                // 只有当主窗口没打开时，才根据设置决定悬浮球是否显示
+                // 如果主窗口开着，悬浮球本就该隐藏，不用管
+                if (!isPopupVisible) {
+                    floatBall.style.display = isPersistent ? "block" : "none";
+                }
+            }
+        });
     }
 
     function bindInputCtrlEvents() {
@@ -2363,6 +2471,14 @@
             algoVer = cfgVer;
 
             popup.style.display = "none";
+
+            // 立即显示遮罩层（透明），用于抢占鼠标焦点，防止光标穿透到网页文本上
+            overlay.style.display = "block";
+            overlay.style.backgroundColor = "transparent";
+            overlay.style.backgroundImage = "none";
+            overlay.style.cursor = "wait"; // 立即变成转圈
+            document.body.style.cursor = "wait";
+
             if (loadingToast) {
                 loadingToast.innerHTML = `
                     <div style="display:flex; flex-direction:column; align-items:center; gap:8px;">
@@ -2372,7 +2488,6 @@
                 `;
                 loadingToast.style.display = "flex";
             }
-            if (algoVer !== 'v3') document.body.style.cursor = "wait";
 
             setTimeout(async () => {
                 try {
@@ -2415,7 +2530,6 @@
                             bgDataUrl = fullScreenCanvas.toDataURL("image/jpeg", 0.9);
 
                             // 设置 Overlay
-                            overlay.style.display = "block";
                             overlay.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(${bgDataUrl})`;
                             overlay.style.backgroundPosition = "center";
                             overlay.style.backgroundRepeat = "no-repeat";
@@ -2465,7 +2579,6 @@
 
                     // --- v2: html2canvas 全屏 ---
                     else if (algoVer === "v2") {
-                        overlay.style.display = "block";
                         const scrollTop = window.pageYOffset || document.documentElement.scrollTop || 0;
                         const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft || 0;
 
@@ -2496,7 +2609,6 @@
 
                     // --- v1: 旧版 ---
                     else {
-                        overlay.style.display = "block";
                         overlay.style.backgroundImage = "none";
                         overlay.style.backgroundColor = "rgba(0, 0, 0, 0.5)";
                     }
