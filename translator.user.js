@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v10.5
+// @version      v11.0
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v10.5 更新日志] 1.可以打开本地PDF文件了！
+// @changelog    [v11.0 更新日志] 新增连续对话与推理区显示优化，提升PDF本地打开稳定性。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @match        https://mozilla.github.io/pdf.js/web/viewer.html*
@@ -60,6 +60,8 @@
 
     const DEFAULT_VISION_MODEL = "glm-4v-flash";
     const DEFAULT_PROMPT_VISION = "请先详细描述这张图，然后再详细解读这张图。";
+    const DEFAULT_ENABLE_CONTINUOUS_CHAT = false;
+    const DEFAULT_PROMPT_CONTINUOUS_CHAT = "忽略之前给你的提示词，现在开始你是一个连续对话助手，要结合上下文用中文回答用户问题；如有图片，请结合图片内容回答；要听从用户指示。";
 
     const DEFAULT_WIN_WIDTH = "480px";
     const DEFAULT_WIN_HEIGHT = "480px";
@@ -74,15 +76,18 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
-        PDF 阅读增强与体验升级
-        ## 🆕 PDF 阅读工具箱
-        *   **本地文件在线阅读**：突破浏览器限制，支持选择本地 PDF 文件，直接在 Mozilla 在线阅读器（PDF.js）中打开。
-            *   采用 **Blob URL + 极速传输** 方案，大文件秒开，无视沙箱跨域报错。
-            *   新增“握手协议”与前端加载悬浮窗，杜绝白屏假死现象。
-        *   **在线链接跳转**：支持快速输入 URL 打开在线 PDF。
-        ## 🎨 UI 与交互优化
-        *   **按钮风格统一**：重构了所有功能按钮（翻译、解读、识屏等）的样式，统一采用现代化设计，增加悬停反馈与流体玻璃质感。
-        *   **全场景覆盖**：修复了 PDFJS 阅读器页面无法显示“译”悬浮球的问题，现在可以在阅读 PDF 时直接划词翻译。
+        v11.0 更新日志
+        ## 💬 连续对话模式
+        *   新增“连续对话”开关与独立输入区，可在阅读中进行多轮问答。
+        *   支持发送新的识屏，并提供预览/清除按钮与折叠展开。
+        *   可将当前翻译/解读/识屏结果作为上下文继续对话。
+        ## 🧠 推理区显示优化
+        *   推理内容自动展开，正文开始后自动收起。
+        *   推理区显隐加入动画，并保留用户调整的高度。
+        ## 📄 PDF 本地打开稳定性增强
+        *   本地 PDF 传输改为优先零拷贝，失败再回退深拷贝，兼容性更稳。
+        ## ✨ 细节体验
+        *   结果区新增清空按钮，减少重复操作。
     `;
 
     // ========================================================================
@@ -171,6 +176,17 @@
                 clearInterval(readyInterval); // 停止呼叫
                 loader.style.display = "flex";
 
+                const buildPageData = (buffer) => {
+                    try {
+                        return new appWindow.Uint8Array(buffer);
+                    } catch (err) {
+                        const sandboxData = new Uint8Array(buffer);
+                        const pageData = new appWindow.Uint8Array(sandboxData.length);
+                        pageData.set(sandboxData);
+                        return pageData;
+                    }
+                };
+
                 try {
                     // 等待 App 初始化
                     const waitForApp = () => new Promise(resolve => {
@@ -182,11 +198,8 @@
                     });
                     const pdfApp = await waitForApp();
 
-                    // --- 极速深拷贝逻辑 ---
-                    const sandboxData = new Uint8Array(event.data.buffer);
-                    const pageData = new appWindow.Uint8Array(sandboxData.length);
-                    pageData.set(sandboxData);
-
+                    // 优先零拷贝视图，失败再回退深拷贝
+                    const pageData = buildPageData(event.data.buffer);
                     await pdfApp.open(pageData);
 
                     // 成功回执
@@ -200,9 +213,7 @@
                     console.error(e);
                     // 兼容模式兜底
                     try {
-                        const sandboxData = new Uint8Array(event.data.buffer);
-                        const pageData = new appWindow.Uint8Array(sandboxData.length);
-                        pageData.set(sandboxData);
+                        const pageData = buildPageData(event.data.buffer);
                         await appWindow.PDFViewerApplication.open({ data: pageData });
                         if (event.source) event.source.postMessage({ type: "PDF_OPENED_ACK" }, "*");
                         loader.style.display = "none";
@@ -282,11 +293,11 @@
         width: auto !important;
     }
     .coolauxv-toggle-label:hover { background: #dee2e6; }
-    
+
     /* 防止宿主 CSS 破坏 Checkbox */
-    .coolauxv-toggle-label input[type="checkbox"] { 
-        margin: 0 4px 0 0 !important; 
-        cursor: pointer; 
+    .coolauxv-toggle-label input[type="checkbox"] {
+        margin: 0 4px 0 0 !important;
+        cursor: pointer;
         appearance: checkbox !important; -webkit-appearance: checkbox !important;
         width: 13px !important; height: 13px !important;
         position: static !important; display: inline-block !important;
@@ -313,6 +324,9 @@
     #coolauxv-main-view {
         flex: 1; display: flex; flex-direction: column; overflow: hidden; width: 100%;
     }
+    #coolauxv-main-view > div {
+        padding-bottom: 8px !important;
+    }
 
     #coolauxv-content-container {
         flex: 1; display: flex; flex-direction: column;
@@ -328,16 +342,16 @@
     }
     .coolauxv-setting-group { margin-bottom: 15px; }
     /* 设置项标题 Label */
-    .coolauxv-setting-label { 
+    .coolauxv-setting-label {
         display: flex !important; /* 提升优先级，防止被网站改为 inline-block */
-        align-items: center; 
-        font-weight: bold; 
-        margin-bottom: 5px; 
-        font-size: 13px; 
-        color: #333; 
-        flex-wrap: wrap; 
-        gap: 8px; 
-        
+        align-items: center;
+        font-weight: bold;
+        margin-bottom: 5px;
+        font-size: 13px;
+        color: #333;
+        flex-wrap: wrap;
+        gap: 8px;
+
         /* 强制占满整行，防止被网站 CSS 挤压导致文字换行 */
         width: 100% !important;
         max-width: none !important;
@@ -373,7 +387,7 @@
         font-size: 13px;
         color: #555;
         transition: color 0.2s;
-        
+
         /* 防止宿主 CSS 污染导致的间距变大或换行 */
         margin: 0 !important;
         padding: 0 !important;
@@ -388,7 +402,7 @@
     }
     .coolauxv-radio-label:hover { color: #3b82f6; }
 
-    
+
     /* 自定义 Radio 输入框样式 */
     .coolauxv-radio-label input[type="radio"] {
         margin: 0 6px 0 0 !important;
@@ -427,12 +441,12 @@
     .coolauxv-tag-container { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
     .coolauxv-model-btn {
         display: flex; flex-direction: column; align-items: center; justify-content: center;
-        
+
         /* 仅保留布局，严禁出现 background/color */
         padding: 4px 10px; border-radius: 12px; /* 圆角改大一点，符合 Android 12 风格 */
         cursor: pointer; user-select: none;
-        min-width: 80px; 
-        
+        min-width: 80px;
+
         /* 动画 */
         transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
         text-align: center !important;
@@ -456,6 +470,15 @@
     #coolauxv-reasoning-wrapper {
         background-color: #f8f9fa; flex-shrink: 0;
         border-bottom: 1px dashed #ddd; display: none; height: 120px;
+        transform-origin: top center;
+        overflow: hidden;
+        max-height: 120px;
+        opacity: 1;
+        transform: translateY(0);
+        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+        will-change: max-height, opacity, transform;
     }
 
     #coolauxv-reasoning-box {
@@ -466,6 +489,12 @@
     #coolauxv-reasoning-wrapper::after {
         content: "💡 思考过程"; position: absolute; top: 6px; left: 10px;
         font-weight: bold; font-size: 11px; color: #888; pointer-events: none;
+    }
+    #coolauxv-reasoning-wrapper.coolauxv-reasoning-collapsed {
+        max-height: 0;
+        opacity: 0;
+        transform: translateY(-4px);
+        pointer-events: none;
     }
 
     #coolauxv-separator {
@@ -491,12 +520,95 @@
         text-align: center !important;
     }
     .coolauxv-copy-btn:hover { opacity: 1; color: #3b82f6; background: rgba(0,0,0,0.03); border-radius: 4px; }
+    .coolauxv-clear-btn { right: 24px; }
 
     .coolauxv-input-ctrl-btn {
         cursor: pointer; color: #bbb; font-size: 13px; padding: 3px;
         text-align: center; line-height: 1; transition: color 0.2s;
     }
     .coolauxv-input-ctrl-btn:hover { color: #3b82f6; background: #f0f7ff; border-radius: 4px; }
+
+    /* 连续对话操作条 */
+    #coolauxv-chat-bar {
+        margin-top: 8px;
+        display: none;
+        flex-direction: column;
+        gap: 6px;
+        flex-shrink: 0;
+    }
+    #coolauxv-chat-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 12px;
+        color: #666;
+    }
+    #coolauxv-chat-toggle {
+        cursor: pointer;
+        font-size: 12px;
+        color: #3b82f6;
+        background: transparent;
+        border: none;
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
+    #coolauxv-chat-toggle:hover {
+        background: #e0efff;
+    }
+    #coolauxv-chat-body {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        overflow: hidden;
+        max-height: 320px;
+        opacity: 1;
+        transform: translateY(0);
+        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+        will-change: max-height, opacity, transform;
+    }
+    #coolauxv-chat-bar.coolauxv-chat-collapsed #coolauxv-chat-body {
+        max-height: 0;
+        opacity: 0;
+        transform: translateY(-4px);
+        pointer-events: none;
+    }
+    #coolauxv-chat-input {
+        width: 100%;
+        min-height: 70px;
+        max-height: 220px;
+        resize: vertical;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        padding: 8px;
+        font-size: 14px;
+        box-sizing: border-box;
+        font-family: inherit;
+    }
+    #coolauxv-chat-actions { display: flex; }
+    #coolauxv-chat-actions > .coolauxv-action-btn { margin-right: 10px; }
+    #coolauxv-chat-actions > .coolauxv-action-btn:last-child { margin-right: 0; }
+    .coolauxv-chat-preview-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 4px 8px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+        border: 1px solid rgba(0,0,0,0.1);
+        background: #f9fafb;
+        color: #374151;
+        user-select: none;
+    }
+    .coolauxv-chat-preview-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        border-color: rgba(0,0,0,0.15);
+        background: #fff;
+    }
 
     /* ============================
        统一按钮风格 (Action Buttons)
@@ -520,7 +632,7 @@
         border-color: rgba(0,0,0,0.15);
         background: #fff;
     }
-    
+
     /* 点击效果 */
     .coolauxv-action-btn:active {
         transform: scale(0.98);
@@ -531,11 +643,35 @@
     .coolauxv-btn-primary { background: #e0f2fe; color: #0284c7; border-color: #bae6fd; }
     .coolauxv-btn-primary:hover { background: #bae6fd; }
 
-    .coolauxv-btn-purple { background: #f3e8ff; color: #9333ea; border-color: #d8b4fe; }
-    .coolauxv-btn-purple:hover { background: #d8b4fe; }
+    .coolauxv-btn-purple { background: #6d28d9; color: #fff; border-color: #5b21b6; }
+    .coolauxv-btn-purple:hover { background: #5b21b6; }
 
     .coolauxv-btn-blue { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
     .coolauxv-btn-blue:hover { background: #bfdbfe; }
+
+    /* 连续对话按钮显隐动画 (Animated Visibility) */
+    .coolauxv-animated-visibility {
+        opacity: 0;
+        transform: translateY(-4px) scale(0.98);
+        max-width: 0;
+        padding: 0;
+        pointer-events: none;
+        overflow: hidden;
+        transition: all 0.25s cubic-bezier(0.2, 0, 0, 1);
+    }
+    #coolauxv-chat-actions > .coolauxv-animated-visibility {
+        margin-right: 0;
+    }
+    .coolauxv-animated-visibility.coolauxv-visible {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        max-width: 140px;
+        padding: 8px 12px;
+        pointer-events: auto;
+    }
+    #coolauxv-chat-actions > .coolauxv-animated-visibility.coolauxv-visible {
+        margin-right: 10px;
+    }
 
     /* Markdown 强制样式 */
     .coolauxv-markdown, .coolauxv-raw-text { text-align: left !important; }
@@ -545,7 +681,7 @@
     .coolauxv-markdown code { background-color: #f3f4f6; color: #c2410c; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
     .coolauxv-markdown pre { background-color: #1f2937; color: #f9fafb; padding: 10px; border-radius: 6px; overflow-x: auto; margin: 10px 0; text-align: left !important; }
     .coolauxv-raw-text { white-space: pre-wrap; font-family: monospace; color: #444; }
-    
+
     /* GitHub 开源按钮样式 */
     .coolauxv-github-btn {
         display: inline-flex; align-items: center; justify-content: center;
@@ -570,13 +706,13 @@
         /* 边框：高亮白边模拟玻璃边缘 */
         border: 1px solid rgba(255, 255, 255, 0.6) !important;
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15) !important;
-        
+
         /* 核心需求：给非文本框文字加上白色光晕/阴影，对抗杂乱背景 */
         text-shadow: 0 1px 2px rgba(255, 255, 255, 0.9), 0 0 1px rgba(255, 255, 255, 0.8) !important;
     }
 
     /* 重置输入框/代码块内的文字阴影 */
-    .coolauxv-blur-glass-enabled input, 
+    .coolauxv-blur-glass-enabled input,
     .coolauxv-blur-glass-enabled textarea,
     .coolauxv-blur-glass-enabled .coolauxv-scroll-box,
     .coolauxv-blur-glass-enabled pre,
@@ -620,7 +756,7 @@
         background: transparent !important;
         border: 1px solid rgba(255, 255, 255, 0.4) !important;
     }
-    
+
     .coolauxv-blur-glass-enabled #coolauxv-reasoning-wrapper {
         background-color: rgba(248, 249, 250, 0.7) !important;
         border-bottom: 1px dashed rgba(0, 0, 0, 0.1) !important;
@@ -645,11 +781,12 @@
         backdrop-filter: blur(4px);
         border: 1px solid rgba(255, 255, 255, 0.3) !important;
         box-shadow: 0 4px 12px rgba(165, 22, 232, 0.25);
+        color: #fff;
     }
     .coolauxv-blur-glass-enabled #coolauxv-btn-explain:hover {
         background: rgba(165, 22, 232, 0.9) !important;
     }
-    
+
     .coolauxv-blur-glass-enabled #coolauxv-btn-screenshot {
         background: rgba(59, 130, 246, 0.75) !important;
         backdrop-filter: blur(4px);
@@ -659,7 +796,7 @@
     .coolauxv-blur-glass-enabled #coolauxv-btn-screenshot:hover {
         background: rgba(59, 130, 246, 0.9) !important;
     }
-    
+
     .coolauxv-blur-glass-enabled #coolauxv-btn-preview {
         background: rgba(255, 255, 255, 0.2) !important;
         border: 1px solid rgba(255, 255, 255, 0.4) !important;
@@ -673,7 +810,7 @@
     .coolauxv-blur-glass-enabled #coolauxv-separator {
         background: rgba(255, 255, 255, 0.5) !important;
     }
-    
+
     /* 8. 模型按钮样式 (特定) */
     .coolauxv-model-btn.coolauxv-blur-glass-style-btn {
         background: rgba(220, 245, 255, 0.25) !important;
@@ -711,18 +848,18 @@
         /* 使用大阴影技术来实现"镂空"效果 */
         pointer-events: auto;
     }
-    
+
     #coolauxv-selection-box {
         position: absolute;
         border: 2px solid #a516e8;
         /* 核心：背景透明，利用超大阴影压暗周围，形成聚光灯效果 */
-        background: transparent !important; 
-        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5) !important; 
+        background: transparent !important;
+        box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5) !important;
         pointer-events: none;
         z-index: 2147483648;
         display: none;
     }
-    
+
     /* === 截图加载时的提示 === */
     /* 1. 默认状态：纯灰蒙版 (Dark Mode style) */
     #coolauxv-loading-toast {
@@ -730,12 +867,12 @@
         /* 使用 Flex 布局居中内容 */
         display: none; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
         padding: 20px 30px; border-radius: 12px; font-size: 14px; z-index: 2147483655;
-        
+
         background: rgba(40, 40, 40, 0.9); /* 纯深灰色，不带模糊 */
         color: #fff;
         border: 1px solid rgba(255, 255, 255, 0.1);
         box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-        
+
         transition: all 0.3s ease; /* 添加过渡动画 */
     }
 
@@ -748,12 +885,12 @@
         -webkit-backdrop-filter: blur(15px) !important;
         border: 1px solid rgba(255, 255, 255, 0.5) !important;
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15) !important;
-        
+
         /* 玻璃背景通常较亮，文字改为深色以保证对比度 */
-        color: #1f2937 !important; 
+        color: #1f2937 !important;
         text-shadow: 0 1px 1px rgba(255, 255, 255, 0.8);
     }
-    
+
     #coolauxv-screenshot-toolbar {
         position: absolute;
         display: none;
@@ -764,7 +901,7 @@
         border-radius: 6px;
         box-shadow: 0 2px 10px rgba(0,0,0,0.2);
     }
-    
+
     .coolauxv-shot-btn {
         padding: 4px 12px; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: bold; border: none; color: white;
     }
@@ -776,20 +913,20 @@
     ============================ */
     #coolauxv-img-preview-overlay {
         position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-        background: rgba(0, 0, 0, 0.85); 
+        background: rgba(0, 0, 0, 0.85);
         z-index: 2147483650; /* 比截图层更高 */
-        display: none; 
+        display: none;
         justify-content: center; align-items: center;
         cursor: zoom-out;
         backdrop-filter: blur(5px);
     }
     #coolauxv-img-preview-overlay img {
-        max-width: 95%; max-height: 95%; 
-        box-shadow: 0 0 30px rgba(0,0,0,0.5); 
+        max-width: 95%; max-height: 95%;
+        box-shadow: 0 0 30px rgba(0,0,0,0.5);
         border-radius: 4px;
         object-fit: contain;
     }
-    
+
     /* 预览按钮 (透明背景，带边框) */
     .coolauxv-blur-glass-enabled #coolauxv-btn-preview {
         background: rgba(255, 255, 255, 0.2) !important;
@@ -898,6 +1035,19 @@
     let streamTextBuffer = "";
     let streamReasoningBuffer = "";
     let hasReasoning = false;
+    let streamMode = "single";
+
+    let historyRecords = [];
+    let chatMessages = [];
+    let chatDisplayBuffer = "";
+    let chatSessionStarted = false;
+    let chatCapturedImageBase64 = "";
+    let chatImageStore = {};
+    let chatImageCounter = 0;
+    let chatAssistantBuffer = "";
+    let chatPendingAssistantPrefix = "";
+    let isChatCollapsed = true;
+    let updateChatCollapseUI = () => {};
 
     let lastRenderedText = "";
     let lastRenderedReasoning = "";
@@ -1106,7 +1256,7 @@
                                                 ${groups[className].map(m => {
                     const c = stringToColorStyles(m.tag);
                     return `
-                            <!-- 
+                            <!--
                                 样式逻辑：
                                 1. 背景色极浅 (bg)
                                 2. 边框很淡 (border)
@@ -1114,9 +1264,9 @@
                             -->
                             <div class="coolauxv-model-btn" data-field="${fieldName}" data-val="${m.id}" data-tag="${m.tag}"
                                  style="background:${c.bg}; border: 1px solid ${c.border}; color:${c.text};">
-                                 
+
                                 <span class="coolauxv-model-name">${m.id}</span>
-                                
+
                                 <!-- Tag 使用次级颜色，或者直接继承主色 -->
                                 <span class="coolauxv-model-tag" style="color:${c.tag}">${m.tag}</span>
                             </div>
@@ -1176,13 +1326,13 @@
                   <div style="display:flex; gap:10px; margin-bottom:10px; flex-shrink:0;">
                       <!-- 翻译按钮：默认灰色风格 -->
                       <button id="coolauxv-btn-trans" class="coolauxv-action-btn" style="flex:1;">翻译</button>
-                          
+
                       <!-- 解读按钮：紫色风格 -->
                       <button id="coolauxv-btn-explain" class="coolauxv-action-btn coolauxv-btn-purple" style="flex:1;">解读</button>
-                          
+
                       <!-- 识屏按钮：蓝色风格 -->
                       <button id="coolauxv-btn-screenshot" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
-                          
+
                       <!-- 预览按钮：默认风格 -->
                       <button id="coolauxv-btn-preview" class="coolauxv-action-btn" style="display:none; flex:0.3; font-size:14px;" title="预览截图">🔍</button>
                   </div>
@@ -1196,8 +1346,25 @@
                       <div id="coolauxv-separator" title="拖动调整高度"></div>
 
                       <div id="coolauxv-result-wrapper" class="coolauxv-box-wrapper" style="flex:1;">
+                          <span id="coolauxv-clear-result" class="coolauxv-copy-btn coolauxv-clear-btn" title="清空输出">🧹</span>
                           <span class="coolauxv-copy-btn" data-type="result" title="复制结果">📋</span>
                           <div id="coolauxv-result" class="coolauxv-scroll-box"></div>
+                      </div>
+                  </div>
+
+                  <div id="coolauxv-chat-bar">
+                      <div id="coolauxv-chat-header">
+                          <span>连续对话</span>
+                          <button type="button" id="coolauxv-chat-toggle">收起</button>
+                      </div>
+                      <div id="coolauxv-chat-body">
+                          <textarea id="coolauxv-chat-input" placeholder="连续对话输入..."></textarea>
+                          <div id="coolauxv-chat-actions">
+                              <button id="coolauxv-btn-screenshot-chat" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
+                              <button id="coolauxv-btn-preview-chat" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="预览截图">🔍</button>
+                              <button id="coolauxv-btn-clear-chat-shot" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="清除识屏">🗑 清除</button>
+                              <button id="coolauxv-btn-chat-send" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">发送</button>
+                          </div>
                       </div>
                   </div>
                 </div>
@@ -1206,7 +1373,7 @@
             <!-- 设置界面 -->
             <div id="coolauxv-settings-view">
                 <h3 style="margin-top:0; border-bottom:1px solid #eee; padding-bottom:10px;">
-                    ⚙️ 配置设置 
+                    ⚙️ 配置设置
                     <a href="https://github.com/CoolestEnoch/CoolAuxv" target="_blank" class="coolauxv-github-btn" title="查看源码与文档">
                         <svg height="16" width="16" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
                         CoolAuxv (GitHub)
@@ -1233,12 +1400,12 @@
                     <!-- 插入自动生成的文本模型分组 (包含灰色小标题和按钮) -->
                     ${textModelsHTML}
                 </div>
-                
+
                 <div class="coolauxv-setting-group">
                     <!-- 黑色大标题：视觉模型 -->
                     <label class="coolauxv-setting-label">视觉模型 (Vision Models)</label>
                     <input type="text" id="coolauxv-cfg-model-vision" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${DEFAULT_VISION_MODEL}">
-                    
+
                     <!-- 插入自动生成的视觉模型分组 -->
                     ${visionModelsHTML}
                 </div>
@@ -1290,6 +1457,16 @@
                 </div>
 
                 <div class="coolauxv-setting-group">
+                    <label class="coolauxv-setting-label">
+                        连续对话提示词
+                        <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                            <input type="checkbox" id="coolauxv-cfg-append-chat"> 追加
+                        </label>
+                    </label>
+                    <textarea id="coolauxv-cfg-prompt-chat" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认: ${DEFAULT_PROMPT_CONTINUOUS_CHAT}"></textarea>
+                </div>
+
+                <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">PDF 阅读工具 (PDF.js Onilne)</label>
                     <div class="coolauxv-input-wrapper">
                         <input type="text" id="coolauxv-pdf-url" class="coolauxv-setting-input" placeholder="输入在线 PDF 链接...">
@@ -1327,7 +1504,7 @@
                 <!-- 实验性功能 Group -->
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label" style="color:#e65100;">🧪 实验性功能 (Experimental)</label>
-                    
+
                     <!-- 第一行：标签 + 下拉框 (Flex横向排列) -->
                     <div style="display:flex; align-items:center; gap:10px; margin-top:5px;">
                         <span style="font-size:13px; color:#555;">截屏算法版本</span>
@@ -1341,6 +1518,13 @@
                     <!-- 第二行：提示文字 (独立div，Block纵向排列) -->
                     <div style="display:block; margin-top:6px; font-size:11px; color:#999; line-height:1.4;">
                         v1: 兼容性最好; v2: 修复错位; v3: 更通用，但Android可能不能用
+                    </div>
+
+                    <div style="display:flex; align-items:center; gap:10px; margin-top:8px;">
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-cfg-continuous-chat"> 连续对话
+                        </label>
+                        <span style="font-size:11px; color:#999;">使用视觉模型</span>
                     </div>
                 </div>
 
@@ -1398,6 +1582,8 @@
 
                 // 绑定预览按钮事件
                 const btnPreview = popup.querySelector("#coolauxv-btn-preview");
+                const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
+                const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
                 const previewOverlay = document.querySelector("#coolauxv-img-preview-overlay");
                 const previewImg = document.querySelector("#coolauxv-img-preview-el");
                 if (btnPreview && previewOverlay && previewImg) {
@@ -1406,6 +1592,21 @@
                             previewImg.src = capturedImageBase64;
                             previewOverlay.style.display = "flex";
                         }
+                    };
+                }
+                if (btnChatPreview && previewOverlay && previewImg) {
+                    btnChatPreview.onclick = () => {
+                        if (chatCapturedImageBase64) {
+                            previewImg.src = chatCapturedImageBase64;
+                            previewOverlay.style.display = "flex";
+                        }
+                    };
+                }
+                if (btnChatClear) {
+                    btnChatClear.onclick = () => {
+                        chatCapturedImageBase64 = "";
+                        setAnimatedVisibility(btnChatPreview, false);
+                        setAnimatedVisibility(btnChatClear, false);
                     };
                 }
             }, 0);
@@ -1447,7 +1648,8 @@
             "coolauxv-cfg-model-vision",
             "coolauxv-cfg-width", "coolauxv-cfg-height",
             "coolauxv-cfg-prompt-trans", "coolauxv-cfg-prompt-explain",
-            "coolauxv-cfg-prompt-vision"
+            "coolauxv-cfg-prompt-vision",
+            "coolauxv-cfg-prompt-chat"
         ];
         clearableInputs.forEach(id => {
             const input = popup.querySelector(`#${id}`);
@@ -1495,9 +1697,11 @@
         const inputPromptTrans = popup.querySelector("#coolauxv-cfg-prompt-trans");
         const inputPromptExplain = popup.querySelector("#coolauxv-cfg-prompt-explain");
         const inputPromptVision = popup.querySelector("#coolauxv-cfg-prompt-vision");
+        const inputPromptChat = popup.querySelector("#coolauxv-cfg-prompt-chat");
         const inputAppendTrans = popup.querySelector("#coolauxv-cfg-append-trans");
         const inputAppendExplain = popup.querySelector("#coolauxv-cfg-append-explain");
         const inputAppendVision = popup.querySelector("#coolauxv-cfg-append-vision");
+        const inputAppendChat = popup.querySelector("#coolauxv-cfg-append-chat");
         const inputPdfUrl = popup.querySelector("#coolauxv-pdf-url");
         const btnClearPdf = popup.querySelector("#coolauxv-btn-clear-pdf");
         const btnPdfLink = popup.querySelector("#coolauxv-btn-pdf-link");
@@ -1509,6 +1713,10 @@
         const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
+        const inputContinuousChat = popup.querySelector("#coolauxv-cfg-continuous-chat");
+        const chatBar = popup.querySelector("#coolauxv-chat-bar");
+        const chatBody = popup.querySelector("#coolauxv-chat-body");
+        const chatToggleBtn = popup.querySelector("#coolauxv-chat-toggle");
 
         radioBtns.forEach(radio => {
             radio.addEventListener('change', (e) => {
@@ -1524,6 +1732,33 @@
             else GM_deleteValue(key);
         };
 
+        const toggleContinuousChat = (enabled) => {
+            if (!chatBar) return;
+            chatBar.style.display = enabled ? "flex" : "none";
+            if (enabled) {
+                isChatCollapsed = true;
+                requestAnimationFrame(() => updateChatCollapseUI());
+            }
+        };
+
+        updateChatCollapseUI = () => {
+            if (!chatBody || !chatToggleBtn || !chatBar) return;
+            chatToggleBtn.textContent = isChatCollapsed ? "展开" : "收起";
+            chatBar.classList.toggle("coolauxv-chat-collapsed", isChatCollapsed);
+            if (isChatCollapsed) {
+                chatBody.style.maxHeight = "0px";
+            } else {
+                chatBody.style.maxHeight = `${chatBody.scrollHeight}px`;
+            }
+        };
+
+        if (chatToggleBtn) {
+            chatToggleBtn.onclick = () => {
+                isChatCollapsed = !isChatCollapsed;
+                updateChatCollapseUI();
+            };
+        }
+
         const loadConfig = () => {
             if (inputKey) inputKey.value = GM_getValue("coolauxv_api_key", "");
             if (inputModel) inputModel.value = GM_getValue("coolauxv_model_name", "");
@@ -1531,9 +1766,11 @@
             if (inputHeight) inputHeight.value = GM_getValue("coolauxv_win_height", "");
             if (inputPromptTrans) inputPromptTrans.value = GM_getValue("coolauxv_prompt_trans", "");
             if (inputPromptExplain) inputPromptExplain.value = GM_getValue("coolauxv_prompt_explain", "");
+            if (inputPromptChat) inputPromptChat.value = GM_getValue("coolauxv_prompt_chat", "");
             if (inputAppendTrans) inputAppendTrans.checked = GM_getValue("coolauxv_append_trans", false);
             if (inputAppendExplain) inputAppendExplain.checked = GM_getValue("coolauxv_append_explain", false);
             if (inputAppendVision) inputAppendVision.checked = GM_getValue("coolauxv_append_vision", false);
+            if (inputAppendChat) inputAppendChat.checked = GM_getValue("coolauxv_append_chat", false);
 
             const currentLevel = GM_getValue("coolauxv_log_level", DEFAULT_LOG_LEVEL); // 这里的默认值要与常量一致
             const targetRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="${currentLevel}"]`);
@@ -1557,6 +1794,7 @@
             }
             if (inputModelVision) inputModelVision.value = GM_getValue("coolauxv_model_vision", "");
             if (inputPromptVision) inputPromptVision.value = GM_getValue("coolauxv_prompt_vision", "");
+            if (inputContinuousChat) inputContinuousChat.checked = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
         };
 
         if (resetBtn) resetBtn.onclick = () => {
@@ -1568,12 +1806,15 @@
                 GM_deleteValue("coolauxv_log_level");
                 GM_deleteValue("coolauxv_prompt_trans");
                 GM_deleteValue("coolauxv_prompt_explain");
+                GM_deleteValue("coolauxv_prompt_chat");
                 GM_deleteValue("coolauxv_model_vision");
                 GM_deleteValue("coolauxv_prompt_vision");
                 GM_deleteValue("coolauxv_append_trans");
                 GM_deleteValue("coolauxv_append_explain");
                 GM_deleteValue("coolauxv_append_vision");
+                GM_deleteValue("coolauxv_append_chat");
                 GM_deleteValue("coolauxv_use_new_screenshot");
+                GM_deleteValue("coolauxv_enable_continuous_chat");
                 GM_deleteValue("coolauxv_enable_blur_glass");
                 GM_deleteValue("coolauxv_persistent_ball");
                 GM_deleteValue("coolauxv_draggable_ball");
@@ -1593,6 +1834,11 @@
                 if (inputAppendTrans) inputAppendTrans.checked = false;
                 if (inputAppendExplain) inputAppendExplain.checked = false;
                 if (inputAppendVision) inputAppendVision.checked = false;
+                if (inputAppendChat) inputAppendChat.checked = false;
+                if (inputContinuousChat) {
+                    inputContinuousChat.checked = DEFAULT_ENABLE_CONTINUOUS_CHAT;
+                    toggleContinuousChat(DEFAULT_ENABLE_CONTINUOUS_CHAT);
+                }
                 alert("配置已重置。");
             }
         };
@@ -1603,11 +1849,20 @@
         if (inputHeight) inputHeight.addEventListener("input", (e) => saveConfig("coolauxv_win_height", e.target.value));
         if (inputPromptTrans) inputPromptTrans.addEventListener("input", (e) => saveConfig("coolauxv_prompt_trans", e.target.value));
         if (inputPromptExplain) inputPromptExplain.addEventListener("input", (e) => saveConfig("coolauxv_prompt_explain", e.target.value));
+        if (inputPromptChat) inputPromptChat.addEventListener("input", (e) => saveConfig("coolauxv_prompt_chat", e.target.value));
         if (inputModelVision) inputModelVision.addEventListener("input", (e) => saveConfig("coolauxv_model_vision", e.target.value));
         if (inputPromptVision) inputPromptVision.addEventListener("input", (e) => saveConfig("coolauxv_prompt_vision", e.target.value));
         if (inputAppendTrans) inputAppendTrans.addEventListener("change", (e) => GM_setValue("coolauxv_append_trans", e.target.checked));
         if (inputAppendExplain) inputAppendExplain.addEventListener("change", (e) => GM_setValue("coolauxv_append_explain", e.target.checked));
         if (inputAppendVision) inputAppendVision.addEventListener("change", (e) => GM_setValue("coolauxv_append_vision", e.target.checked));
+        if (inputAppendChat) inputAppendChat.addEventListener("change", (e) => GM_setValue("coolauxv_append_chat", e.target.checked));
+        if (inputContinuousChat) {
+            inputContinuousChat.addEventListener("change", (e) => {
+                const enabled = e.target.checked;
+                GM_setValue("coolauxv_enable_continuous_chat", enabled);
+                toggleContinuousChat(enabled);
+            });
+        }
 
         const toggleBlurGlass = (enabled) => {
             // 主窗口
@@ -1653,52 +1908,83 @@
             inputPdfFile.onchange = (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
+                inputPdfFile.value = '';
 
-                const reader = new FileReader();
                 const originalBtnText = "🚀 在线加载本地文件";
-                btnPdfLocalOnline.innerText = "读取文件中...";
+                let buffer = null;
+                let isViewerReady = false;
+                let isSent = false;
+                let readyTimeoutId = null;
 
-                reader.onload = function (evt) {
-                    const buffer = evt.target.result;
-                    btnPdfLocalOnline.innerText = "等待新窗口...";
+                const viewerWin = window.open("https://mozilla.github.io/pdf.js/web/viewer.html?file=", "_blank");
+                if (!viewerWin) {
+                    alert("请允许弹窗");
+                    btnPdfLocalOnline.innerText = originalBtnText;
+                    return;
+                }
 
-                    const viewerWin = window.open("https://mozilla.github.io/pdf.js/web/viewer.html?file=", "_blank");
-                    if (!viewerWin) { alert("请允许弹窗"); btnPdfLocalOnline.innerText = originalBtnText; return; }
+                const cleanup = () => {
+                    window.removeEventListener("message", msgHandler);
+                    if (readyTimeoutId) {
+                        clearTimeout(readyTimeoutId);
+                        readyTimeoutId = null;
+                    }
+                };
 
-                    // 定义消息处理函数
-                    const msgHandler = (event) => {
-                        // 1. 收到新窗口的就绪信号
-                        if (event.data && event.data.type === "PDF_I_AM_READY") {
-                            // 立即发送！不等待！
-                            // 第三个参数 [buffer] 是 Transferable List，意味着直接移交内存控制权，速度极快
-                            viewerWin.postMessage({
-                                type: "OPEN_PDF_BLOB",
-                                buffer: buffer
-                            }, "*", [buffer]);
+                const trySend = () => {
+                    if (isSent || !buffer || !isViewerReady) return;
+                    isSent = true;
+                    btnPdfLocalOnline.innerText = "⚡ 数据发送中...";
+                    viewerWin.postMessage({ type: "OPEN_PDF_BLOB", buffer: buffer }, "*", [buffer]);
+                    btnPdfLocalOnline.innerText = "⚡ 数据已发送";
+                };
 
-                            btnPdfLocalOnline.innerText = "⚡ 数据已发送";
-                        }
-
-                        // 2. 收到新窗口的成功回执
-                        if (event.data && event.data.type === "PDF_OPENED_ACK") {
-                            window.removeEventListener("message", msgHandler);
-                            btnPdfLocalOnline.innerText = "✅ 完成";
-                            setTimeout(() => btnPdfLocalOnline.innerText = originalBtnText, 2000);
-                        }
-                    };
-
-                    window.addEventListener("message", msgHandler);
-
-                    // 兜底：如果5秒还没反应，提示用户
-                    setTimeout(() => {
-                        if (btnPdfLocalOnline.innerText === "等待新窗口...") {
+                const startReadyTimeout = () => {
+                    if (readyTimeoutId) return;
+                    readyTimeoutId = setTimeout(() => {
+                        if (!isSent) {
+                            cleanup();
                             btnPdfLocalOnline.innerText = "❌ 连接超时";
                             setTimeout(() => btnPdfLocalOnline.innerText = originalBtnText, 2000);
                         }
                     }, 8000);
                 };
+
+                const msgHandler = (event) => {
+                    if (event.source !== viewerWin) return;
+                    if (event.data && event.data.type === "PDF_I_AM_READY") {
+                        isViewerReady = true;
+                        if (readyTimeoutId) {
+                            clearTimeout(readyTimeoutId);
+                            readyTimeoutId = null;
+                        }
+                        trySend();
+                    }
+                    if (event.data && event.data.type === "PDF_OPENED_ACK") {
+                        cleanup();
+                        btnPdfLocalOnline.innerText = "✅ 完成";
+                        setTimeout(() => btnPdfLocalOnline.innerText = originalBtnText, 2000);
+                    }
+                };
+
+                window.addEventListener("message", msgHandler);
+
+                const reader = new FileReader();
+                btnPdfLocalOnline.innerText = "读取文件中...";
+                reader.onload = (evt) => {
+                    buffer = evt.target.result;
+                    if (!isViewerReady) {
+                        btnPdfLocalOnline.innerText = "等待新窗口...";
+                        startReadyTimeout();
+                    }
+                    trySend();
+                };
+                reader.onerror = () => {
+                    cleanup();
+                    btnPdfLocalOnline.innerText = "❌ 读取失败";
+                    setTimeout(() => btnPdfLocalOnline.innerText = originalBtnText, 2000);
+                };
                 reader.readAsArrayBuffer(file);
-                inputPdfFile.value = '';
             };
         }
 
@@ -1775,6 +2061,8 @@
             };
         });
         toggleBlurGlass(GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS));
+        toggleContinuousChat(GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT));
+        updateChatCollapseUI();
     }
 
     function getActiveConfig() {
@@ -1801,8 +2089,175 @@
             promptExplain: getFinalPrompt("coolauxv_prompt_explain", "coolauxv_append_explain", DEFAULT_PROMPT_EXPLAIN),
 
             modelVision: GM_getValue("coolauxv_model_vision") || DEFAULT_VISION_MODEL,
-            promptVision: getFinalPrompt("coolauxv_prompt_vision", "coolauxv_append_vision", DEFAULT_PROMPT_VISION)
+            promptVision: getFinalPrompt("coolauxv_prompt_vision", "coolauxv_append_vision", DEFAULT_PROMPT_VISION),
+            promptContinuousChat: getFinalPrompt("coolauxv_prompt_chat", "coolauxv_append_chat", DEFAULT_PROMPT_CONTINUOUS_CHAT)
         };
+    }
+
+    function buildUserMessageContent(text, imageBase64) {
+        if (imageBase64) {
+            return [
+                { type: "image_url", image_url: { url: imageBase64 } },
+                { type: "text", text: text || "" }
+            ];
+        }
+        return text || "";
+    }
+
+    function formatChatUserBlock(userText, imageId, isFirst) {
+        const safeText = userText ? userText : (imageId ? "（仅识屏）" : "");
+        let block = "";
+        if (!isFirst) block += "\n\n---\n\n";
+        block += `**👤 用户：**\n${safeText}\n`;
+        if (imageId) {
+            block += `\n<button type="button" class="coolauxv-chat-preview-btn" data-chat-img-id="${imageId}">🔍 预览识屏</button>\n`;
+        }
+        return block;
+    }
+
+    function getChatAssistantPrefix() {
+        return "\n\n**🤖 AI：**\n";
+    }
+
+    function buildChatAssistantBlock(text) {
+        return getChatAssistantPrefix() + (text || "");
+    }
+
+    function recordHistoryEntry(entry) {
+        if (!entry) return;
+        const output = (entry.assistantText || "").trim();
+        if (!output) return;
+        historyRecords.push(entry);
+    }
+
+    function startChatSessionIfNeeded() {
+        if (chatSessionStarted) return;
+        chatSessionStarted = true;
+        chatMessages = [];
+        chatDisplayBuffer = "";
+        chatImageStore = {};
+        chatImageCounter = 0;
+        const config = getActiveConfig();
+
+        historyRecords.forEach((entry) => {
+            if (entry.systemPrompt) chatMessages.push({ role: "system", content: entry.systemPrompt });
+
+            const userContent = buildUserMessageContent(entry.userContentText, entry.imageBase64);
+            if (userContent !== "") chatMessages.push({ role: "user", content: userContent });
+            if (entry.assistantText) chatMessages.push({ role: "assistant", content: entry.assistantText });
+
+            let imageId = null;
+            if (entry.imageBase64) {
+                imageId = `chat-img-${++chatImageCounter}`;
+                chatImageStore[imageId] = entry.imageBase64;
+            }
+            const displayText = entry.userDisplayText ? entry.userDisplayText : (entry.imageBase64 ? "" : (entry.userContentText || ""));
+            const isFirst = chatDisplayBuffer.length === 0;
+            chatDisplayBuffer += formatChatUserBlock(displayText, imageId, isFirst);
+            if (entry.assistantText) {
+                chatDisplayBuffer += buildChatAssistantBlock(entry.assistantText);
+            }
+        });
+
+        const chatPrompt = (config.promptContinuousChat || "").trim();
+        if (chatPrompt) {
+            chatMessages.push({ role: "system", content: chatPrompt });
+        }
+    }
+
+    function updateChatStreamText() {
+        if (chatAssistantBuffer) {
+            streamTextBuffer = chatDisplayBuffer + chatPendingAssistantPrefix + chatAssistantBuffer;
+        } else {
+            streamTextBuffer = chatDisplayBuffer;
+        }
+    }
+
+    function collapseChatIfEnabled() {
+        if (!popup) return;
+        const enabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+        if (!enabled) return;
+        const chatBar = popup.querySelector("#coolauxv-chat-bar");
+        if (!chatBar || chatBar.style.display === "none") return;
+        if (isChatCollapsed) return;
+        isChatCollapsed = true;
+        updateChatCollapseUI();
+    }
+
+    function autoExpandChatIfEnabled() {
+        if (!popup) return;
+        const enabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+        if (!enabled) return;
+        const chatBar = popup.querySelector("#coolauxv-chat-bar");
+        if (!chatBar || chatBar.style.display === "none") return;
+        if (!isChatCollapsed) return;
+        isChatCollapsed = false;
+        updateChatCollapseUI();
+    }
+
+    function finalizeChatResponse() {
+        if (!chatSessionStarted) return;
+        if (chatAssistantBuffer) {
+            chatMessages.push({ role: "assistant", content: chatAssistantBuffer });
+            chatDisplayBuffer += chatPendingAssistantPrefix + chatAssistantBuffer;
+        }
+        chatAssistantBuffer = "";
+        chatPendingAssistantPrefix = "";
+        streamTextBuffer = chatDisplayBuffer;
+        lastRenderedText = "";
+        renderContent();
+        autoExpandChatIfEnabled();
+    }
+
+    function appendChatError(message) {
+        if (!chatSessionStarted) return;
+        const safeMessage = message || "请求失败";
+        chatDisplayBuffer += `\n\n<span style="color:red">${safeMessage}</span>`;
+        streamTextBuffer = chatDisplayBuffer;
+        lastRenderedText = "";
+        renderContent();
+    }
+
+    function clearChatSessionState() {
+        chatMessages = [];
+        chatDisplayBuffer = "";
+        chatSessionStarted = false;
+        chatImageStore = {};
+        chatImageCounter = 0;
+        chatAssistantBuffer = "";
+        chatPendingAssistantPrefix = "";
+        streamMode = "single";
+        streamTextBuffer = "";
+        lastRenderedText = "";
+    }
+
+    function clearConversationState() {
+        historyRecords = [];
+        chatMessages = [];
+        chatDisplayBuffer = "";
+        chatSessionStarted = false;
+        chatImageStore = {};
+        chatImageCounter = 0;
+        chatAssistantBuffer = "";
+        chatPendingAssistantPrefix = "";
+        streamMode = "single";
+        streamTextBuffer = "";
+        streamReasoningBuffer = "";
+        lastRenderedText = "";
+        lastRenderedReasoning = "";
+        hasReasoning = false;
+
+        const resultDiv = popup.querySelector("#coolauxv-result");
+        const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
+        const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
+        const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle-container");
+        const separator = popup.querySelector("#coolauxv-separator");
+
+        if (resultDiv) resultDiv.innerHTML = "";
+        if (reasoningDiv) reasoningDiv.innerHTML = "";
+        if (reasoningWrapper) reasoningWrapper.style.display = "none";
+        if (reasoningToggle) reasoningToggle.style.display = "none";
+        if (separator) separator.style.display = "none";
     }
 
     // --- 4. 核心功能 ---
@@ -1812,7 +2267,10 @@
 
         // 重置推理框高度为 50%
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
-        if (reasoningWrapper) reasoningWrapper.style.height = "50%";
+        if (reasoningWrapper) {
+            reasoningWrapper.style.height = "50%";
+            reasoningWrapper.dataset.lastHeight = "";
+        }
 
 
         if (window.innerWidth < 600) {
@@ -1922,15 +2380,15 @@
         if (hasReasoning) {
             reasoningToggle.style.display = "flex";
             if (isShowReasoning) {
-                reasoningWrapper.style.display = "flex";
+                setReasoningAnimatedVisibility(true);
                 separator.style.display = "flex";
             } else {
-                reasoningWrapper.style.display = "none";
+                setReasoningAnimatedVisibility(false);
                 separator.style.display = "none";
             }
         } else {
             reasoningToggle.style.display = "none";
-            reasoningWrapper.style.display = "none";
+            setReasoningAnimatedVisibility(false);
             separator.style.display = "none";
         }
 
@@ -1948,7 +2406,7 @@
         }
         // 如果文本缓冲区为空（说明正在推理，或正在等待网络响应），则保留“AI 思考中...”的提示
         else {
-            if (!resultDiv.innerHTML.includes("AI 思考中")) {
+            if (isRendering && !resultDiv.innerHTML.includes("AI 思考中")) {
                 resultDiv.innerHTML = "<span style='color:#888'>⏳ AI 思考中...</span>";
             }
         }
@@ -1970,6 +2428,70 @@
     }
 
     function stopRenderLoop() { isRendering = false; renderContent(); }
+
+    function setAnimatedVisibility(element, visible) {
+        if (!element) return;
+        const isVisible = element.classList.contains("coolauxv-visible");
+        if (visible) {
+            if (isVisible) return;
+            element.style.display = "flex";
+            void element.offsetWidth;
+            element.classList.add("coolauxv-visible");
+            return;
+        }
+
+        if (!isVisible && element.style.display === "none") return;
+        element.classList.remove("coolauxv-visible");
+        const onEnd = (e) => {
+            if (e.propertyName !== "opacity") return;
+            if (!element.classList.contains("coolauxv-visible")) {
+                element.style.display = "none";
+            }
+            element.removeEventListener("transitionend", onEnd);
+        };
+        element.addEventListener("transitionend", onEnd);
+    }
+
+    function setReasoningAnimatedVisibility(visible) {
+        const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
+        if (!reasoningWrapper) return;
+        const isCollapsed = reasoningWrapper.classList.contains("coolauxv-reasoning-collapsed");
+
+        const resolveTargetHeight = () => {
+            const stored = reasoningWrapper.dataset.lastHeight;
+            if (stored && stored.endsWith("px")) return stored;
+            const height = reasoningWrapper.getBoundingClientRect().height || reasoningWrapper.scrollHeight;
+            return `${height || 120}px`;
+        };
+
+        if (visible) {
+            if (!isCollapsed && reasoningWrapper.style.display === "flex") return;
+            if (reasoningWrapper.style.display !== "flex") {
+                reasoningWrapper.style.display = "flex";
+            }
+            const targetHeight = resolveTargetHeight();
+            reasoningWrapper.style.maxHeight = "0px";
+            reasoningWrapper.classList.add("coolauxv-reasoning-collapsed");
+            requestAnimationFrame(() => {
+                reasoningWrapper.style.maxHeight = targetHeight;
+                reasoningWrapper.classList.remove("coolauxv-reasoning-collapsed");
+            });
+            return;
+        }
+
+        const currentHeight = reasoningWrapper.getBoundingClientRect().height;
+        if (currentHeight > 0) reasoningWrapper.dataset.lastHeight = `${currentHeight}px`;
+        reasoningWrapper.classList.add("coolauxv-reasoning-collapsed");
+        reasoningWrapper.style.maxHeight = "0px";
+        const onEnd = (e) => {
+            if (e.propertyName !== "max-height") return;
+            if (reasoningWrapper.classList.contains("coolauxv-reasoning-collapsed")) {
+                reasoningWrapper.style.display = "none";
+            }
+            reasoningWrapper.removeEventListener("transitionend", onEnd);
+        };
+        reasoningWrapper.addEventListener("transitionend", onEnd);
+    }
     function minimizeWindow() { popup.style.display = "none"; floatBall.style.display = "block"; }
     function closeWindow() {
         popup.style.display = "none";
@@ -1977,13 +2499,22 @@
         // 1. 清空输入框文本
         const input = popup.querySelector("#coolauxv-input");
         if (input) input.value = "";
+        const chatInput = popup.querySelector("#coolauxv-chat-input");
+        if (chatInput) chatInput.value = "";
 
         // 2. 清空识屏数据
         capturedImageBase64 = "";
+        chatCapturedImageBase64 = "";
 
         // 3. 隐藏预览按钮
         const btnPreview = popup.querySelector("#coolauxv-btn-preview");
         if (btnPreview) btnPreview.style.display = "none";
+        const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
+        setAnimatedVisibility(btnChatPreview, false);
+        const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
+        setAnimatedVisibility(btnChatClear, false);
+
+        clearConversationState();
 
         // --- 悬浮球常驻逻辑 ---
         const isPersistent = GM_getValue("coolauxv_persistent_ball", false);
@@ -2004,6 +2535,7 @@
         const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle");
         const btnTrans = popup.querySelector("#coolauxv-btn-trans");
         const btnExplain = popup.querySelector("#coolauxv-btn-explain");
+        const btnChatSend = popup.querySelector("#coolauxv-btn-chat-send");
 
         if (minBtn) minBtn.onclick = minimizeWindow;
         if (closeBtn) closeBtn.onclick = closeWindow;
@@ -2022,6 +2554,23 @@
 
         if (btnTrans) btnTrans.onclick = () => doAction("translate");
         if (btnExplain) btnExplain.onclick = () => doAction("explain");
+        if (btnChatSend) btnChatSend.onclick = () => doChatSend();
+
+        const resultDiv = popup.querySelector("#coolauxv-result");
+        const previewOverlay = document.querySelector("#coolauxv-img-preview-overlay");
+        const previewImg = document.querySelector("#coolauxv-img-preview-el");
+        if (resultDiv && previewOverlay && previewImg) {
+            resultDiv.addEventListener("click", (e) => {
+                const btn = e.target.closest(".coolauxv-chat-preview-btn");
+                if (!btn) return;
+                const imgId = btn.dataset.chatImgId;
+                const imgSrc = chatImageStore[imgId];
+                if (imgSrc) {
+                    previewImg.src = imgSrc;
+                    previewOverlay.style.display = "flex";
+                }
+            });
+        }
 
         const checkActive = () => !isQuitted && !isWindowDragging && !isSplitterDragging;
 
@@ -2104,7 +2653,17 @@
 
     function bindCopyEvents() {
         const copyBtns = popup.querySelectorAll(".coolauxv-copy-btn");
+        const clearBtn = popup.querySelector("#coolauxv-clear-result");
+        if (clearBtn) {
+            clearBtn.onclick = () => {
+                streamTextBuffer = "";
+                lastRenderedText = "";
+                const resultDiv = popup.querySelector("#coolauxv-result");
+                if (resultDiv) resultDiv.innerHTML = "";
+            };
+        }
         copyBtns.forEach(btn => {
+            if (!btn.dataset.type) return;
             btn.onclick = async () => {
                 const type = btn.dataset.type;
                 let textToCopy = "";
@@ -2266,6 +2825,10 @@
             newHeight = Math.max(0, Math.min(maxLimit, newHeight));
 
             reasoningWrapper.style.height = newHeight + "px";
+            reasoningWrapper.dataset.lastHeight = `${newHeight}px`;
+            if (!reasoningWrapper.classList.contains("coolauxv-reasoning-collapsed")) {
+                reasoningWrapper.style.maxHeight = `${newHeight}px`;
+            }
         };
 
         const onSplitterUp = () => {
@@ -2418,9 +2981,14 @@
             return;
         }
 
+        if (chatSessionStarted || chatDisplayBuffer) {
+            clearChatSessionState();
+        }
+
         const text = input.value.trim();
         const resultDiv = popup.querySelector("#coolauxv-result");
         const config = getActiveConfig();
+        streamMode = "single";
 
         if (config.apiKey === DEFAULT_API_KEY || !config.apiKey) {
             showNoKeyError(popup.querySelector("#coolauxv-result"));
@@ -2433,6 +3001,8 @@
             }
             return;
         }
+
+        collapseChatIfEnabled();
 
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
@@ -2447,6 +3017,13 @@
 
         const url = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
         const systemPrompt = mode === "explain" ? config.promptExplain : config.promptTrans;
+        const historyEntry = {
+            systemPrompt: systemPrompt,
+            userContentText: text,
+            userDisplayText: text,
+            imageBase64: "",
+            assistantText: ""
+        };
 
         const payload = {
             model: config.modelName,
@@ -2477,6 +3054,7 @@
             if (!response.ok) {
                 if (response.status === 429) {
                     resultDiv.innerHTML = get429ErrorHTML();
+                    autoExpandChatIfEnabled();
                     return;
                 }
                 if (response.status === 401 || response.status === 403) throw new Error("AUTH_INVALID");
@@ -2500,11 +3078,14 @@
                 for (const line of lines) processLine(line);
             }
             stopRenderLoop();
+            historyEntry.assistantText = streamTextBuffer;
+            recordHistoryEntry(historyEntry);
+            autoExpandChatIfEnabled();
             return;
 
         } catch (err) {
             Logger.warn("Fetch 失败/跨域，准备降级。", err);
-            if (err.message === "AUTH_INVALID") { showInvalidKeyError(resultDiv); return; }
+            if (err.message === "AUTH_INVALID") { showInvalidKeyError(resultDiv); autoExpandChatIfEnabled(); return; }
             if (err.name === 'AbortError') return;
         }
 
@@ -2545,6 +3126,9 @@
                             Logger.error("Stream Read Error:", e);
                         } finally {
                             stopRenderLoop();
+                            historyEntry.assistantText = streamTextBuffer;
+                            recordHistoryEntry(historyEntry);
+                            autoExpandChatIfEnabled();
                         }
                     })();
                 }
@@ -2557,6 +3141,7 @@
                     if (res.status === 429) {
                         const resultDiv = popup.querySelector("#coolauxv-result");
                         if (resultDiv) resultDiv.innerHTML = get429ErrorHTML();
+                        autoExpandChatIfEnabled();
                         return;
                     }
 
@@ -2564,6 +3149,7 @@
 
                     if (res.status === 401 || res.status === 403) {
                         showInvalidKeyError(resultDiv);
+                        autoExpandChatIfEnabled();
                         return;
                     }
 
@@ -2571,14 +3157,19 @@
                         let gmErrMsg = `HTTP ${res.status}`;
                         try { const d = JSON.parse(fullText); if (d.error) gmErrMsg = `API Error: ${d.error.message}`; } catch (e) { }
                         resultDiv.innerHTML = `<span style='color:red'>${gmErrMsg}</span>`;
+                        autoExpandChatIfEnabled();
                         return;
                     }
                     if (fullText) {
                         const lines = fullText.split(/\r?\n/);
                         for (const line of lines) processLine(line);
                         renderContent();
+                        historyEntry.assistantText = streamTextBuffer;
+                        recordHistoryEntry(historyEntry);
+                        autoExpandChatIfEnabled();
                     } else {
                         resultDiv.innerHTML += "<br><small style='color:red'>(流式兼容失败，请检查网络)</small>";
+                        autoExpandChatIfEnabled();
                     }
                 }
             },
@@ -2590,6 +3181,7 @@
                 } else {
                     resultDiv.innerHTML = "<span style='color:red'>网络连接彻底失败</span>";
                 }
+                autoExpandChatIfEnabled();
             },
 
             ontimeout: () => {
@@ -2599,6 +3191,7 @@
                 } else {
                     resultDiv.innerHTML = "<span style='color:red'>请求超时 (Timeout)</span>";
                 }
+                autoExpandChatIfEnabled();
             }
         });
     }
@@ -2618,7 +3211,10 @@
         // 每次自动展开时，重置高度为 50%
         if (visible) {
             const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
-            if (reasoningWrapper) reasoningWrapper.style.height = "50%";
+            if (reasoningWrapper) {
+                reasoningWrapper.style.height = "50%";
+                reasoningWrapper.dataset.lastHeight = "";
+            }
         }
 
         // 立即触发渲染，更新 DOM 显示
@@ -2634,6 +3230,7 @@
             try {
                 const data = JSON.parse(jsonStr);
                 const delta = data.choices[0]?.delta;
+                const isChatMode = streamMode === "chat";
 
                 // --- 1. 处理推理内容 (自动展开逻辑) ---
                 if (delta?.reasoning_content) {
@@ -2652,11 +3249,17 @@
                 if (delta?.content) {
                     // 回调时机 B：检测到首个正文包
                     // 如果正文缓冲区长度为 0 (说明是正文的第一个字) 且之前有推理内容
-                    if (streamTextBuffer.length === 0 && hasReasoning) {
+                    const isFirstContentChunk = isChatMode ? chatAssistantBuffer.length === 0 : streamTextBuffer.length === 0;
+                    if (isFirstContentChunk && hasReasoning) {
                         Logger.info("推理结束，正文开始，自动收起推理框");
                         setReasoningVisibility(false);
                     }
-                    streamTextBuffer += delta.content;
+                    if (isChatMode) {
+                        chatAssistantBuffer += delta.content;
+                        updateChatStreamText();
+                    } else {
+                        streamTextBuffer += delta.content;
+                    }
                 }
             } catch (e) {
                 Logger.debug("JSON Parse Error (Ignore)", line);
@@ -2678,11 +3281,15 @@
         let isSelecting = false;
         let startX, startY;
         let algoVer = "v1";
+        let activeScreenshotTarget = "main";
 
         // ============================================
         // DOM 元素获取
         // ============================================
-        const btnShot = popup.querySelector("#coolauxv-btn-screenshot");
+        const btnShotMain = popup.querySelector("#coolauxv-btn-screenshot");
+        const btnShotChat = popup.querySelector("#coolauxv-btn-screenshot-chat");
+        const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
+        const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
         const overlay = document.querySelector("#coolauxv-screenshot-overlay");
         const selectionBox = document.querySelector("#coolauxv-selection-box");
         const toolbar = document.querySelector("#coolauxv-screenshot-toolbar");
@@ -2690,7 +3297,7 @@
         const btnCancel = document.querySelector("#coolauxv-shot-cancel");
         const loadingToast = document.querySelector("#coolauxv-loading-toast");
 
-        if (!btnShot || !overlay) return;
+        if ((!btnShotMain && !btnShotChat) || !overlay) return;
 
         const stopProp = (e) => e.stopPropagation();
         ['mousedown', 'mouseup', 'click', 'touchstart', 'touchend'].forEach(evt => {
@@ -2700,7 +3307,8 @@
         // ============================================
         // 1. 点击截图按钮 (入口)
         // ============================================
-        btnShot.onclick = async () => {
+        const startScreenshot = async (target) => {
+            activeScreenshotTarget = target;
             let cfgVer = GM_getValue("coolauxv_use_new_screenshot", DEFAULT_USE_NEW_SCREENSHOT);
             if (cfgVer === true) cfgVer = "v2";
             if (cfgVer === false) cfgVer = "v1";
@@ -2796,11 +3404,11 @@
                                         *   找到该项，设置为 **Enabled**。
                                         *   在下方文本框输入本站地址：\`${window.location.origin}\`
                                         *   点击 **Relaunch** 重启浏览器。
-                                        * 
+                                        *
                                         **2. Firefox 浏览器：**
                                         *   地址栏输入：\`about:config\`，搜索 \`media.devices.insecure.enabled\`。
                                         *   将其切换为 **true**。
-                                        * 
+                                        *
                                         **3. 快速替代方案：**
                                         *   点击顶部 **⚙️ 设置** -> **实验性功能**，将截屏算法切换为 **v1** 或 **v2**。
                                         ---
@@ -2815,9 +3423,8 @@
 
                     // --- v2: html2canvas 全屏 ---
                     else if (algoVer === "v2") {
-                        const scrollTop = window.pageYOffset || document.documentElement.scrollTop || 0;
-                        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft || 0;
-
+                        const scrollTop = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0;
+                        const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft || document.body.scrollLeft || 0;
                         fullScreenCanvas = await html2canvas(document.documentElement, {
                             x: scrollLeft, y: scrollTop,
                             width: window.innerWidth, height: window.innerHeight,
@@ -2835,12 +3442,12 @@
 
                         bgDataUrl = fullScreenCanvas.toDataURL();
 
-                        // [修改] 统一样式逻辑
+                        // [v2 旧版样式逻辑]
                         overlay.style.backgroundImage = `linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url(${bgDataUrl})`;
-                        overlay.style.backgroundPosition = "center";
+                        overlay.style.backgroundPosition = "0 0";
                         overlay.style.backgroundRepeat = "no-repeat";
-                        overlay.style.backgroundSize = "contain";
-                        overlay.style.backgroundColor = "rgba(0,0,0,0.8)";
+                        overlay.style.backgroundSize = "100% 100%";
+                        overlay.style.backgroundColor = "transparent";
                     }
 
                     // --- v1: 旧版 ---
@@ -2862,6 +3469,9 @@
                 }
             }, 100);
         };
+
+        if (btnShotMain) btnShotMain.onclick = () => startScreenshot("main");
+        if (btnShotChat) btnShotChat.onclick = () => startScreenshot("chat");
 
         // ============================================
         // 2. 选区交互
@@ -2956,8 +3566,23 @@
 
             setTimeout(async () => {
                 try {
+                    let newCaptured = "";
                     // --- 裁剪逻辑 (v2 / v3) ---
-                    if (algoVer === "v2" || algoVer === "v3") {
+                    if (algoVer === "v2") {
+                        if (!fullScreenCanvas) throw new Error("Canvas丢失");
+                        const cropCanvas = document.createElement("canvas");
+                        cropCanvas.width = rect.width * dpr;
+                        cropCanvas.height = rect.height * dpr;
+                        const ctx = cropCanvas.getContext("2d");
+                        ctx.drawImage(
+                            fullScreenCanvas,
+                            rect.left * dpr, rect.top * dpr, cropCanvas.width, cropCanvas.height,
+                            0, 0, cropCanvas.width, cropCanvas.height
+                        );
+                        newCaptured = cropCanvas.toDataURL("image/jpeg", 0.8);
+                    }
+                    // --- 裁剪逻辑 (v3) ---
+                    else if (algoVer === "v3") {
                         if (!fullScreenCanvas) throw new Error("Canvas丢失");
 
                         const cropCanvas = document.createElement("canvas");
@@ -3003,7 +3628,7 @@
                             0, 0, cropCanvas.width, cropCanvas.height
                         );
 
-                        capturedImageBase64 = cropCanvas.toDataURL("image/jpeg", 0.8);
+                        newCaptured = cropCanvas.toDataURL("image/jpeg", 0.8);
                     }
                     // --- 裁剪逻辑 (v1) ---
                     else {
@@ -3025,9 +3650,19 @@
                                     id === "coolauxv-loading-toast";
                             }
                         });
-                        capturedImageBase64 = canvas.toDataURL("image/jpeg", 0.8);
+                        newCaptured = canvas.toDataURL("image/jpeg", 0.8);
                     }
 
+                    if (activeScreenshotTarget === "chat") {
+                        chatCapturedImageBase64 = newCaptured;
+                        setAnimatedVisibility(btnChatPreview, true);
+                        setAnimatedVisibility(btnChatClear, true);
+                        resetScreenshotUI();
+                        popup.style.display = "flex";
+                        return;
+                    }
+
+                    capturedImageBase64 = newCaptured;
                     const btnPreview = popup.querySelector("#coolauxv-btn-preview");
                     if (btnPreview) btnPreview.style.display = "inline-block";
                     resetScreenshotUI();
@@ -3097,14 +3732,20 @@
             return;
         }
 
+        if (chatSessionStarted || chatDisplayBuffer) {
+            clearChatSessionState();
+        }
+
         const config = getActiveConfig();
         const input = popup.querySelector("#coolauxv-input");
         const resultDiv = popup.querySelector("#coolauxv-result");
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
+        streamMode = "single";
 
         let textPrompt = "";
         const userText = input.value.trim();
+        const imageBase64 = capturedImageBase64;
 
         // --- 核心逻辑：Prompt 拼接 ---
         if (userText) {
@@ -3128,10 +3769,20 @@
             }
         }
 
+        const historyEntry = {
+            systemPrompt: "",
+            userContentText: textPrompt,
+            userDisplayText: userText,
+            imageBase64: imageBase64,
+            assistantText: ""
+        };
+
         if (!config.apiKey || config.apiKey === DEFAULT_API_KEY) {
             showNoKeyError(resultDiv);
             return;
         }
+
+        collapseChatIfEnabled();
 
         streamTextBuffer = ""; streamReasoningBuffer = ""; lastRenderedText = ""; lastRenderedReasoning = ""; hasReasoning = false;
 
@@ -3141,7 +3792,7 @@
         reasoningDiv.innerHTML = loadingHTML;
 
         // 强制显示推理框
-        reasoningWrapper.style.display = "flex";
+        setReasoningAnimatedVisibility(true);
         popup.querySelector("#coolauxv-reasoning-toggle-container").style.display = "flex";
         popup.querySelector("#coolauxv-separator").style.display = "flex";
 
@@ -3153,7 +3804,7 @@
                 {
                     role: "user",
                     content: [
-                        { type: "image_url", image_url: { url: capturedImageBase64 } },
+                        { type: "image_url", image_url: { url: imageBase64 } },
                         { type: "text", text: textPrompt }
                     ]
                 }
@@ -3208,6 +3859,9 @@
                             resultDiv.innerHTML += `<br><span style='color:red'>流读取错误: ${e.message}</span>`;
                         } finally {
                             stopRenderLoop();
+                            historyEntry.assistantText = streamTextBuffer;
+                            recordHistoryEntry(historyEntry);
+                            autoExpandChatIfEnabled();
                         }
                     })();
                 }
@@ -3217,6 +3871,7 @@
                     stopRenderLoop();
                     resultDiv.innerHTML = get429ErrorHTML();
                     reasoningWrapper.style.display = "none";
+                    autoExpandChatIfEnabled();
                     return;
                 }
 
@@ -3224,11 +3879,156 @@
                     stopRenderLoop();
                     Logger.error("API Error", res.responseText);
                     resultDiv.innerHTML = `<span style='color:red'>API Error ${res.status}: ${res.responseText}</span>`;
+                    autoExpandChatIfEnabled();
                 }
             },
             onerror: (e) => {
                 stopRenderLoop();
                 resultDiv.innerHTML = "<span style='color:red'>网络连接失败</span>";
+                autoExpandChatIfEnabled();
+            }
+        });
+    }
+
+    async function doChatSend() {
+        const chatInput = popup.querySelector("#coolauxv-chat-input");
+        const resultDiv = popup.querySelector("#coolauxv-result");
+        if (!chatInput || !resultDiv) return;
+
+        const userText = chatInput.value.trim();
+        const hasImage = !!chatCapturedImageBase64;
+
+        if (!userText && !hasImage) {
+            if (chatSessionStarted) appendChatError("⚠️ 请输入内容或识屏。");
+            else resultDiv.innerHTML = "<span style='color:#e65100; font-weight:bold;'>⚠️ 请不要操作空文本...</span>";
+            return;
+        }
+
+        const config = getActiveConfig();
+        if (config.apiKey === DEFAULT_API_KEY || !config.apiKey) {
+            showNoKeyError(resultDiv);
+            return;
+        }
+
+        collapseChatIfEnabled();
+
+        startChatSessionIfNeeded();
+
+        const imageId = hasImage ? `chat-img-${++chatImageCounter}` : null;
+        if (imageId) chatImageStore[imageId] = chatCapturedImageBase64;
+
+        const displayText = userText || (imageId ? "（仅识屏）" : "");
+        chatDisplayBuffer += formatChatUserBlock(displayText, imageId, chatDisplayBuffer.length === 0);
+        chatPendingAssistantPrefix = getChatAssistantPrefix();
+        chatAssistantBuffer = "";
+        updateChatStreamText();
+        lastRenderedText = "";
+        renderContent();
+
+        const messageText = userText || (hasImage ? config.promptVision : "");
+        const userMessageContent = buildUserMessageContent(messageText, hasImage ? chatCapturedImageBase64 : "");
+        chatMessages.push({ role: "user", content: userMessageContent });
+
+        chatInput.value = "";
+        chatCapturedImageBase64 = "";
+        const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
+        setAnimatedVisibility(btnChatPreview, false);
+        const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
+        setAnimatedVisibility(btnChatClear, false);
+
+        streamReasoningBuffer = "";
+        lastRenderedReasoning = "";
+        hasReasoning = false;
+
+        const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
+        const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
+        const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle-container");
+        const separator = popup.querySelector("#coolauxv-separator");
+        if (reasoningDiv) reasoningDiv.innerHTML = "";
+        if (reasoningWrapper) reasoningWrapper.style.display = "none";
+        if (reasoningToggle) reasoningToggle.style.display = "none";
+        if (separator) separator.style.display = "none";
+
+        if (abortController) abortController.abort();
+        if (gmRequest && gmRequest.abort) gmRequest.abort();
+
+        streamMode = "chat";
+
+        const url = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+        const payload = {
+            model: config.modelVision,
+            stream: true,
+            messages: chatMessages
+        };
+
+        const requestBody = JSON.stringify(payload);
+        Logger.debug("💬 [Chat API Data]", requestBody);
+
+        const headers = {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${config.apiKey}`
+        };
+
+        gmRequest = GM_xmlhttpRequest({
+            method: "POST",
+            url: url,
+            headers: headers,
+            data: requestBody,
+            responseType: 'stream',
+            timeout: 600000,
+
+            onloadstart: (res) => {
+                if (res.response && res.response.getReader) {
+                    startRenderLoop();
+                    const reader = res.response.getReader();
+                    const decoder = new TextDecoder("utf-8");
+                    let buffer = "";
+
+                    (async function readStream() {
+                        let streamErr = "";
+                        try {
+                            while (true) {
+                                const { done, value } = await reader.read();
+                                if (done) break;
+                                const chunk = decoder.decode(value, { stream: true });
+                                buffer += chunk;
+                                const lines = buffer.split(/\r?\n/);
+                                buffer = lines.pop();
+                                for (const line of lines) processLine(line);
+                            }
+                        } catch (e) {
+                            Logger.error("Chat Stream Error", e);
+                            streamErr = `流读取错误: ${e.message}`;
+                        } finally {
+                            stopRenderLoop();
+                            finalizeChatResponse();
+                            if (streamErr) appendChatError(streamErr);
+                        }
+                    })();
+                }
+            },
+            onload: (res) => {
+                if (res.status === 429) {
+                    stopRenderLoop();
+                    finalizeChatResponse();
+                    appendChatError("调用速度过快 (Error 429)");
+                    return;
+                }
+                if (res.status !== 200) {
+                    stopRenderLoop();
+                    finalizeChatResponse();
+                    appendChatError(`API Error ${res.status}`);
+                }
+            },
+            onerror: () => {
+                stopRenderLoop();
+                finalizeChatResponse();
+                appendChatError("网络连接失败");
+            },
+            ontimeout: () => {
+                stopRenderLoop();
+                finalizeChatResponse();
+                appendChatError("请求超时 (Timeout)");
             }
         });
     }
