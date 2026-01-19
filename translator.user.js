@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v11.0
+// @version      v11.1
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v11.0 更新日志] 新增连续对话与推理区显示优化，提升PDF本地打开稳定性。
+// @changelog    [v11.1 更新日志] 修复已知bug。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @match        https://mozilla.github.io/pdf.js/web/viewer.html*
@@ -38,17 +38,20 @@
     const TEXT_MODELS = [
         { id: "glm-4-flash", class: "语言模型", tag: "免费" },
         { id: "glm-4-flash-250414", class: "语言模型", tag: "免费" },
+        { id: "glm-4v-flash", class: "通用模型", tag: "免费 | 多模态" },
         { id: "glm-4.5-flash", class: "推理模型", tag: "免费" },
         { id: "glm-z1-flash", class: "推理模型", tag: "免费" },
+        { id: "glm-4.6v-flash", class: "推理模型", tag: "免费 | 多模态" },
+        { id: "glm-4.1v-thinking-flash", class: "推理模型", tag: "免费 | 多模态" },
         { id: "glm-4.7", class: "推理模型", tag: "付费" },
         { id: "deepseek-r1", class: "推理模型", tag: "付费" },
     ];
 
     // 视觉模型 (添加 class 分类)
     const VISION_MODELS = [
-        { id: "glm-4v-flash", class: "通用模型", tag: "免费" },
-        { id: "glm-4.6v-flash", class: "推理模型", tag: "免费" },
-        { id: "glm-4.1v-thinking-flash", class: "推理模型", tag: "免费" },
+        { id: "glm-4v-flash", class: "通用模型", tag: "免费 | 多模态" },
+        { id: "glm-4.6v-flash", class: "推理模型", tag: "免费 | 多模态" },
+        { id: "glm-4.1v-thinking-flash", class: "推理模型", tag: "免费 | 多模态" },
     ];
 
     const LOG_PRESETS = ["debug", "info", "warn", "error", "none"];
@@ -76,18 +79,19 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
-        v11.0 更新日志
-        ## 💬 连续对话模式
-        *   新增“连续对话”开关与独立输入区，可在阅读中进行多轮问答。
-        *   支持发送新的识屏，并提供预览/清除按钮与折叠展开。
-        *   可将当前翻译/解读/识屏结果作为上下文继续对话。
-        ## 🧠 推理区显示优化
-        *   推理内容自动展开，正文开始后自动收起。
-        *   推理区显隐加入动画，并保留用户调整的高度。
-        ## 📄 PDF 本地打开稳定性增强
-        *   本地 PDF 传输改为优先零拷贝，失败再回退深拷贝，兼容性更稳。
-        ## ✨ 细节体验
-        *   结果区新增清空按钮，减少重复操作。
+        v11.1 更新日志
+        ## 🛠️ 大量错误修复
+        *   修复连续对话在切换页面后上下文丢失的问题。
+        *   修复推理区在折叠状态下偶发撑开布局的显示异常。
+        *   修复识屏结果偶发不刷新与重复渲染的问题。
+        *   修复翻译/解读结果过长时滚动条异常与跳动的问题。
+        *   修复本地 PDF 打开时进度提示偶发不消失的问题。
+        *   修复部分站点下注入样式冲突导致按钮错位的问题。
+        *   修复配置项保存后偶发未生效的问题。
+        *   修复快速连续点击触发多次请求导致的报错。
+        *   修复低网速下请求超时提示不准确的问题。
+        *   修复触屏设备没法点开右下角“智”悬浮球。
+        *   修复若干控制台报错与边界条件崩溃。
     `;
 
     // ========================================================================
@@ -246,8 +250,26 @@
       line-height: 1.5 !important;
       font-size: 14px;
       box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
     }
     #coolauxv-translate-popup * { box-sizing: border-box; outline: none; }
+    #coolauxv-translate-popup input,
+    #coolauxv-translate-popup textarea,
+    #coolauxv-translate-popup .coolauxv-scroll-box,
+    #coolauxv-translate-popup .coolauxv-markdown,
+    #coolauxv-translate-popup .coolauxv-raw-text {
+      user-select: text;
+      -webkit-user-select: text;
+    }
+
+    #coolauxv-modal-overlay,
+    #coolauxv-changelog-overlay,
+    #coolauxv-loading-toast,
+    #coolauxv-screenshot-toolbar {
+      user-select: none;
+      -webkit-user-select: none;
+    }
 
     /* 图标与窗口 */
     #coolauxv-translate-icon {
@@ -462,7 +484,23 @@
     .coolauxv-sub-label { font-size: 11px; color: #888; width: 100%; margin: 8px 0 4px 0; font-weight: normal; text-align: left !important; }
 
     .coolauxv-back-btn { margin-top: 20px; padding: 10px; background: #f3f4f6; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-weight: bold; text-align: center !important; color: #555; }
-    .coolauxv-reset-btn { margin-top: 10px; padding: 10px; background: #fff0f0; border: 1px solid #ffcccc; border-radius: 6px; cursor: pointer; font-weight: bold; text-align: center !important; color: #d32f2f; }
+    .coolauxv-reset-btn {
+        margin-top: 10px;
+        display: flex; align-items: center; justify-content: center;
+        padding: 8px 12px; border-radius: 8px;
+        cursor: pointer; user-select: none;
+        font-size: 13px; font-weight: 600;
+        transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+        border: 1px solid rgba(0,0,0,0.1);
+        background: #fff0f0; color: #d32f2f;
+        text-align: center !important;
+    }
+    .coolauxv-reset-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-color: rgba(0,0,0,0.15);
+        background: #ffe4e6;
+    }
 
     /* 推理框与结果框 */
     .coolauxv-box-wrapper { position: relative; width: 100%; display: flex; flex-direction: column; overflow: hidden; }
@@ -560,7 +598,7 @@
         flex-direction: column;
         gap: 8px;
         overflow: hidden;
-        max-height: 320px;
+        max-height: none;
         opacity: 1;
         transform: translateY(0);
         transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
@@ -577,8 +615,9 @@
     #coolauxv-chat-input {
         width: 100%;
         min-height: 70px;
-        max-height: 220px;
-        resize: vertical;
+        max-height: 60vh;
+        resize: vertical !important;
+        overflow: auto;
         border: 1px solid #ddd;
         border-radius: 8px;
         padding: 8px;
@@ -685,13 +724,23 @@
     /* GitHub 开源按钮样式 */
     .coolauxv-github-btn {
         display: inline-flex; align-items: center; justify-content: center;
-        text-decoration: none; color: #24292f; background-color: #f6f8fa;
-        border: 1px solid rgba(27,31,36,0.15); padding: 6px 14px;
-        border-radius: 6px; font-weight: 600; font-size: 13px;
-        transition: 0.2s; margin-top: 5px; cursor: pointer;
+        text-decoration: none;
+        padding: 6px 14px; border-radius: 8px;
+        cursor: pointer; user-select: none;
+        font-size: 13px; font-weight: 600;
+        transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
+        border: 1px solid rgba(0,0,0,0.1);
+        background: #f9fafb; color: #374151;
+        margin-top: 5px;
         font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
     }
-    .coolauxv-github-btn:hover { background-color: #f3f4f6; text-decoration: none; border-color: rgba(27,31,36,0.15); }
+    .coolauxv-github-btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        border-color: rgba(0,0,0,0.15);
+        background: #fff;
+        text-decoration: none;
+    }
     .coolauxv-github-btn svg { fill: currentColor; margin-right: 6px; }
 
     /* ============================
@@ -804,6 +853,25 @@
     }
     .coolauxv-blur-glass-enabled #coolauxv-btn-preview:hover {
         background: rgba(255, 255, 255, 0.4) !important;
+    }
+
+    .coolauxv-blur-glass-enabled .coolauxv-github-btn {
+        background: rgba(255, 255, 255, 0.3) !important;
+        border: 1px solid rgba(255, 255, 255, 0.6) !important;
+        color: #1f2937 !important;
+        backdrop-filter: blur(6px);
+    }
+    .coolauxv-blur-glass-enabled .coolauxv-github-btn:hover {
+        background: rgba(255, 255, 255, 0.5) !important;
+    }
+    .coolauxv-blur-glass-enabled .coolauxv-reset-btn {
+        background: rgba(255, 235, 238, 0.6) !important;
+        border: 1px solid rgba(255, 255, 255, 0.6) !important;
+        color: #b91c1c !important;
+        backdrop-filter: blur(6px);
+    }
+    .coolauxv-blur-glass-enabled .coolauxv-reset-btn:hover {
+        background: rgba(254, 226, 226, 0.8) !important;
     }
 
     /* 7. 分隔条 */
@@ -1056,6 +1124,7 @@
     let selectionTimer = null;
     let isWindowDragging = false;
     let isSplitterDragging = false;
+    let activeActionToken = 0;
 
     function initUI() {
         try {
@@ -1117,10 +1186,14 @@
             let isBallDragging = false;
             let ballHasMoved = false; // 用于区分点击和拖拽
             let ballStartX, ballStartY, ballInitLeft, ballInitTop;
-            // 1. 点击事件（增加防误触判断）
-            floatBall.onclick = (e) => {
+            let lastTouchActivateTs = 0;
+            const onBallActivate = (e) => {
                 if (ballHasMoved) return; // 如果是拖拽操作，不触发点击
                 if (isQuitted) return;
+                if (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
 
                 // 恢复默认操作
                 floatBall.style.display = "none";
@@ -1128,6 +1201,15 @@
                 popup.style.display = "flex";
                 checkUpdateAndShowChangelog();
             };
+            // 1. 点击事件（增加防误触判断）
+            floatBall.onclick = (e) => {
+                if (Date.now() - lastTouchActivateTs < 500) return; // 避免触屏触发 click 双击
+                onBallActivate(e);
+            };
+            floatBall.addEventListener("touchend", (e) => {
+                lastTouchActivateTs = Date.now();
+                onBallActivate(e);
+            });
             // 2. 拖拽事件处理函数
             const onBallDown = (e) => {
                 ballHasMoved = false;
@@ -1213,33 +1295,45 @@
             resetPopupState();
 
             // 生成模型按钮 HTML (带字段区分)
-            // 根据tag动态颜色，确保高对比度
+            // 根据 tag 动态色系：色弱友好 + 与白底保持对比
             const stringToColorStyles = (str) => {
                 let hash = 0;
                 for (let i = 0; i < str.length; i++) {
                     hash = str.charCodeAt(i) + ((hash << 5) - hash);
                 }
 
-                // 1. 色相：0 - 360
-                const h = Math.abs(hash % 360);
+                const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 
-                // 2. 饱和度：锁定在 25% - 40% 的低饱和度区间
-                // 这种“灰调”是 Material You 高级感的关键
-                const s = 25 + (Math.abs(hash) % 15);
+                // 色弱友好调色板：避免大面积绿紫偏色，拉开色相与亮度差异
+                const palette = [
+                    { h: 210, s: 60, bgL: 88 }, // 蓝
+                    { h: 30, s: 78, bgL: 90 },  // 橙
+                    { h: 170, s: 55, bgL: 86 }, // 青绿
+                    { h: 50, s: 82, bgL: 91 },  // 金黄
+                    { h: 275, s: 55, bgL: 88 }, // 靛紫
+                    { h: 330, s: 60, bgL: 89 }, // 品红
+                    { h: 0, s: 68, bgL: 90 },   // 红
+                    { h: 195, s: 70, bgL: 88 }, // 青蓝
+                    { h: 240, s: 55, bgL: 87 }, // 靛蓝
+                    { h: 15, s: 70, bgL: 89 },  // 朱橙
+                    { h: 300, s: 58, bgL: 88 }, // 紫红
+                    { h: 100, s: 50, bgL: 85 }  // 黄绿(偏黄，避免纯绿)
+                ];
+
+                const idx = Math.abs(hash) % palette.length;
+                const base = palette[idx];
+                const variant = Math.abs(hash >> 6) % 3; // 0..2
+                const delta = (variant - 1) * 3;
+
+                const bgL = clamp(base.bgL + delta, 82, 92);
+                const borderL = clamp(bgL - 14, 64, 78);
+                const textS = clamp(base.s + 10, 50, 85);
 
                 return {
-                    // Surface Container (Tone 96): 极浅的粉彩背景
-                    bg: `hsl(${h}, ${s}%, 96%)`,
-
-                    // Outline (Tone 85): 稍微深一点的边框
-                    border: `hsl(${h}, ${s}%, 85%)`,
-
-                    // On Surface (Tone 10): 极深的文字，确保 100% 可读性
-                    // 饱和度稍微加高一点(s+10)让文字不显得脏
-                    text: `hsl(${h}, ${s + 10}%, 15%)`,
-
-                    // Tag 小字 (Tone 40): 中等深度，不抢主标题风头
-                    tag: `hsl(${h}, ${s + 20}%, 40%)`
+                    bg: `hsl(${base.h}, ${base.s}%, ${bgL}%)`,
+                    border: `hsl(${base.h}, ${base.s}%, ${borderL}%)`,
+                    text: `hsl(${base.h}, ${textS}%, 18%)`,
+                    tag: `hsl(${base.h}, ${textS}%, 32%)`
                 };
             };
 
@@ -1717,6 +1811,7 @@
         const chatBar = popup.querySelector("#coolauxv-chat-bar");
         const chatBody = popup.querySelector("#coolauxv-chat-body");
         const chatToggleBtn = popup.querySelector("#coolauxv-chat-toggle");
+        const chatInput = popup.querySelector("#coolauxv-chat-input");
 
         radioBtns.forEach(radio => {
             radio.addEventListener('change', (e) => {
@@ -1741,14 +1836,86 @@
             }
         };
 
+        const finalizeChatBodyExpand = () => {
+            if (!chatBody || isChatCollapsed) return;
+            chatBody.style.maxHeight = "none";
+            chatBody.style.overflow = "visible";
+        };
+
+        const syncChatBodyHeight = () => {
+            if (!chatBody || isChatCollapsed) return;
+            if (chatBody.style.maxHeight === "none") return;
+            chatBody.style.maxHeight = `${chatBody.scrollHeight}px`;
+        };
+
         updateChatCollapseUI = () => {
             if (!chatBody || !chatToggleBtn || !chatBar) return;
+            const resultDiv = popup.querySelector("#coolauxv-result");
+            const wasNearBottom = resultDiv
+                ? (resultDiv.scrollHeight - resultDiv.scrollTop - resultDiv.clientHeight <= 30)
+                : false;
+            const pinnedScrollTop = resultDiv ? resultDiv.scrollTop : 0;
+
             chatToggleBtn.textContent = isChatCollapsed ? "展开" : "收起";
             chatBar.classList.toggle("coolauxv-chat-collapsed", isChatCollapsed);
             if (isChatCollapsed) {
+                chatBody.style.overflow = "hidden";
+                if (chatBody.style.maxHeight === "none") {
+                    chatBody.style.maxHeight = `${chatBody.scrollHeight}px`;
+                    void chatBody.offsetHeight;
+                }
                 chatBody.style.maxHeight = "0px";
             } else {
-                chatBody.style.maxHeight = `${chatBody.scrollHeight}px`;
+                const isFlexible = chatBody.style.maxHeight === "none";
+                if (isFlexible) {
+                    chatBody.style.overflow = "visible";
+                } else {
+                    chatBody.style.overflow = "hidden";
+                    syncChatBodyHeight();
+                    let expandTimeoutId = 0;
+                    const onExpandEnd = (e) => {
+                        if (e.propertyName !== "max-height") return;
+                        cleanupExpand();
+                        finalizeChatBodyExpand();
+                    };
+                    const cleanupExpand = () => {
+                        if (expandTimeoutId) {
+                            clearTimeout(expandTimeoutId);
+                            expandTimeoutId = 0;
+                        }
+                        chatBody.removeEventListener("transitionend", onExpandEnd);
+                    };
+                    chatBody.addEventListener("transitionend", onExpandEnd);
+                    expandTimeoutId = window.setTimeout(() => {
+                        cleanupExpand();
+                        finalizeChatBodyExpand();
+                    }, 320);
+                }
+            }
+
+            if (resultDiv && wasNearBottom) {
+                const scrollIfPinned = () => {
+                    if (Math.abs(resultDiv.scrollTop - pinnedScrollTop) > 2) return;
+                    resultDiv.scrollTop = resultDiv.scrollHeight;
+                };
+                let timeoutId = 0;
+                const onEnd = (e) => {
+                    if (e.propertyName !== "max-height") return;
+                    cleanup();
+                    scrollIfPinned();
+                };
+                const cleanup = () => {
+                    if (timeoutId) {
+                        clearTimeout(timeoutId);
+                        timeoutId = 0;
+                    }
+                    chatBody.removeEventListener("transitionend", onEnd);
+                };
+                chatBody.addEventListener("transitionend", onEnd);
+                timeoutId = window.setTimeout(() => {
+                    cleanup();
+                    scrollIfPinned();
+                }, 320);
             }
         };
 
@@ -1757,6 +1924,21 @@
                 isChatCollapsed = !isChatCollapsed;
                 updateChatCollapseUI();
             };
+        }
+
+        if (chatInput && chatBody) {
+            if (typeof ResizeObserver !== "undefined") {
+                const chatInputObserver = new ResizeObserver(() => {
+                    syncChatBodyHeight();
+                });
+                chatInputObserver.observe(chatInput);
+            } else {
+                const onChatInputResize = () => {
+                    requestAnimationFrame(() => syncChatBodyHeight());
+                };
+                chatInput.addEventListener("input", onChatInputResize);
+                chatInput.addEventListener("mouseup", onChatInputResize);
+            }
         }
 
         const loadConfig = () => {
@@ -2184,8 +2366,9 @@
         updateChatCollapseUI();
     }
 
-    function autoExpandChatIfEnabled() {
+    function autoExpandChatIfEnabled(actionToken) {
         if (!popup) return;
+        if (typeof actionToken === "number" && actionToken !== activeActionToken) return;
         const enabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
         if (!enabled) return;
         const chatBar = popup.querySelector("#coolauxv-chat-bar");
@@ -2195,7 +2378,7 @@
         updateChatCollapseUI();
     }
 
-    function finalizeChatResponse() {
+    function finalizeChatResponse(actionToken) {
         if (!chatSessionStarted) return;
         if (chatAssistantBuffer) {
             chatMessages.push({ role: "assistant", content: chatAssistantBuffer });
@@ -2206,13 +2389,35 @@
         streamTextBuffer = chatDisplayBuffer;
         lastRenderedText = "";
         renderContent();
-        autoExpandChatIfEnabled();
+        autoExpandChatIfEnabled(actionToken);
     }
 
-    function appendChatError(message) {
-        if (!chatSessionStarted) return;
+    function hasChatOutput() {
+        if (!chatSessionStarted) return false;
+        if (chatAssistantBuffer && chatAssistantBuffer.trim()) return true;
+        return chatDisplayBuffer.includes("**🤖 AI：**");
+    }
+
+    function shouldSuppressResultError() {
+        return hasChatOutput();
+    }
+
+    const CHAT_429_HISTORY_TEXT = "429 Error Occured";
+
+    function appendChatError(message, options = {}) {
+        const { allowHtml = false, recordAsAssistant = false, recordContent = CHAT_429_HISTORY_TEXT } = options;
+        startChatSessionIfNeeded();
         const safeMessage = message || "请求失败";
-        chatDisplayBuffer += `\n\n<span style="color:red">${safeMessage}</span>`;
+        const errorContent = allowHtml ? safeMessage : `<span style="color:red">${safeMessage}</span>`;
+        const assistantBlock = buildChatAssistantBlock(errorContent);
+        if (chatDisplayBuffer) {
+            chatDisplayBuffer += assistantBlock;
+        } else {
+            chatDisplayBuffer = assistantBlock.replace(/^\n+/, "");
+        }
+        if (recordAsAssistant) {
+            chatMessages.push({ role: "assistant", content: recordContent });
+        }
         streamTextBuffer = chatDisplayBuffer;
         lastRenderedText = "";
         renderContent();
@@ -2355,18 +2560,6 @@
     }
 
 
-    // 专门用于程序化控制推理框显隐的函数
-    function setReasoningVisibility(visible) {
-        isShowReasoning = visible; // 更新内部状态
-
-        // 同步 UI 上的复选框状态
-        const toggle = popup.querySelector("#coolauxv-reasoning-toggle");
-        if (toggle) toggle.checked = visible;
-
-        // 立即触发一次渲染，避免视觉延迟
-        renderContent();
-    }
-
     function renderContent() {
         const resultDiv = popup.querySelector("#coolauxv-result");
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
@@ -2382,6 +2575,7 @@
             if (isShowReasoning) {
                 setReasoningAnimatedVisibility(true);
                 separator.style.display = "flex";
+                ensureReasoningHeight();
             } else {
                 setReasoningAnimatedVisibility(false);
                 separator.style.display = "none";
@@ -2452,35 +2646,63 @@
         element.addEventListener("transitionend", onEnd);
     }
 
+    function resolveReasoningTargetHeight(reasoningWrapper) {
+        const container = popup.querySelector("#coolauxv-content-container");
+        if (container && container.clientHeight) {
+            const halfHeight = Math.round(container.clientHeight * 0.5);
+            if (halfHeight > 0) return `${halfHeight}px`;
+        }
+        if (popup.clientHeight) {
+            const halfHeight = Math.round(popup.clientHeight * 0.5);
+            if (halfHeight > 0) return `${halfHeight}px`;
+        }
+        if (window.innerHeight) {
+            const halfHeight = Math.round(window.innerHeight * 0.5);
+            if (halfHeight > 0) return `${halfHeight}px`;
+        }
+        const height = reasoningWrapper.getBoundingClientRect().height || reasoningWrapper.scrollHeight;
+        return `${height || 120}px`;
+    }
+
+    function ensureReasoningHeight() {
+        if (!popup || !hasReasoning || !isShowReasoning) return;
+        const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
+        if (!reasoningWrapper) return;
+        if (reasoningWrapper.style.display === "none") return;
+        const currentHeight = reasoningWrapper.getBoundingClientRect().height;
+        if (currentHeight > 0) return;
+        const targetHeight = resolveReasoningTargetHeight(reasoningWrapper);
+        reasoningWrapper.style.height = "50%";
+        reasoningWrapper.style.maxHeight = targetHeight;
+        reasoningWrapper.dataset.lastHeight = "";
+    }
+
     function setReasoningAnimatedVisibility(visible) {
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
         if (!reasoningWrapper) return;
         const isCollapsed = reasoningWrapper.classList.contains("coolauxv-reasoning-collapsed");
 
-        const resolveTargetHeight = () => {
-            const stored = reasoningWrapper.dataset.lastHeight;
-            if (stored && stored.endsWith("px")) return stored;
-            const height = reasoningWrapper.getBoundingClientRect().height || reasoningWrapper.scrollHeight;
-            return `${height || 120}px`;
-        };
-
         if (visible) {
-            if (!isCollapsed && reasoningWrapper.style.display === "flex") return;
+            const currentHeight = reasoningWrapper.getBoundingClientRect().height;
+            if (!isCollapsed && reasoningWrapper.style.display === "flex" && currentHeight > 0) return;
             if (reasoningWrapper.style.display !== "flex") {
                 reasoningWrapper.style.display = "flex";
             }
-            const targetHeight = resolveTargetHeight();
+            let targetHeight = resolveReasoningTargetHeight(reasoningWrapper);
+            if (parseFloat(targetHeight) <= 0) targetHeight = "120px";
+            reasoningWrapper.style.height = "50%";
+            reasoningWrapper.dataset.lastHeight = "";
             reasoningWrapper.style.maxHeight = "0px";
             reasoningWrapper.classList.add("coolauxv-reasoning-collapsed");
             requestAnimationFrame(() => {
                 reasoningWrapper.style.maxHeight = targetHeight;
                 reasoningWrapper.classList.remove("coolauxv-reasoning-collapsed");
+                requestAnimationFrame(() => ensureReasoningHeight());
             });
             return;
         }
 
-        const currentHeight = reasoningWrapper.getBoundingClientRect().height;
-        if (currentHeight > 0) reasoningWrapper.dataset.lastHeight = `${currentHeight}px`;
+        reasoningWrapper.dataset.lastHeight = "";
         reasoningWrapper.classList.add("coolauxv-reasoning-collapsed");
         reasoningWrapper.style.maxHeight = "0px";
         const onEnd = (e) => {
@@ -2825,7 +3047,6 @@
             newHeight = Math.max(0, Math.min(maxLimit, newHeight));
 
             reasoningWrapper.style.height = newHeight + "px";
-            reasoningWrapper.dataset.lastHeight = `${newHeight}px`;
             if (!reasoningWrapper.classList.contains("coolauxv-reasoning-collapsed")) {
                 reasoningWrapper.style.maxHeight = `${newHeight}px`;
             }
@@ -2981,8 +3202,8 @@
             return;
         }
 
-        if (chatSessionStarted || chatDisplayBuffer) {
-            clearChatSessionState();
+        if (historyRecords.length || chatSessionStarted || chatDisplayBuffer) {
+            clearConversationState();
         }
 
         const text = input.value.trim();
@@ -2991,18 +3212,21 @@
         streamMode = "single";
 
         if (config.apiKey === DEFAULT_API_KEY || !config.apiKey) {
-            showNoKeyError(popup.querySelector("#coolauxv-result"));
+            if (!shouldSuppressResultError()) {
+                showNoKeyError(popup.querySelector("#coolauxv-result"));
+            }
             return;
         }
 
         if (!text) {
-            if (resultDiv) {
+            if (resultDiv && !shouldSuppressResultError()) {
                 resultDiv.innerHTML = "<span style='color:#e65100; font-weight:bold;'>⚠️ 请不要操作空文本...</span>";
             }
             return;
         }
 
         collapseChatIfEnabled();
+        const actionToken = ++activeActionToken;
 
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
@@ -3053,8 +3277,10 @@
 
             if (!response.ok) {
                 if (response.status === 429) {
-                    resultDiv.innerHTML = get429ErrorHTML();
-                    autoExpandChatIfEnabled();
+                    if (!shouldSuppressResultError()) {
+                        resultDiv.innerHTML = get429ErrorHTML();
+                    }
+                    autoExpandChatIfEnabled(actionToken);
                     return;
                 }
                 if (response.status === 401 || response.status === 403) throw new Error("AUTH_INVALID");
@@ -3080,12 +3306,18 @@
             stopRenderLoop();
             historyEntry.assistantText = streamTextBuffer;
             recordHistoryEntry(historyEntry);
-            autoExpandChatIfEnabled();
+            autoExpandChatIfEnabled(actionToken);
             return;
 
         } catch (err) {
             Logger.warn("Fetch 失败/跨域，准备降级。", err);
-            if (err.message === "AUTH_INVALID") { showInvalidKeyError(resultDiv); autoExpandChatIfEnabled(); return; }
+            if (err.message === "AUTH_INVALID") {
+                if (!shouldSuppressResultError()) {
+                    showInvalidKeyError(resultDiv);
+                }
+                autoExpandChatIfEnabled(actionToken);
+                return;
+            }
             if (err.name === 'AbortError') return;
         }
 
@@ -3128,7 +3360,7 @@
                             stopRenderLoop();
                             historyEntry.assistantText = streamTextBuffer;
                             recordHistoryEntry(historyEntry);
-                            autoExpandChatIfEnabled();
+                            autoExpandChatIfEnabled(actionToken);
                         }
                     })();
                 }
@@ -3140,16 +3372,20 @@
 
                     if (res.status === 429) {
                         const resultDiv = popup.querySelector("#coolauxv-result");
-                        if (resultDiv) resultDiv.innerHTML = get429ErrorHTML();
-                        autoExpandChatIfEnabled();
+                        if (resultDiv && !shouldSuppressResultError()) {
+                            resultDiv.innerHTML = get429ErrorHTML();
+                        }
+                        autoExpandChatIfEnabled(actionToken);
                         return;
                     }
 
                     const fullText = res.responseText || (typeof res.response === 'string' ? res.response : "");
 
                     if (res.status === 401 || res.status === 403) {
-                        showInvalidKeyError(resultDiv);
-                        autoExpandChatIfEnabled();
+                        if (!shouldSuppressResultError()) {
+                            showInvalidKeyError(resultDiv);
+                        }
+                        autoExpandChatIfEnabled(actionToken);
                         return;
                     }
 
@@ -3157,7 +3393,7 @@
                         let gmErrMsg = `HTTP ${res.status}`;
                         try { const d = JSON.parse(fullText); if (d.error) gmErrMsg = `API Error: ${d.error.message}`; } catch (e) { }
                         resultDiv.innerHTML = `<span style='color:red'>${gmErrMsg}</span>`;
-                        autoExpandChatIfEnabled();
+                        autoExpandChatIfEnabled(actionToken);
                         return;
                     }
                     if (fullText) {
@@ -3166,10 +3402,10 @@
                         renderContent();
                         historyEntry.assistantText = streamTextBuffer;
                         recordHistoryEntry(historyEntry);
-                        autoExpandChatIfEnabled();
+                        autoExpandChatIfEnabled(actionToken);
                     } else {
                         resultDiv.innerHTML += "<br><small style='color:red'>(流式兼容失败，请检查网络)</small>";
-                        autoExpandChatIfEnabled();
+                        autoExpandChatIfEnabled(actionToken);
                     }
                 }
             },
@@ -3181,7 +3417,7 @@
                 } else {
                     resultDiv.innerHTML = "<span style='color:red'>网络连接彻底失败</span>";
                 }
-                autoExpandChatIfEnabled();
+                autoExpandChatIfEnabled(actionToken);
             },
 
             ontimeout: () => {
@@ -3191,7 +3427,7 @@
                 } else {
                     resultDiv.innerHTML = "<span style='color:red'>请求超时 (Timeout)</span>";
                 }
-                autoExpandChatIfEnabled();
+                autoExpandChatIfEnabled(actionToken);
             }
         });
     }
@@ -3207,15 +3443,6 @@
         // 同步 UI 上复选框的勾选状态
         const toggle = popup.querySelector("#coolauxv-reasoning-toggle");
         if (toggle) toggle.checked = visible;
-
-        // 每次自动展开时，重置高度为 50%
-        if (visible) {
-            const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
-            if (reasoningWrapper) {
-                reasoningWrapper.style.height = "50%";
-                reasoningWrapper.dataset.lastHeight = "";
-            }
-        }
 
         // 立即触发渲染，更新 DOM 显示
         renderContent();
@@ -3732,8 +3959,8 @@
             return;
         }
 
-        if (chatSessionStarted || chatDisplayBuffer) {
-            clearChatSessionState();
+        if (historyRecords.length || chatSessionStarted || chatDisplayBuffer) {
+            clearConversationState();
         }
 
         const config = getActiveConfig();
@@ -3778,11 +4005,14 @@
         };
 
         if (!config.apiKey || config.apiKey === DEFAULT_API_KEY) {
-            showNoKeyError(resultDiv);
+            if (!shouldSuppressResultError()) {
+                showNoKeyError(resultDiv);
+            }
             return;
         }
 
         collapseChatIfEnabled();
+        const actionToken = ++activeActionToken;
 
         streamTextBuffer = ""; streamReasoningBuffer = ""; lastRenderedText = ""; lastRenderedReasoning = ""; hasReasoning = false;
 
@@ -3861,7 +4091,7 @@
                             stopRenderLoop();
                             historyEntry.assistantText = streamTextBuffer;
                             recordHistoryEntry(historyEntry);
-                            autoExpandChatIfEnabled();
+                            autoExpandChatIfEnabled(actionToken);
                         }
                     })();
                 }
@@ -3869,9 +4099,11 @@
             onload: (res) => {
                 if (res.status === 429) {
                     stopRenderLoop();
-                    resultDiv.innerHTML = get429ErrorHTML();
+                    if (!shouldSuppressResultError()) {
+                        resultDiv.innerHTML = get429ErrorHTML();
+                    }
                     reasoningWrapper.style.display = "none";
-                    autoExpandChatIfEnabled();
+                    autoExpandChatIfEnabled(actionToken);
                     return;
                 }
 
@@ -3879,13 +4111,13 @@
                     stopRenderLoop();
                     Logger.error("API Error", res.responseText);
                     resultDiv.innerHTML = `<span style='color:red'>API Error ${res.status}: ${res.responseText}</span>`;
-                    autoExpandChatIfEnabled();
+                    autoExpandChatIfEnabled(actionToken);
                 }
             },
             onerror: (e) => {
                 stopRenderLoop();
                 resultDiv.innerHTML = "<span style='color:red'>网络连接失败</span>";
-                autoExpandChatIfEnabled();
+                autoExpandChatIfEnabled(actionToken);
             }
         });
     }
@@ -3899,18 +4131,18 @@
         const hasImage = !!chatCapturedImageBase64;
 
         if (!userText && !hasImage) {
-            if (chatSessionStarted) appendChatError("⚠️ 请输入内容或识屏。");
-            else resultDiv.innerHTML = "<span style='color:#e65100; font-weight:bold;'>⚠️ 请不要操作空文本...</span>";
+            appendChatError("⚠️ 请输入内容或识屏。");
             return;
         }
 
         const config = getActiveConfig();
         if (config.apiKey === DEFAULT_API_KEY || !config.apiKey) {
-            showNoKeyError(resultDiv);
+            appendChatError(getNoKeyErrorHTML(), { allowHtml: true });
             return;
         }
 
         collapseChatIfEnabled();
+        const actionToken = ++activeActionToken;
 
         startChatSessionIfNeeded();
 
@@ -4001,7 +4233,7 @@
                             streamErr = `流读取错误: ${e.message}`;
                         } finally {
                             stopRenderLoop();
-                            finalizeChatResponse();
+                            finalizeChatResponse(actionToken);
                             if (streamErr) appendChatError(streamErr);
                         }
                     })();
@@ -4010,31 +4242,37 @@
             onload: (res) => {
                 if (res.status === 429) {
                     stopRenderLoop();
-                    finalizeChatResponse();
-                    appendChatError("调用速度过快 (Error 429)");
+                    finalizeChatResponse(actionToken);
+                    appendChatError(get429ErrorHTML(), { allowHtml: true, recordAsAssistant: true });
+                    return;
+                }
+                if (res.status === 401 || res.status === 403) {
+                    stopRenderLoop();
+                    finalizeChatResponse(actionToken);
+                    appendChatError(getInvalidKeyErrorHTML(), { allowHtml: true });
                     return;
                 }
                 if (res.status !== 200) {
                     stopRenderLoop();
-                    finalizeChatResponse();
+                    finalizeChatResponse(actionToken);
                     appendChatError(`API Error ${res.status}`);
                 }
             },
             onerror: () => {
                 stopRenderLoop();
-                finalizeChatResponse();
+                finalizeChatResponse(actionToken);
                 appendChatError("网络连接失败");
             },
             ontimeout: () => {
                 stopRenderLoop();
-                finalizeChatResponse();
+                finalizeChatResponse(actionToken);
                 appendChatError("请求超时 (Timeout)");
             }
         });
     }
 
-    function showNoKeyError(container) {
-        if (container) container.innerHTML = `
+    function getNoKeyErrorHTML() {
+        return `
             <div style="color:#e65100; font-weight:bold; padding:10px;">⚠️ 请配置 API KEY</div>
             <div style="font-size:13px; color:#555; padding:0 10px;">
             您尚未配置 API Key，无法使用翻译功能。<br><br>
@@ -4045,8 +4283,12 @@
         `;
     }
 
-    function showInvalidKeyError(container) {
-        if (container) container.innerHTML = `
+    function showNoKeyError(container) {
+        if (container) container.innerHTML = getNoKeyErrorHTML();
+    }
+
+    function getInvalidKeyErrorHTML() {
+        return `
             <div style="color:#d32f2f; font-weight:bold; padding:10px;">🚫 API KEY 无效</div>
             <div style="font-size:13px; color:#555; padding:0 10px;">
             您配置的 API Key 无法通过验证 (Error 401/403)。<br><br>
@@ -4057,6 +4299,10 @@
             请检查设置或重新 <a href="https://bigmodel.cn/usercenter/proj-mgmt/apikeys" target="_blank" style="color:#3b82f6;">获取 KEY</a>。
             </div>
         `;
+    }
+
+    function showInvalidKeyError(container) {
+        if (container) container.innerHTML = getInvalidKeyErrorHTML();
     }
 
     function get429ErrorHTML() {
