@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "CoolAuxv 网页翻译与阅读助手",
+  "version": "12.0.0",
+  "description": "网页翻译与阅读助手（Chromium 类浏览器扩展版，基于 CoolAuxv 用户脚本）。",
+  "permissions": ["clipboardWrite", "storage", "tabs", "webNavigation"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "gm_polyfill.js",
+        "vendor/marked.min.js",
+        "vendor/html2canvas.min.js",
+        "vendor/katex.min.js",
+        "vendor/auto-render.min.js",
+        "translator.user.js"
+      ],
+      "run_at": "document_idle",
+      "match_origin_as_fallback": true
+    }
+  ],
+  "action": {
+    "default_title": "CoolAuxv"
+  }
+}

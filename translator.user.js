@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v11.1
+// @version      v12.0
 // @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v11.1 更新日志] 修复已知bug。
+// @changelog    [v12.0 更新日志] 支持配置导入导出与配置独立存储。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @match        https://mozilla.github.io/pdf.js/web/viewer.html*
@@ -15,6 +15,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_setClipboard
 // @grant        GM_getResourceText
+// @grant        GM_listValues
 // @require      https://cdn.jsdelivr.net/npm/marked/marked.min.js
 // @require      https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js
 // @require      https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js
@@ -29,6 +30,126 @@
 
 (function () {
     'use strict';
+
+    const BRIDGE_SOURCE_EXT = "coolauxv-extension";
+    const BRIDGE_SOURCE_US = "coolauxv-userscript";
+    const BRIDGE_PING_TYPE = "coolauxv_bridge_ping";
+    const BRIDGE_READY_TYPE = "coolauxv_bridge_ready";
+    const BRIDGE_REQUEST_TYPE = "coolauxv_bridge_request";
+    const BRIDGE_RESPONSE_TYPE = "coolauxv_bridge_response";
+    const BRIDGE_DETECT_TIMEOUT_MS = 800;
+
+    let extensionDetected = false;
+    let bridgeToken = "";
+    let startMainTimer = null;
+    let uiStarted = false;
+    let requestBridgeCleanup = () => {};
+
+    const isCoolauxvKey = (key) => typeof key === "string" && key.startsWith("coolauxv_");
+
+    const generateBridgeToken = () => {
+        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    };
+
+    const postBridgeMessage = (payload) => {
+        window.postMessage({ source: BRIDGE_SOURCE_US, ...payload }, "*");
+    };
+
+    const markExtensionDetected = () => {
+        if (extensionDetected) {
+            return;
+        }
+        extensionDetected = true;
+        if (startMainTimer) {
+            clearTimeout(startMainTimer);
+            startMainTimer = null;
+        }
+        if (uiStarted) {
+            requestBridgeCleanup();
+        }
+    };
+
+    const getBridgeKeys = () => {
+        if (typeof GM_listValues !== "function") {
+            return [];
+        }
+        return GM_listValues().filter(isCoolauxvKey);
+    };
+
+    const handleBridgeRequest = (data) => {
+        if (!bridgeToken || data.token !== bridgeToken) {
+            return;
+        }
+        const id = data.id;
+        const action = data.action;
+        const response = { type: BRIDGE_RESPONSE_TYPE, id: id, ok: true };
+        try {
+            if (action === "get") {
+                const key = data.key;
+                const fallback = data.defaultValue;
+                response.value = isCoolauxvKey(key) ? GM_getValue(key, fallback) : fallback;
+            } else if (action === "set") {
+                const key = data.key;
+                if (isCoolauxvKey(key)) {
+                    GM_setValue(key, data.value);
+                }
+            } else if (action === "delete") {
+                const key = data.key;
+                if (isCoolauxvKey(key)) {
+                    GM_deleteValue(key);
+                }
+            } else if (action === "list") {
+                response.value = getBridgeKeys();
+            } else if (action === "dump") {
+                const dump = {};
+                const keys = getBridgeKeys();
+                keys.forEach((key) => {
+                    dump[key] = GM_getValue(key);
+                });
+                response.value = dump;
+            } else if (action === "clear") {
+                const keys = getBridgeKeys();
+                keys.forEach((key) => GM_deleteValue(key));
+                response.value = keys.length;
+            } else {
+                response.ok = false;
+                response.error = "unknown action";
+            }
+        } catch (err) {
+            response.ok = false;
+            response.error = err ? err.message || String(err) : "error";
+        }
+        postBridgeMessage(response);
+    };
+
+    const setupBridgeServer = () => {
+        window.addEventListener("message", (event) => {
+            if (event.source !== window) {
+                return;
+            }
+            const data = event.data;
+            if (!data || data.source !== BRIDGE_SOURCE_EXT) {
+                return;
+            }
+            if (data.type === BRIDGE_PING_TYPE) {
+                if (!bridgeToken) {
+                    bridgeToken = generateBridgeToken();
+                }
+                markExtensionDetected();
+                postBridgeMessage({
+                    type: BRIDGE_READY_TYPE,
+                    nonce: data.nonce,
+                    token: bridgeToken,
+                    protocol: 1
+                });
+                return;
+            }
+            if (data.type === BRIDGE_REQUEST_TYPE) {
+                markExtensionDetected();
+                handleBridgeRequest(data);
+            }
+        });
+    };
 
     // ========================================================================
     // 全局配置与常量
@@ -79,19 +200,11 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
-        v11.1 更新日志
-        ## 🛠️ 大量错误修复
-        *   修复连续对话在切换页面后上下文丢失的问题。
-        *   修复推理区在折叠状态下偶发撑开布局的显示异常。
-        *   修复识屏结果偶发不刷新与重复渲染的问题。
-        *   修复翻译/解读结果过长时滚动条异常与跳动的问题。
-        *   修复本地 PDF 打开时进度提示偶发不消失的问题。
-        *   修复部分站点下注入样式冲突导致按钮错位的问题。
-        *   修复配置项保存后偶发未生效的问题。
-        *   修复快速连续点击触发多次请求导致的报错。
-        *   修复低网速下请求超时提示不准确的问题。
-        *   修复触屏设备没法点开右下角“智”悬浮球。
-        *   修复若干控制台报错与边界条件崩溃。
+        v12.0 更新日志
+        ## ✨ 功能更新
+        *   支持一键导出/恢复配置（Base64 文本）。
+        *   油猴版与 Chromium 类浏览器扩展配置独立存储，支持手动互导。
+        *   Chromium 类浏览器扩展在 debug 日志等级下输出更完整的日志。
     `;
 
     // ========================================================================
@@ -138,7 +251,10 @@
     // ========================================================================
     // 特殊逻辑：PDF.js Viewer 注入 (接收端 - 极速版)
     // ========================================================================
-    if (location.href.includes("mozilla.github.io/pdf.js/web/viewer.html")) {
+    function initPdfReceiver() {
+        if (!location.href.includes("mozilla.github.io/pdf.js/web/viewer.html")) {
+            return;
+        }
         const isBlur = GM_getValue("coolauxv_enable_blur_glass", false);
         const appWindow = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
@@ -233,6 +349,7 @@
 
 
     // --- 1. 样式注入 ---
+    const ensureStyles = () => {
     const styles = `
     /* ============================
        样式隔离与重置核心
@@ -1087,6 +1204,7 @@
 
     const katexCSS = GM_getResourceText("katexCSS");
     if (katexCSS) GM_addStyle(katexCSS);
+    };
 
     // --- 2. 状态变量 ---
     let popup, floatBall, cursorBtn;
@@ -1097,6 +1215,13 @@
     let isShowRaw = DEFAULT_SHOW_RAW;
     let isShowReasoning = DEFAULT_SHOW_REASONING;
     let isQuitted = false;
+
+    requestBridgeCleanup = () => {
+        isQuitted = true;
+        if (popup) popup.style.display = "none";
+        if (floatBall) floatBall.style.display = "none";
+        if (cursorBtn) cursorBtn.style.display = "none";
+    };
 
     let abortController = null;
     let gmRequest = null;
@@ -1128,6 +1253,10 @@
 
     function initUI() {
         try {
+            if (extensionDetected) {
+                requestBridgeCleanup();
+                return;
+            }
             cursorBtn = document.createElement("div");
             cursorBtn.id = "coolauxv-translate-icon";
             cursorBtn.innerText = "译";
@@ -1472,6 +1601,7 @@
                         <svg height="16" width="16" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
                         CoolAuxv (GitHub)
                     </a>
+                    <a href="https://github.com/CoolestEnoch/CoolAuxv/commits/main" target="_blank" class="coolauxv-github-btn" title="查看历史版本更新记录">更新记录</a>
                 </h3>
 
                 <div class="coolauxv-setting-group">
@@ -1623,6 +1753,11 @@
                 </div>
 
 
+                <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+                    <button id="coolauxv-cfg-export" class="coolauxv-action-btn" style="flex:1;">⬇️ 导出配置</button>
+                    <button id="coolauxv-cfg-import" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">⬆️ 恢复配置</button>
+                </div>
+
                 <div class="coolauxv-reset-btn" id="coolauxv-cfg-reset">⚠️ 重置所有配置</div>
             </div>
 
@@ -1716,6 +1851,8 @@
         const settingsView = popup.querySelector("#coolauxv-settings-view");
         const settingsBtn = popup.querySelector("#coolauxv-settings-btn");
         const resetBtn = popup.querySelector("#coolauxv-cfg-reset");
+        const exportBtn = popup.querySelector("#coolauxv-cfg-export");
+        const importBtn = popup.querySelector("#coolauxv-cfg-import");
 
         if (!mainView || !settingsView) return;
 
@@ -1812,6 +1949,75 @@
         const chatBody = popup.querySelector("#coolauxv-chat-body");
         const chatToggleBtn = popup.querySelector("#coolauxv-chat-toggle");
         const chatInput = popup.querySelector("#coolauxv-chat-input");
+
+        const CONFIG_KEYS = [
+            "coolauxv_api_key",
+            "coolauxv_model_name",
+            "coolauxv_model_vision",
+            "coolauxv_win_width",
+            "coolauxv_win_height",
+            "coolauxv_log_level",
+            "coolauxv_prompt_trans",
+            "coolauxv_prompt_explain",
+            "coolauxv_prompt_chat",
+            "coolauxv_prompt_vision",
+            "coolauxv_append_trans",
+            "coolauxv_append_explain",
+            "coolauxv_append_vision",
+            "coolauxv_append_chat",
+            "coolauxv_use_new_screenshot",
+            "coolauxv_enable_continuous_chat",
+            "coolauxv_enable_blur_glass",
+            "coolauxv_persistent_ball",
+            "coolauxv_draggable_ball"
+        ];
+
+        const encodeBase64 = (text) => {
+            try {
+                if (typeof TextEncoder !== "undefined") {
+                    const bytes = new TextEncoder().encode(text);
+                    let binary = "";
+                    bytes.forEach((b) => { binary += String.fromCharCode(b); });
+                    return btoa(binary);
+                }
+                return btoa(unescape(encodeURIComponent(text)));
+            } catch (e) {
+                return "";
+            }
+        };
+
+        const decodeBase64 = (base64) => {
+            const raw = atob(base64);
+            if (typeof TextDecoder !== "undefined") {
+                const bytes = new Uint8Array(raw.length);
+                for (let i = 0; i < raw.length; i++) {
+                    bytes[i] = raw.charCodeAt(i);
+                }
+                return new TextDecoder().decode(bytes);
+            }
+            return decodeURIComponent(escape(raw));
+        };
+
+        const snapshotConfig = () => {
+            const data = {};
+            CONFIG_KEYS.forEach((key) => {
+                const value = GM_getValue(key);
+                if (value !== undefined) {
+                    data[key] = value;
+                }
+            });
+            return data;
+        };
+
+        const applyConfigSnapshot = (data) => {
+            CONFIG_KEYS.forEach((key) => {
+                if (Object.prototype.hasOwnProperty.call(data, key)) {
+                    GM_setValue(key, data[key]);
+                } else {
+                    GM_deleteValue(key);
+                }
+            });
+        };
 
         radioBtns.forEach(radio => {
             radio.addEventListener('change', (e) => {
@@ -1979,48 +2185,77 @@
             if (inputContinuousChat) inputContinuousChat.checked = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
         };
 
+        const refreshConfigUI = () => {
+            loadConfig();
+            if (inputBlurGlass) {
+                const enabled = GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS);
+                inputBlurGlass.checked = enabled;
+                toggleBlurGlass(enabled);
+            }
+            if (inputPersistentBall) inputPersistentBall.checked = GM_getValue("coolauxv_persistent_ball", false);
+            if (inputDraggableBall) inputDraggableBall.checked = GM_getValue("coolauxv_draggable_ball", false);
+            if (inputNewScreenshot) {
+                let val = GM_getValue("coolauxv_use_new_screenshot", DEFAULT_USE_NEW_SCREENSHOT);
+                if (val === true) val = "v2";
+                if (val === false) val = "v1";
+                inputNewScreenshot.value = val;
+            }
+            if (inputAppendTrans) inputAppendTrans.checked = GM_getValue("coolauxv_append_trans", false);
+            if (inputAppendExplain) inputAppendExplain.checked = GM_getValue("coolauxv_append_explain", false);
+            if (inputAppendVision) inputAppendVision.checked = GM_getValue("coolauxv_append_vision", false);
+            if (inputAppendChat) inputAppendChat.checked = GM_getValue("coolauxv_append_chat", false);
+            if (inputContinuousChat) {
+                const enabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+                inputContinuousChat.checked = enabled;
+                toggleContinuousChat(enabled);
+            }
+        };
+
+        const exportConfig = () => {
+            const snapshot = snapshotConfig();
+            const payload = encodeBase64(JSON.stringify(snapshot));
+            if (!payload) {
+                alert("导出失败，请稍后重试。");
+                return;
+            }
+            if (typeof GM_setClipboard !== "undefined") {
+                GM_setClipboard(payload, "text");
+            } else if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(payload).catch(() => {});
+            }
+            alert("配置已导出并复制到剪贴板。");
+        };
+
+        const importConfig = () => {
+            const input = prompt("请粘贴配置 Base64 文本：", "");
+            if (!input) {
+                return;
+            }
+            let parsed = null;
+            try {
+                const decoded = decodeBase64(input.trim());
+                parsed = JSON.parse(decoded);
+            } catch (e) {
+                alert("配置格式无效，请确认 Base64 内容正确。");
+                return;
+            }
+            if (!parsed || typeof parsed !== "object") {
+                alert("配置内容无效，请确认 Base64 内容正确。");
+                return;
+            }
+            applyConfigSnapshot(parsed);
+            refreshConfigUI();
+            alert("配置已恢复。");
+        };
+
+        if (exportBtn) exportBtn.onclick = exportConfig;
+        if (importBtn) importBtn.onclick = importConfig;
+
         if (resetBtn) resetBtn.onclick = () => {
             if (confirm("确定要重置所有配置吗？\n所有自定义设置将恢复为默认值。")) {
-                GM_deleteValue("coolauxv_api_key");
-                GM_deleteValue("coolauxv_model_name");
-                GM_deleteValue("coolauxv_win_width");
-                GM_deleteValue("coolauxv_win_height");
-                GM_deleteValue("coolauxv_log_level");
-                GM_deleteValue("coolauxv_prompt_trans");
-                GM_deleteValue("coolauxv_prompt_explain");
-                GM_deleteValue("coolauxv_prompt_chat");
-                GM_deleteValue("coolauxv_model_vision");
-                GM_deleteValue("coolauxv_prompt_vision");
-                GM_deleteValue("coolauxv_append_trans");
-                GM_deleteValue("coolauxv_append_explain");
-                GM_deleteValue("coolauxv_append_vision");
-                GM_deleteValue("coolauxv_append_chat");
-                GM_deleteValue("coolauxv_use_new_screenshot");
-                GM_deleteValue("coolauxv_enable_continuous_chat");
-                GM_deleteValue("coolauxv_enable_blur_glass");
-                GM_deleteValue("coolauxv_persistent_ball");
-                GM_deleteValue("coolauxv_draggable_ball");
+                CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
                 GM_deleteValue("coolauxv_installed_version"); // 重置更新状态
-                loadConfig();
-                // 重置 Radio
-                const defaultRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="${DEFAULT_LOG_LEVEL}"]`);
-                if (defaultRadio) defaultRadio.checked = true;
-                if (inputBlurGlass) {
-                    inputBlurGlass.checked = DEFAULT_ENABLE_BLUR_GLASS;
-                    toggleBlurGlass(DEFAULT_ENABLE_BLUR_GLASS);
-                }
-                if (inputPersistentBall) inputPersistentBall.checked = false;
-                if (inputDraggableBall) inputDraggableBall.checked = false;
-                // 重置 Checkbox 状态
-                if (inputNewScreenshot) inputNewScreenshot.value = DEFAULT_USE_NEW_SCREENSHOT;
-                if (inputAppendTrans) inputAppendTrans.checked = false;
-                if (inputAppendExplain) inputAppendExplain.checked = false;
-                if (inputAppendVision) inputAppendVision.checked = false;
-                if (inputAppendChat) inputAppendChat.checked = false;
-                if (inputContinuousChat) {
-                    inputContinuousChat.checked = DEFAULT_ENABLE_CONTINUOUS_CHAT;
-                    toggleContinuousChat(DEFAULT_ENABLE_CONTINUOUS_CHAT);
-                }
+                refreshConfigUI();
                 alert("配置已重置。");
             }
         };
@@ -3626,7 +3861,7 @@
                                 showModal(
                                     "❌ 识屏启动失败",
                                     `# ❌ v3 识屏启动失败\n⚠️ Android没法用这个功能属正常情况，用不了别报bug。⚠️\n建议尝试 v1 或 v2 模式，或根据下方指引修改浏览器权限设置。\n由于浏览器安全策略限制，**屏幕共享 (v3) 仅支持 HTTPS 网站**。在 HTTP 网站上，浏览器会强制禁用该接口。\n## 💡 解决方法 (手动开启)\n如果您必须在此网站使用 v3 模式，请尝试以下操作：
-                                        **1. Chrome / Edge 浏览器：**
+                                        **1. Chromium 类浏览器（Edge/Brave 等）：**
                                         *   地址栏输入：\`chrome://flags/#unsafely-treat-insecure-origin-as-secure\`
                                         *   找到该项，设置为 **Enabled**。
                                         *   在下方文本框输入本站地址：\`${window.location.origin}\`
@@ -4319,7 +4554,23 @@
         `;
     }
 
-    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initUI);
-    else initUI();
+    const startMain = () => {
+        if (extensionDetected) {
+            requestBridgeCleanup();
+            return;
+        }
+        uiStarted = true;
+        ensureStyles();
+        initPdfReceiver();
+        if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initUI);
+        else initUI();
+    };
+
+    setupBridgeServer();
+    startMainTimer = setTimeout(() => {
+        if (!extensionDetected) {
+            startMain();
+        }
+    }, BRIDGE_DETECT_TIMEOUT_MS);
 
 })();

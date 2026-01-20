@@ -2,6 +2,8 @@
 
 **网页翻译与深度解读工具 | 支持 GLM-4 等推理模型**
 
+**已支持 Chromium 类浏览器扩展版（Load unpacked 安装）**
+
 [![GitHub Source](https://img.shields.io/badge/GitHub-Source-black?logo=github)](https://github.com/CoolestEnoch/CoolAuxv)
 [![Install TamperMonkey](https://img.shields.io/badge/Install-TamperMonkey-green)](https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -56,15 +58,23 @@
 *   **公式渲染**：内置 KaTeX 引擎，可正确显示 LaTeX 数学公式和矩阵。
 *   **流体玻璃 UI**：提供可选的界面美化设置，开启后主窗口和控件背景将应用高斯模糊效果。
 
+### 6. 配置管理
+*   **一键导出/恢复**：支持配置导出为纯 Base64 文本，方便备份与迁移。
+*   **跨版本互导**：油猴版与 Chromium 类浏览器扩展版均支持导入/导出，可手动互导配置。
+
 ---
 
 ## 🛠️ 使用说明
 
-1.  **安装**：
-    *   PC 端：Chrome/Edge 安装 Tampermonkey 扩展。
+1.  **安装（油猴版）**：
+    *   PC 端：Chromium 类浏览器安装 Tampermonkey 扩展。
     *   Android 端：Firefox 安装 Tampermonkey 扩展。
     *   点击 **[这里](https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js)** 安装脚本。
-2.  **配置 Key**：
+2.  **安装（Chromium 类浏览器扩展版）**：
+    *   下载或克隆本仓库代码。
+    *   打开扩展管理页并启用开发者模式。
+    *   点击 “Load unpacked”，选择仓库中的 `chrome_ext` 目录。
+3.  **配置 Key**：
     *   脚本使用智谱 AI 的 API，需自行前往 [智谱开放平台](https://bigmodel.cn/usercenter/proj-mgmt/apikeys) 申请 API Key。
     *   在网页选中文本 -> 点击“译”图标 -> 进入设置 -> 填入 Key。
 3.  **操作**：
@@ -88,3 +98,14 @@
 
 本项目遵循 GPL-3.0 协议开源。
 👉 [https://github.com/CoolestEnoch/CoolAuxv](https://github.com/CoolestEnoch/CoolAuxv)
+
+---
+
+## 📎 第三方依赖许可证声明
+
+本项目在运行时或随包分发中使用了以下开源依赖，其许可证分别适用：
+
+- Marked (MIT): https://github.com/markedjs/marked/blob/master/LICENSE.md
+- html2canvas (MIT): https://github.com/niklasvh/html2canvas/blob/master/LICENSE
+- KaTeX (MIT): https://github.com/KaTeX/KaTeX/blob/master/LICENSE
+- PDF.js (Apache-2.0): https://github.com/mozilla/pdf.js/blob/master/LICENSE
