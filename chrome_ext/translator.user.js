@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v13.0
+// @version      v13.1
 // @description  使用不同提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v13.0 更新日志] 支持 OpenAI 模型、聊天中动态切换模型与提供商（共享聊天记录）。
+// @changelog    [v13.1 更新日志] 回答时会显示模型提供商和类型了。支持 OpenAI 模型、聊天中动态切换模型与提供商（共享聊天记录）。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @match        https://mozilla.github.io/pdf.js/web/viewer.html*
@@ -96,6 +96,9 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v13.1 更新日志
+        ## ✨ 功能更新
+        *   回答时会显示模型的提供商和类型了。
         v13.0 更新日志
         ## ✨ 功能更新
         *   支持使用 OpenAI 模型。
@@ -1032,6 +1035,7 @@
     let chatImageCounter = 0;
     let chatAssistantBuffer = "";
     let chatPendingAssistantPrefix = "";
+    let chatAssistantLabel = "";
     let isChatCollapsed = true;
     let updateChatCollapseUI = () => {};
 
@@ -2532,12 +2536,22 @@
         return block;
     }
 
-    function getChatAssistantPrefix() {
-        return "\n\n**🤖 AI：**\n";
+    function formatChatModelLabel(provider, modelName) {
+        const providerLabel = getProviderLabel(provider);
+        const modelLabel = modelName ? String(modelName).trim() : "";
+        if (!providerLabel && !modelLabel) return "";
+        if (modelLabel) return `${providerLabel} ${modelLabel}`.trim();
+        return providerLabel;
     }
 
-    function buildChatAssistantBlock(text) {
-        return getChatAssistantPrefix() + (text || "");
+    function getChatAssistantPrefix(label) {
+        const info = label || chatAssistantLabel;
+        const suffix = info ? ` (${info})` : "";
+        return `\n\n**🤖 AI${suffix}：**\n`;
+    }
+
+    function buildChatAssistantBlock(text, label) {
+        return getChatAssistantPrefix(label) + (text || "");
     }
 
     function recordHistoryEntry(entry) {
@@ -2557,6 +2571,8 @@
         const config = getActiveConfig();
         const provider = config.provider;
         chatHistoryRecords = [];
+        const baseChatLabel = formatChatModelLabel(provider, config.modelVision);
+        chatAssistantLabel = baseChatLabel;
 
         historyRecords.forEach((entry) => {
             if (entry.systemPrompt) appendChatHistoryRecord("system", entry.systemPrompt, "");
@@ -2574,7 +2590,7 @@
             const isFirst = chatDisplayBuffer.length === 0;
             chatDisplayBuffer += formatChatUserBlock(displayText, imageId, isFirst);
             if (entry.assistantText) {
-                chatDisplayBuffer += buildChatAssistantBlock(entry.assistantText);
+                chatDisplayBuffer += buildChatAssistantBlock(entry.assistantText, baseChatLabel);
             }
         });
 
@@ -2653,7 +2669,7 @@
         startChatSessionIfNeeded();
         const safeMessage = message || "请求失败";
         const errorContent = allowHtml ? safeMessage : `<span style="color:red">${safeMessage}</span>`;
-        const assistantBlock = buildChatAssistantBlock(errorContent);
+        const assistantBlock = buildChatAssistantBlock(errorContent, chatAssistantLabel);
         if (chatDisplayBuffer) {
             chatDisplayBuffer += assistantBlock;
         } else {
@@ -4632,7 +4648,8 @@
 
         const displayText = userText || (imageId ? "（仅识屏）" : "");
         chatDisplayBuffer += formatChatUserBlock(displayText, imageId, chatDisplayBuffer.length === 0);
-        chatPendingAssistantPrefix = getChatAssistantPrefix();
+        chatAssistantLabel = formatChatModelLabel(provider, config.modelVision);
+        chatPendingAssistantPrefix = getChatAssistantPrefix(chatAssistantLabel);
         chatAssistantBuffer = "";
         updateChatStreamText();
         lastRenderedText = "";

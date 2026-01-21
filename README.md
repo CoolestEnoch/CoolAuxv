@@ -18,6 +18,7 @@
 对接了智谱和OpenAI的大语言模型，主要用于辅助阅读外文文献。除了基础的翻译功能外，它利用大模型的推理能力，提供对专业术语、复杂长难句的深度解读和背景分析。
 
 
+![demo](res/translator_pc_switch_model.png)
 ![demo](res/translator_pc_screen_understanding.png)
 ![demo](res/translator_pc_main.png)
 ![demo](res/translator_pc_continuous_chat.png)
