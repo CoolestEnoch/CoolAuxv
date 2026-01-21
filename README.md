@@ -1,8 +1,8 @@
 # CoolAuxv
 
-**网页翻译与深度解读工具 | 支持 GLM-4 等推理模型**
+**网页翻译与深度解读工具 | 支持 `GLM-4` `GPT-4o-mini` 等推理模型**
 
-**已支持 Chromium 类浏览器扩展版（Load unpacked 安装）**
+**已支持 Chromium 类浏览器扩展版（Load unpacked 安装），已支持OpenAI接口**
 
 [![GitHub Source](https://img.shields.io/badge/GitHub-Source-black?logo=github)](https://github.com/CoolestEnoch/CoolAuxv)
 [![Install TamperMonkey](https://img.shields.io/badge/Install-TamperMonkey-green)](https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js)
@@ -15,7 +15,7 @@
 
 **CoolAuxv** 是一款基于油猴（Tampermonkey）的网页辅助脚本。
 
-它对接了 GLM-4.5 等大语言模型，主要用于辅助阅读外文文献。除了基础的翻译功能外，它利用大模型的推理能力，提供对专业术语、复杂长难句的深度解读和背景分析。
+对接了智谱和OpenAI的大语言模型，主要用于辅助阅读外文文献。除了基础的翻译功能外，它利用大模型的推理能力，提供对专业术语、复杂长难句的深度解读和背景分析。
 
 
 ![demo](res/translator_pc_screen_understanding.png)
@@ -61,6 +61,10 @@
 ### 6. 配置管理
 *   **一键导出/恢复**：支持配置导出为纯 Base64 文本，方便备份与迁移。
 *   **跨版本互导**：油猴版与 Chromium 类浏览器扩展版均支持导入/导出，可手动互导配置。
+
+### 7. 多服务商
+*   **不同服务商**：支持使用智谱或OpenAI作为服务商，需自备API KEY。
+*   **跨服务器连续对话**：不同服务商的不同模型可共享同一组聊天记录，聊天更顺畅。
 
 ---
 

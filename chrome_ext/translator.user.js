@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v12.0
-// @description  使用智谱API的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v12.0 更新日志] 支持配置导入导出与配置独立存储。
+// @version      v13.0
+// @description  使用不同提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
+// @changelog    [v13.0 更新日志] 支持 OpenAI 模型、聊天中动态切换模型与提供商（共享聊天记录）。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @match        https://mozilla.github.io/pdf.js/web/viewer.html*
@@ -21,6 +21,7 @@
 // @require      https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js
 // @resource     katexCSS https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css
 // @connect      open.bigmodel.cn
+// @connect      api.openai.com
 // @license      GPL-3.0
 // @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js
 // @updateURL    https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.meta.js
@@ -34,8 +35,15 @@
     // 全局配置与常量
     // ========================================================================
 
-    // 文本模型 (整合了原来的 语言模型 和 推理模型)
-    const TEXT_MODELS = [
+    const PROVIDERS = [
+        { id: "zhipu", label: "智谱" },
+        { id: "openai", label: "OpenAI" }
+    ];
+    const DEFAULT_PROVIDER = "zhipu";
+    const DEFAULT_MODEL_PROVIDER = "zhipu";
+
+    // 智谱文本模型 (整合了原来的 语言模型 和 推理模型)
+    const ZHIPU_TEXT_MODELS = [
         { id: "glm-4-flash", class: "语言模型", tag: "免费" },
         { id: "glm-4-flash-250414", class: "语言模型", tag: "免费" },
         { id: "glm-4v-flash", class: "通用模型", tag: "免费 | 多模态" },
@@ -47,21 +55,30 @@
         { id: "deepseek-r1", class: "推理模型", tag: "付费" },
     ];
 
-    // 视觉模型 (添加 class 分类)
-    const VISION_MODELS = [
+    // 智谱视觉模型 (添加 class 分类)
+    const ZHIPU_VISION_MODELS = [
         { id: "glm-4v-flash", class: "通用模型", tag: "免费 | 多模态" },
         { id: "glm-4.6v-flash", class: "推理模型", tag: "免费 | 多模态" },
         { id: "glm-4.1v-thinking-flash", class: "推理模型", tag: "免费 | 多模态" },
     ];
 
+    const OPENAI_TEXT_MODELS = [
+        { id: "gpt-4o-mini", class: "通用模型", tag: "推荐" },
+        { id: "gpt-4o", class: "通用模型", tag: "高性能" },
+        { id: "gpt-4.1-mini", class: "通用模型", tag: "高性价比" }
+    ];
+
     const LOG_PRESETS = ["debug", "info", "warn", "error", "none"];
 
-    const DEFAULT_API_KEY = "1145141919810哼哼啊啊啊啊啊";
-    // 默认模型取语言模型数组的第一个
-    const DEFAULT_MODEL_NAME = TEXT_MODELS[0].id;
+    const ZHIPU_DEFAULT_API_KEY = "1145141919810哼哼啊啊啊啊啊";
+    const OPENAI_DEFAULT_API_KEY = "sk-xxxxxxx";
+    const ZHIPU_DEFAULT_MODEL_NAME = ZHIPU_TEXT_MODELS[0].id;
+    const OPENAI_DEFAULT_MODEL_NAME = OPENAI_TEXT_MODELS[0].id;
     const DEFAULT_LOG_LEVEL = "none";
 
-    const DEFAULT_VISION_MODEL = "glm-4v-flash";
+    const ZHIPU_DEFAULT_VISION_MODEL = ZHIPU_VISION_MODELS[0].id;
+    const ZHIPU_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+    const OPENAI_API_URL = "https://api.openai.com/v1/responses";
     const DEFAULT_PROMPT_VISION = "请先详细描述这张图，然后再详细解读这张图。";
     const DEFAULT_ENABLE_CONTINUOUS_CHAT = false;
     const DEFAULT_PROMPT_CONTINUOUS_CHAT = "忽略之前给你的提示词，现在开始你是一个连续对话助手，要结合上下文用中文回答用户问题；如有图片，请结合图片内容回答；要听从用户指示。";
@@ -79,11 +96,11 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
-        v12.0 更新日志
+        v13.0 更新日志
         ## ✨ 功能更新
-        *   支持一键导出/恢复配置（Base64 文本）。
-        *   油猴版与 Chromium 类浏览器扩展配置独立存储，支持手动互导。
-        *   Chromium 类浏览器扩展在 debug 日志等级下输出更完整的日志。
+        *   支持使用 OpenAI 模型。
+        *   聊天过程中可动态切换模型与提供商。
+        *   切换时共享同一套聊天记录与上下文。
     `;
 
     // ========================================================================
@@ -999,9 +1016,15 @@
     let streamReasoningBuffer = "";
     let hasReasoning = false;
     let streamMode = "single";
+    let streamErrorHandled = false;
+    let openaiStreamHasDelta = false;
+    let openaiStreamHasFull = false;
 
     let historyRecords = [];
     let chatMessages = [];
+    let chatHistoryRecords = [];
+    let chatProvider = "";
+    let chatSystemPrompt = "";
     let chatDisplayBuffer = "";
     let chatSessionStarted = false;
     let chatCapturedImageBase64 = "";
@@ -1265,8 +1288,9 @@
                 `).join("");
             };
 
-            const textModelsHTML = generateGroupedBtns(TEXT_MODELS, "coolauxv_model_name");
-            const visionModelsHTML = generateGroupedBtns(VISION_MODELS, "coolauxv_model_vision");
+            const zhipuTextModelsHTML = generateGroupedBtns(ZHIPU_TEXT_MODELS, "coolauxv_zhipu_model_name");
+            const zhipuVisionModelsHTML = generateGroupedBtns(ZHIPU_VISION_MODELS, "coolauxv_zhipu_model_vision");
+            const openaiModelsHTML = generateGroupedBtns(OPENAI_TEXT_MODELS, "coolauxv_openai_model_name");
 
             const currentLogLevel = GM_getValue("coolauxv_log_level", DEFAULT_LOG_LEVEL);
             const logRadioHTML = LOG_PRESETS.map(level => {
@@ -1275,6 +1299,17 @@
                     <label class="coolauxv-radio-label">
                         <input type="radio" name="coolauxv_log_level_radio" value="${level}" ${isChecked}>
                         <span class="coolauxv-radio-text">${level}</span>
+                    </label>
+                `;
+            }).join("");
+
+            const currentProvider = GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER);
+            const providerRadioHTML = PROVIDERS.map((provider) => {
+                const isChecked = provider.id === currentProvider ? "checked" : "";
+                return `
+                    <label class="coolauxv-radio-label">
+                        <input type="radio" name="coolauxv_provider_radio" value="${provider.id}" ${isChecked}>
+                        <span class="coolauxv-radio-text">${provider.label}</span>
                     </label>
                 `;
             }).join("");
@@ -1371,33 +1406,67 @@
                 </h3>
 
                 <div class="coolauxv-setting-group">
+                    <label class="coolauxv-setting-label">默认大模型提供商</label>
+                    <div class="coolauxv-radio-group">
+                        ${providerRadioHTML}
+                    </div>
+                </div>
+
+                <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">
-                        API KEY
-                        <span id="coolauxv-btn-toggle-key" class="coolauxv-link-btn" style="margin-left:auto; cursor:pointer; user-select:none;">👁️ 显示</span>
+                        智谱 API KEY
+                        <span id="coolauxv-btn-toggle-zhipu-key" class="coolauxv-link-btn" style="margin-left:auto; cursor:pointer; user-select:none;">👁️ 显示</span>
                         <a href="https://bigmodel.cn/usercenter/proj-mgmt/apikeys" target="_blank" class="coolauxv-link-btn" title="打开智谱平台获取Key">🔑 获取KEY</a>
                     </label>
-                    <input type="password" id="coolauxv-cfg-key" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="${DEFAULT_API_KEY}">
-                </div>
+                    <input type="password" id="coolauxv-cfg-zhipu-key" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="${ZHIPU_DEFAULT_API_KEY}">
 
-                <div class="coolauxv-setting-group">
-                    <!-- 黑色大标题：文本模型 -->
-                    <label class="coolauxv-setting-label">
-                        文本模型 (Text Models)
-                        <a href="https://bigmodel.cn/pricing" target="_blank" class="coolauxv-link-btn" title="查看定价">💵 定价</a>
+                    <label class="coolauxv-setting-label" style="margin-top:8px;">
+                        OpenAI API KEY
+                        <span id="coolauxv-btn-toggle-openai-key" class="coolauxv-link-btn" style="margin-left:auto; cursor:pointer; user-select:none;">👁️ 显示</span>
+                        <a href="https://platform.openai.com/api-keys" target="_blank" class="coolauxv-link-btn" title="打开 OpenAI 平台获取 Key">🔑 获取KEY</a>
                     </label>
-                    <input type="text" id="coolauxv-cfg-model" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${DEFAULT_MODEL_NAME}">
-
-                    <!-- 插入自动生成的文本模型分组 (包含灰色小标题和按钮) -->
-                    ${textModelsHTML}
+                    <input type="password" id="coolauxv-cfg-openai-key" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="${OPENAI_DEFAULT_API_KEY}">
                 </div>
 
                 <div class="coolauxv-setting-group">
-                    <!-- 黑色大标题：视觉模型 -->
-                    <label class="coolauxv-setting-label">视觉模型 (Vision Models)</label>
-                    <input type="text" id="coolauxv-cfg-model-vision" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${DEFAULT_VISION_MODEL}">
+                    <label class="coolauxv-setting-label">模型提供商</label>
+                    <select id="coolauxv-cfg-model-provider" style="padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:12px; background:#fff;">
+                        ${PROVIDERS.map((provider) => `<option value="${provider.id}">${provider.label}</option>`).join("")}
+                    </select>
+                </div>
 
-                    <!-- 插入自动生成的视觉模型分组 -->
-                    ${visionModelsHTML}
+                <div id="coolauxv-model-section-zhipu">
+                    <div class="coolauxv-setting-group">
+                        <!-- 黑色大标题：文本模型 -->
+                        <label class="coolauxv-setting-label">
+                            文本模型 (Zhipu Text Models)
+                            <a href="https://bigmodel.cn/pricing" target="_blank" class="coolauxv-link-btn" title="查看定价">💵 定价</a>
+                        </label>
+                        <input type="text" id="coolauxv-cfg-zhipu-model" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${ZHIPU_DEFAULT_MODEL_NAME}">
+
+                        <!-- 插入自动生成的文本模型分组 (包含灰色小标题和按钮) -->
+                        ${zhipuTextModelsHTML}
+                    </div>
+
+                    <div class="coolauxv-setting-group">
+                        <!-- 黑色大标题：视觉模型 -->
+                        <label class="coolauxv-setting-label">视觉模型 (Zhipu Vision Models)</label>
+                        <input type="text" id="coolauxv-cfg-zhipu-model-vision" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${ZHIPU_DEFAULT_VISION_MODEL}">
+
+                        <!-- 插入自动生成的视觉模型分组 -->
+                        ${zhipuVisionModelsHTML}
+                    </div>
+                </div>
+
+                <div id="coolauxv-model-section-openai" style="display:none;">
+                    <div class="coolauxv-setting-group">
+                        <label class="coolauxv-setting-label">
+                            模型选择 (OpenAI)
+                            <a href="https://platform.openai.com/docs/models" target="_blank" class="coolauxv-link-btn" title="查看模型列表">📚 模型列表</a>
+                        </label>
+                        <input type="text" id="coolauxv-cfg-openai-model" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${OPENAI_DEFAULT_MODEL_NAME}">
+                        ${openaiModelsHTML}
+                    </div>
                 </div>
 
                 <div class="coolauxv-setting-group">
@@ -1621,10 +1690,15 @@
 
         // --- 通用的配置加载与保存逻辑 ---
         const clearableInputs = [
-            "coolauxv-cfg-key", "coolauxv-cfg-model",
-            "coolauxv-cfg-model-vision",
-            "coolauxv-cfg-width", "coolauxv-cfg-height",
-            "coolauxv-cfg-prompt-trans", "coolauxv-cfg-prompt-explain",
+            "coolauxv-cfg-zhipu-key",
+            "coolauxv-cfg-openai-key",
+            "coolauxv-cfg-zhipu-model",
+            "coolauxv-cfg-zhipu-model-vision",
+            "coolauxv-cfg-openai-model",
+            "coolauxv-cfg-width",
+            "coolauxv-cfg-height",
+            "coolauxv-cfg-prompt-trans",
+            "coolauxv-cfg-prompt-explain",
             "coolauxv-cfg-prompt-vision",
             "coolauxv-cfg-prompt-chat"
         ];
@@ -1653,22 +1727,33 @@
             }
         });
 
-        const inputKey = popup.querySelector("#coolauxv-cfg-key");
-        // API Key 显隐切换逻辑
-        const btnToggleKey = popup.querySelector("#coolauxv-btn-toggle-key");
-        if (inputKey && btnToggleKey) {
-            btnToggleKey.onclick = () => {
-                if (inputKey.type === "password") {
-                    inputKey.type = "text";
-                    btnToggleKey.innerText = "🔒 隐藏";
+        const inputZhipuKey = popup.querySelector("#coolauxv-cfg-zhipu-key");
+        const inputOpenaiKey = popup.querySelector("#coolauxv-cfg-openai-key");
+        const btnToggleZhipuKey = popup.querySelector("#coolauxv-btn-toggle-zhipu-key");
+        const btnToggleOpenaiKey = popup.querySelector("#coolauxv-btn-toggle-openai-key");
+
+        const bindKeyToggle = (input, btn) => {
+            if (!input || !btn) return;
+            btn.onclick = () => {
+                if (input.type === "password") {
+                    input.type = "text";
+                    btn.innerText = "🔒 隐藏";
                 } else {
-                    inputKey.type = "password";
-                    btnToggleKey.innerText = "👁️ 显示";
+                    input.type = "password";
+                    btn.innerText = "👁️ 显示";
                 }
             };
-        }
-        const inputModel = popup.querySelector("#coolauxv-cfg-model");
-        const inputModelVision = popup.querySelector("#coolauxv-cfg-model-vision");
+        };
+
+        bindKeyToggle(inputZhipuKey, btnToggleZhipuKey);
+        bindKeyToggle(inputOpenaiKey, btnToggleOpenaiKey);
+
+        const inputZhipuModel = popup.querySelector("#coolauxv-cfg-zhipu-model");
+        const inputZhipuModelVision = popup.querySelector("#coolauxv-cfg-zhipu-model-vision");
+        const inputOpenaiModel = popup.querySelector("#coolauxv-cfg-openai-model");
+        const inputModelProvider = popup.querySelector("#coolauxv-cfg-model-provider");
+        const zhipuModelSection = popup.querySelector("#coolauxv-model-section-zhipu");
+        const openaiModelSection = popup.querySelector("#coolauxv-model-section-openai");
         const inputWidth = popup.querySelector("#coolauxv-cfg-width");
         const inputHeight = popup.querySelector("#coolauxv-cfg-height");
         const inputPromptTrans = popup.querySelector("#coolauxv-cfg-prompt-trans");
@@ -1684,6 +1769,7 @@
         const inputDraggableBall = popup.querySelector("#coolauxv-cfg-draggable-ball");
         const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
+        const providerRadioBtns = popup.querySelectorAll('input[name="coolauxv_provider_radio"]');
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
         const inputContinuousChat = popup.querySelector("#coolauxv-cfg-continuous-chat");
         const chatBar = popup.querySelector("#coolauxv-chat-bar");
@@ -1692,9 +1778,13 @@
         const chatInput = popup.querySelector("#coolauxv-chat-input");
 
         const CONFIG_KEYS = [
-            "coolauxv_api_key",
-            "coolauxv_model_name",
-            "coolauxv_model_vision",
+            "coolauxv_default_provider",
+            "coolauxv_model_provider",
+            "coolauxv_zhipu_api_key",
+            "coolauxv_openai_api_key",
+            "coolauxv_zhipu_model_name",
+            "coolauxv_zhipu_model_vision",
+            "coolauxv_openai_model_name",
             "coolauxv_win_width",
             "coolauxv_win_height",
             "coolauxv_log_level",
@@ -1711,6 +1801,11 @@
             "coolauxv_enable_blur_glass",
             "coolauxv_persistent_ball",
             "coolauxv_draggable_ball"
+        ];
+        const LEGACY_CONFIG_KEYS = [
+            "coolauxv_api_key",
+            "coolauxv_model_name",
+            "coolauxv_model_vision"
         ];
 
         const encodeBase64 = (text) => {
@@ -1758,7 +1853,34 @@
                     GM_deleteValue(key);
                 }
             });
+            if (data.coolauxv_api_key && !data.coolauxv_zhipu_api_key) {
+                GM_setValue("coolauxv_zhipu_api_key", data.coolauxv_api_key);
+            }
+            if (data.coolauxv_model_name && !data.coolauxv_zhipu_model_name) {
+                GM_setValue("coolauxv_zhipu_model_name", data.coolauxv_model_name);
+            }
+            if (data.coolauxv_model_vision && !data.coolauxv_zhipu_model_vision) {
+                GM_setValue("coolauxv_zhipu_model_vision", data.coolauxv_model_vision);
+            }
+            LEGACY_CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
         };
+
+        const migrateLegacyConfig = () => {
+            const legacyKey = GM_getValue("coolauxv_api_key");
+            if (legacyKey && !GM_getValue("coolauxv_zhipu_api_key")) {
+                GM_setValue("coolauxv_zhipu_api_key", legacyKey);
+            }
+            const legacyModel = GM_getValue("coolauxv_model_name");
+            if (legacyModel && !GM_getValue("coolauxv_zhipu_model_name")) {
+                GM_setValue("coolauxv_zhipu_model_name", legacyModel);
+            }
+            const legacyVision = GM_getValue("coolauxv_model_vision");
+            if (legacyVision && !GM_getValue("coolauxv_zhipu_model_vision")) {
+                GM_setValue("coolauxv_zhipu_model_vision", legacyVision);
+            }
+        };
+
+        migrateLegacyConfig();
 
         radioBtns.forEach(radio => {
             radio.addEventListener('change', (e) => {
@@ -1772,7 +1894,42 @@
             const val = value.trim();
             if (val) GM_setValue(key, val);
             else GM_deleteValue(key);
+            if (!val && key === "coolauxv_zhipu_api_key") {
+                GM_deleteValue("coolauxv_api_key");
+            }
         };
+
+        const applyModelProviderUI = (provider) => {
+            const isOpenai = provider === "openai";
+            if (zhipuModelSection) zhipuModelSection.style.display = isOpenai ? "none" : "block";
+            if (openaiModelSection) openaiModelSection.style.display = isOpenai ? "block" : "none";
+        };
+
+        const syncModelProvider = (provider) => {
+            if (inputModelProvider) {
+                inputModelProvider.value = provider;
+                GM_setValue("coolauxv_model_provider", provider);
+                applyModelProviderUI(provider);
+            }
+        };
+
+        providerRadioBtns.forEach((radio) => {
+            radio.addEventListener("change", (e) => {
+                if (!e.target.checked) return;
+                const provider = e.target.value || DEFAULT_PROVIDER;
+                GM_setValue("coolauxv_default_provider", provider);
+                syncModelProvider(provider);
+                syncChatProvider(provider);
+            });
+        });
+
+        if (inputModelProvider) {
+            inputModelProvider.addEventListener("change", (e) => {
+                const provider = e.target.value || DEFAULT_MODEL_PROVIDER;
+                GM_setValue("coolauxv_model_provider", provider);
+                applyModelProviderUI(provider);
+            });
+        }
 
         const toggleContinuousChat = (enabled) => {
             if (!chatBar) return;
@@ -1889,8 +2046,21 @@
         }
 
         const loadConfig = () => {
-            if (inputKey) inputKey.value = GM_getValue("coolauxv_api_key", "");
-            if (inputModel) inputModel.value = GM_getValue("coolauxv_model_name", "");
+            const defaultProvider = GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER);
+            const modelProvider = GM_getValue("coolauxv_model_provider", defaultProvider);
+
+            if (inputZhipuKey) {
+                inputZhipuKey.value = GM_getValue("coolauxv_zhipu_api_key", "") || GM_getValue("coolauxv_api_key", "");
+            }
+            if (inputOpenaiKey) {
+                inputOpenaiKey.value = GM_getValue("coolauxv_openai_api_key", "");
+            }
+            if (inputZhipuModel) {
+                inputZhipuModel.value = GM_getValue("coolauxv_zhipu_model_name", "") || GM_getValue("coolauxv_model_name", "");
+            }
+            if (inputOpenaiModel) {
+                inputOpenaiModel.value = GM_getValue("coolauxv_openai_model_name", "");
+            }
             if (inputWidth) inputWidth.value = GM_getValue("coolauxv_win_width", "");
             if (inputHeight) inputHeight.value = GM_getValue("coolauxv_win_height", "");
             if (inputPromptTrans) inputPromptTrans.value = GM_getValue("coolauxv_prompt_trans", "");
@@ -1921,9 +2091,20 @@
                 if (val === false) val = "v1";
                 inputNewScreenshot.value = val;
             }
-            if (inputModelVision) inputModelVision.value = GM_getValue("coolauxv_model_vision", "");
+            if (inputZhipuModelVision) {
+                inputZhipuModelVision.value = GM_getValue("coolauxv_zhipu_model_vision", "") || GM_getValue("coolauxv_model_vision", "");
+            }
             if (inputPromptVision) inputPromptVision.value = GM_getValue("coolauxv_prompt_vision", "");
             if (inputContinuousChat) inputContinuousChat.checked = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+
+            providerRadioBtns.forEach((radio) => {
+                radio.checked = radio.value === defaultProvider;
+            });
+
+            if (inputModelProvider) {
+                inputModelProvider.value = modelProvider;
+                applyModelProviderUI(modelProvider);
+            }
         };
 
         const refreshConfigUI = () => {
@@ -1995,20 +2176,23 @@
         if (resetBtn) resetBtn.onclick = () => {
             if (confirm("确定要重置所有配置吗？\n所有自定义设置将恢复为默认值。")) {
                 CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
+                LEGACY_CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
                 GM_deleteValue("coolauxv_installed_version"); // 重置更新状态
                 refreshConfigUI();
                 alert("配置已重置。");
             }
         };
 
-        if (inputKey) inputKey.addEventListener("input", (e) => saveConfig("coolauxv_api_key", e.target.value));
-        if (inputModel) inputModel.addEventListener("input", (e) => saveConfig("coolauxv_model_name", e.target.value));
+        if (inputZhipuKey) inputZhipuKey.addEventListener("input", (e) => saveConfig("coolauxv_zhipu_api_key", e.target.value));
+        if (inputOpenaiKey) inputOpenaiKey.addEventListener("input", (e) => saveConfig("coolauxv_openai_api_key", e.target.value));
+        if (inputZhipuModel) inputZhipuModel.addEventListener("input", (e) => saveConfig("coolauxv_zhipu_model_name", e.target.value));
         if (inputWidth) inputWidth.addEventListener("input", (e) => saveConfig("coolauxv_win_width", e.target.value));
         if (inputHeight) inputHeight.addEventListener("input", (e) => saveConfig("coolauxv_win_height", e.target.value));
         if (inputPromptTrans) inputPromptTrans.addEventListener("input", (e) => saveConfig("coolauxv_prompt_trans", e.target.value));
         if (inputPromptExplain) inputPromptExplain.addEventListener("input", (e) => saveConfig("coolauxv_prompt_explain", e.target.value));
         if (inputPromptChat) inputPromptChat.addEventListener("input", (e) => saveConfig("coolauxv_prompt_chat", e.target.value));
-        if (inputModelVision) inputModelVision.addEventListener("input", (e) => saveConfig("coolauxv_model_vision", e.target.value));
+        if (inputZhipuModelVision) inputZhipuModelVision.addEventListener("input", (e) => saveConfig("coolauxv_zhipu_model_vision", e.target.value));
+        if (inputOpenaiModel) inputOpenaiModel.addEventListener("input", (e) => saveConfig("coolauxv_openai_model_name", e.target.value));
         if (inputPromptVision) inputPromptVision.addEventListener("input", (e) => saveConfig("coolauxv_prompt_vision", e.target.value));
         if (inputAppendTrans) inputAppendTrans.addEventListener("change", (e) => GM_setValue("coolauxv_append_trans", e.target.checked));
         if (inputAppendExplain) inputAppendExplain.addEventListener("change", (e) => GM_setValue("coolauxv_append_explain", e.target.checked));
@@ -2103,12 +2287,15 @@
             btn.onclick = () => {
                 const val = btn.dataset.val;
                 const field = btn.dataset.field;
-                if (field === "coolauxv_model_name" && inputModel) {
-                    inputModel.value = val;
-                    inputModel.dispatchEvent(new Event('input'));
-                } else if (field === "coolauxv_model_vision" && inputModelVision) {
-                    inputModelVision.value = val;
-                    inputModelVision.dispatchEvent(new Event('input'));
+                if (field === "coolauxv_zhipu_model_name" && inputZhipuModel) {
+                    inputZhipuModel.value = val;
+                    inputZhipuModel.dispatchEvent(new Event('input'));
+                } else if (field === "coolauxv_zhipu_model_vision" && inputZhipuModelVision) {
+                    inputZhipuModelVision.value = val;
+                    inputZhipuModelVision.dispatchEvent(new Event('input'));
+                } else if (field === "coolauxv_openai_model_name" && inputOpenaiModel) {
+                    inputOpenaiModel.value = val;
+                    inputOpenaiModel.dispatchEvent(new Event('input'));
                 }
             };
         });
@@ -2116,6 +2303,36 @@
         toggleContinuousChat(GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT));
         updateChatCollapseUI();
     }
+
+    const PROVIDER_LABELS = {
+        zhipu: "智谱",
+        openai: "OpenAI"
+    };
+
+    const PROVIDER_KEY_LINKS = {
+        zhipu: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
+        openai: "https://platform.openai.com/api-keys"
+    };
+
+    const resolveProvider = (provider) => {
+        return provider === "openai" ? "openai" : "zhipu";
+    };
+
+    const getProviderLabel = (provider) => {
+        const key = resolveProvider(provider);
+        return PROVIDER_LABELS[key] || key;
+    };
+
+    const getProviderKeyLink = (provider) => {
+        const key = resolveProvider(provider);
+        return PROVIDER_KEY_LINKS[key] || PROVIDER_KEY_LINKS.zhipu;
+    };
+
+    const isMissingApiKey = (provider, apiKey) => {
+        if (!apiKey) return true;
+        if (provider === "openai") return apiKey === OPENAI_DEFAULT_API_KEY;
+        return apiKey === ZHIPU_DEFAULT_API_KEY;
+    };
 
     function getActiveConfig() {
         // 辅助函数：处理提示词逻辑
@@ -2132,21 +2349,30 @@
             return custom;
         };
 
+        const provider = resolveProvider(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER));
+        const zhipuApiKey = GM_getValue("coolauxv_zhipu_api_key") || GM_getValue("coolauxv_api_key") || ZHIPU_DEFAULT_API_KEY;
+        const openaiApiKey = GM_getValue("coolauxv_openai_api_key") || OPENAI_DEFAULT_API_KEY;
+        const zhipuModelName = GM_getValue("coolauxv_zhipu_model_name") || GM_getValue("coolauxv_model_name") || ZHIPU_DEFAULT_MODEL_NAME;
+        const zhipuModelVision = GM_getValue("coolauxv_zhipu_model_vision") || GM_getValue("coolauxv_model_vision") || ZHIPU_DEFAULT_VISION_MODEL;
+        const openaiModelName = GM_getValue("coolauxv_openai_model_name") || OPENAI_DEFAULT_MODEL_NAME;
+        const isOpenai = provider === "openai";
+
         return {
-            apiKey: GM_getValue("coolauxv_api_key") || DEFAULT_API_KEY,
-            modelName: GM_getValue("coolauxv_model_name") || DEFAULT_MODEL_NAME,
+            provider: provider,
+            apiKey: isOpenai ? openaiApiKey : zhipuApiKey,
+            modelName: isOpenai ? openaiModelName : zhipuModelName,
 
             // 使用辅助函数生成最终提示词
             promptTrans: getFinalPrompt("coolauxv_prompt_trans", "coolauxv_append_trans", DEFAULT_PROMPT_TRANSLATE),
             promptExplain: getFinalPrompt("coolauxv_prompt_explain", "coolauxv_append_explain", DEFAULT_PROMPT_EXPLAIN),
 
-            modelVision: GM_getValue("coolauxv_model_vision") || DEFAULT_VISION_MODEL,
+            modelVision: isOpenai ? openaiModelName : zhipuModelVision,
             promptVision: getFinalPrompt("coolauxv_prompt_vision", "coolauxv_append_vision", DEFAULT_PROMPT_VISION),
             promptContinuousChat: getFinalPrompt("coolauxv_prompt_chat", "coolauxv_append_chat", DEFAULT_PROMPT_CONTINUOUS_CHAT)
         };
     }
 
-    function buildUserMessageContent(text, imageBase64) {
+    function buildZhipuMessageContent(text, imageBase64) {
         if (imageBase64) {
             return [
                 { type: "image_url", image_url: { url: imageBase64 } },
@@ -2154,6 +2380,145 @@
             ];
         }
         return text || "";
+    }
+
+    function buildOpenaiMessageContent(text, imageBase64) {
+        const content = [];
+        if (imageBase64) {
+            content.push({ type: "input_image", image_url: imageBase64 });
+        }
+        if (text) {
+            content.push({ type: "input_text", text: text });
+        }
+        return content;
+    }
+
+    function buildOpenaiAssistantContent(text) {
+        if (!text) return [];
+        return [{ type: "output_text", text: text }];
+    }
+
+    function buildProviderMessage(provider, role, text, imageBase64) {
+        if (provider === "openai") {
+            const content = role === "assistant"
+                ? buildOpenaiAssistantContent(text)
+                : buildOpenaiMessageContent(text, imageBase64);
+            if (!content.length) return null;
+            return { role: role, content: content };
+        }
+        const content = buildZhipuMessageContent(text, imageBase64);
+        if (content === "") return null;
+        return { role: role, content: content };
+    }
+
+    function getProviderRequestUrl(provider) {
+        return provider === "openai" ? OPENAI_API_URL : ZHIPU_API_URL;
+    }
+
+    function getProviderHeaders(provider, apiKey) {
+        if (provider === "openai") {
+            return {
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${apiKey}`,
+                "OpenAI-Client": "CoolAuxv"
+            };
+        }
+        return {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+        };
+    }
+
+    function buildZhipuTextPayload(model, systemPrompt, text) {
+        return {
+            model: model,
+            stream: true,
+            messages: [
+                { role: "system", content: systemPrompt },
+                { role: "user", content: text }
+            ]
+        };
+    }
+
+    function buildOpenaiTextPayload(model, systemPrompt, text) {
+        const input = [
+            buildProviderMessage("openai", "system", systemPrompt, ""),
+            buildProviderMessage("openai", "user", text, "")
+        ].filter(Boolean);
+        return {
+            model: model,
+            stream: true,
+            input: input
+        };
+    }
+
+    function buildZhipuVisionPayload(model, textPrompt, imageBase64) {
+        return {
+            model: model,
+            messages: [
+                {
+                    role: "user",
+                    content: [
+                        { type: "image_url", image_url: { url: imageBase64 } },
+                        { type: "text", text: textPrompt }
+                    ]
+                }
+            ],
+            stream: true
+        };
+    }
+
+    function buildOpenaiVisionPayload(model, textPrompt, imageBase64) {
+        const input = [
+            buildProviderMessage("openai", "user", textPrompt, imageBase64)
+        ].filter(Boolean);
+        return {
+            model: model,
+            stream: true,
+            input: input
+        };
+    }
+
+    function buildZhipuChatPayload(model, messages) {
+        return {
+            model: model,
+            stream: true,
+            messages: messages
+        };
+    }
+
+    function buildOpenaiChatPayload(model, messages) {
+        return {
+            model: model,
+            stream: true,
+            input: messages
+        };
+    }
+
+    function appendChatHistoryRecord(role, text, imageBase64) {
+        if (!role) return;
+        chatHistoryRecords.push({
+            role: role,
+            text: text || "",
+            imageBase64: imageBase64 || ""
+        });
+    }
+
+    function buildChatMessagesForProvider(provider) {
+        const messages = [];
+        chatHistoryRecords.forEach((record) => {
+            const message = buildProviderMessage(provider, record.role, record.text, record.imageBase64);
+            if (message) messages.push(message);
+        });
+        return messages;
+    }
+
+    function syncChatProvider(provider) {
+        if (!chatSessionStarted) return;
+        const targetProvider = resolveProvider(provider || DEFAULT_PROVIDER);
+        if (chatProvider === targetProvider && chatMessages.length) return;
+        chatProvider = targetProvider;
+        chatMessages = buildChatMessagesForProvider(targetProvider);
     }
 
     function formatChatUserBlock(userText, imageId, isFirst) {
@@ -2190,13 +2555,15 @@
         chatImageStore = {};
         chatImageCounter = 0;
         const config = getActiveConfig();
+        const provider = config.provider;
+        chatHistoryRecords = [];
 
         historyRecords.forEach((entry) => {
-            if (entry.systemPrompt) chatMessages.push({ role: "system", content: entry.systemPrompt });
-
-            const userContent = buildUserMessageContent(entry.userContentText, entry.imageBase64);
-            if (userContent !== "") chatMessages.push({ role: "user", content: userContent });
-            if (entry.assistantText) chatMessages.push({ role: "assistant", content: entry.assistantText });
+            if (entry.systemPrompt) appendChatHistoryRecord("system", entry.systemPrompt, "");
+            if (entry.userContentText || entry.imageBase64) {
+                appendChatHistoryRecord("user", entry.userContentText, entry.imageBase64);
+            }
+            if (entry.assistantText) appendChatHistoryRecord("assistant", entry.assistantText, "");
 
             let imageId = null;
             if (entry.imageBase64) {
@@ -2211,10 +2578,12 @@
             }
         });
 
-        const chatPrompt = (config.promptContinuousChat || "").trim();
-        if (chatPrompt) {
-            chatMessages.push({ role: "system", content: chatPrompt });
+        chatSystemPrompt = (config.promptContinuousChat || "").trim();
+        if (chatSystemPrompt) {
+            appendChatHistoryRecord("system", chatSystemPrompt, "");
         }
+        chatMessages = buildChatMessagesForProvider(provider);
+        chatProvider = provider;
     }
 
     function updateChatStreamText() {
@@ -2251,7 +2620,12 @@
     function finalizeChatResponse(actionToken) {
         if (!chatSessionStarted) return;
         if (chatAssistantBuffer) {
-            chatMessages.push({ role: "assistant", content: chatAssistantBuffer });
+            const config = getActiveConfig();
+            const provider = config.provider;
+            logAiResponse(provider, config.modelVision, "chat", chatAssistantBuffer);
+            const assistantMessage = buildProviderMessage(provider, "assistant", chatAssistantBuffer, "");
+            if (assistantMessage) chatMessages.push(assistantMessage);
+            appendChatHistoryRecord("assistant", chatAssistantBuffer, "");
             chatDisplayBuffer += chatPendingAssistantPrefix + chatAssistantBuffer;
         }
         chatAssistantBuffer = "";
@@ -2286,7 +2660,10 @@
             chatDisplayBuffer = assistantBlock.replace(/^\n+/, "");
         }
         if (recordAsAssistant) {
-            chatMessages.push({ role: "assistant", content: recordContent });
+            const provider = getActiveConfig().provider;
+            const assistantMessage = buildProviderMessage(provider, "assistant", recordContent, "");
+            if (assistantMessage) chatMessages.push(assistantMessage);
+            appendChatHistoryRecord("assistant", recordContent, "");
         }
         streamTextBuffer = chatDisplayBuffer;
         lastRenderedText = "";
@@ -2295,12 +2672,15 @@
 
     function clearChatSessionState() {
         chatMessages = [];
+        chatHistoryRecords = [];
         chatDisplayBuffer = "";
         chatSessionStarted = false;
         chatImageStore = {};
         chatImageCounter = 0;
         chatAssistantBuffer = "";
         chatPendingAssistantPrefix = "";
+        chatProvider = "";
+        chatSystemPrompt = "";
         streamMode = "single";
         streamTextBuffer = "";
         lastRenderedText = "";
@@ -2309,12 +2689,15 @@
     function clearConversationState() {
         historyRecords = [];
         chatMessages = [];
+        chatHistoryRecords = [];
         chatDisplayBuffer = "";
         chatSessionStarted = false;
         chatImageStore = {};
         chatImageCounter = 0;
         chatAssistantBuffer = "";
         chatPendingAssistantPrefix = "";
+        chatProvider = "";
+        chatSystemPrompt = "";
         streamMode = "single";
         streamTextBuffer = "";
         streamReasoningBuffer = "";
@@ -3083,11 +3466,12 @@
         const text = input.value.trim();
         const resultDiv = popup.querySelector("#coolauxv-result");
         const config = getActiveConfig();
+        const provider = config.provider;
         streamMode = "single";
 
-        if (config.apiKey === DEFAULT_API_KEY || !config.apiKey) {
+        if (isMissingApiKey(provider, config.apiKey)) {
             if (!shouldSuppressResultError()) {
-                showNoKeyError(popup.querySelector("#coolauxv-result"));
+                showNoKeyError(popup.querySelector("#coolauxv-result"), provider);
             }
             return;
         }
@@ -3107,13 +3491,14 @@
         const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle-container");
 
         streamTextBuffer = ""; streamReasoningBuffer = ""; lastRenderedText = ""; lastRenderedReasoning = ""; hasReasoning = false;
+        resetStreamParsingState();
         resultDiv.innerHTML = "<span style='color:#888'>⏳ AI 思考中...</span>";
         reasoningDiv.innerHTML = ""; reasoningWrapper.style.display = "none"; reasoningToggle.style.display = "none";
 
         if (abortController) abortController.abort();
         if (gmRequest && gmRequest.abort) gmRequest.abort();
 
-        const url = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+        const url = getProviderRequestUrl(provider);
         const systemPrompt = mode === "explain" ? config.promptExplain : config.promptTrans;
         const historyEntry = {
             systemPrompt: systemPrompt,
@@ -3123,24 +3508,19 @@
             assistantText: ""
         };
 
-        const payload = {
-            model: config.modelName,
-            stream: true,
-            messages: [{ role: "system", content: systemPrompt }, { role: "user", content: text }]
-        };
+        const payload = provider === "openai"
+            ? buildOpenaiTextPayload(config.modelName, systemPrompt, text)
+            : buildZhipuTextPayload(config.modelName, systemPrompt, text);
 
         // 序列化并打印请求体 (JSON)
         const requestBody = JSON.stringify(payload);
-        Logger.debug("🚀 [API Request Data]", requestBody);
+        Logger.debug(`🚀 [${provider} Request Data]`, requestBody);
 
-        const headers = {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${config.apiKey}`
-        };
+        const headers = getProviderHeaders(provider, config.apiKey);
 
         // 策略 A: Fetch
         try {
-            Logger.info(`Fetch Model: ${config.modelName}`);
+            Logger.info(`Fetch ${provider} Model: ${config.modelName}`);
             abortController = new AbortController();
             const response = await fetch(url, {
                 method: "POST",
@@ -3151,8 +3531,15 @@
 
             if (!response.ok) {
                 if (response.status === 429) {
+                    let apiErr = null;
+                    try {
+                        const errJson = await response.json();
+                        apiErr = parseApiError(errJson);
+                    } catch (e) { }
                     if (!shouldSuppressResultError()) {
-                        resultDiv.innerHTML = get429ErrorHTML();
+                        resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
+                            ? getQuotaErrorHTML(provider, apiErr.message)
+                            : get429ErrorHTML();
                     }
                     autoExpandChatIfEnabled(actionToken);
                     return;
@@ -3161,7 +3548,6 @@
                 throw new Error(`HTTP ${response.status}`);
             }
 
-            resultDiv.innerHTML = "";
             startRenderLoop();
 
             const reader = response.body.getReader();
@@ -3175,10 +3561,14 @@
                 buffer += chunk;
                 const lines = buffer.split(/\r?\n/);
                 buffer = lines.pop();
-                for (const line of lines) processLine(line);
+                for (const line of lines) processStreamLine(provider, line);
+            }
+            if (buffer && buffer.trim()) {
+                processStreamLine(provider, buffer);
             }
             stopRenderLoop();
             historyEntry.assistantText = streamTextBuffer;
+            logAiResponse(provider, config.modelName, mode, streamTextBuffer);
             recordHistoryEntry(historyEntry);
             autoExpandChatIfEnabled(actionToken);
             return;
@@ -3187,7 +3577,7 @@
             Logger.warn("Fetch 失败/跨域，准备降级。", err);
             if (err.message === "AUTH_INVALID") {
                 if (!shouldSuppressResultError()) {
-                    showInvalidKeyError(resultDiv);
+                    showInvalidKeyError(resultDiv, provider);
                 }
                 autoExpandChatIfEnabled(actionToken);
                 return;
@@ -3196,7 +3586,7 @@
         }
 
         // 策略 B: GM_xmlhttpRequest
-        Logger.info(`GM_xmlhttpRequest Model: ${config.modelName}`);
+        Logger.info(`GM_xmlhttpRequest ${provider} Model: ${config.modelName}`);
 
         let gmStreamBuffer = "";
         let isStreamModeActive = false;
@@ -3211,7 +3601,6 @@
             onloadstart: (res) => {
                 if (res.response && res.response.getReader) {
                     isStreamModeActive = true;
-                    resultDiv.innerHTML = "";
                     startRenderLoop();
 
                     const reader = res.response.getReader();
@@ -3226,13 +3615,17 @@
                                 gmStreamBuffer += chunk;
                                 const lines = gmStreamBuffer.split(/\r?\n/);
                                 gmStreamBuffer = lines.pop();
-                                for (const line of lines) processLine(line);
+                                for (const line of lines) processStreamLine(provider, line);
                             }
                         } catch (e) {
                             Logger.error("Stream Read Error:", e);
                         } finally {
+                            if (gmStreamBuffer && gmStreamBuffer.trim()) {
+                                processStreamLine(provider, gmStreamBuffer);
+                            }
                             stopRenderLoop();
                             historyEntry.assistantText = streamTextBuffer;
+                            logAiResponse(provider, config.modelName, mode, streamTextBuffer);
                             recordHistoryEntry(historyEntry);
                             autoExpandChatIfEnabled(actionToken);
                         }
@@ -3246,8 +3639,11 @@
 
                     if (res.status === 429) {
                         const resultDiv = popup.querySelector("#coolauxv-result");
+                        const apiErr = parseApiError(res.responseText);
                         if (resultDiv && !shouldSuppressResultError()) {
-                            resultDiv.innerHTML = get429ErrorHTML();
+                            resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
+                                ? getQuotaErrorHTML(provider, apiErr.message)
+                                : get429ErrorHTML();
                         }
                         autoExpandChatIfEnabled(actionToken);
                         return;
@@ -3257,24 +3653,30 @@
 
                     if (res.status === 401 || res.status === 403) {
                         if (!shouldSuppressResultError()) {
-                            showInvalidKeyError(resultDiv);
+                            showInvalidKeyError(resultDiv, provider);
                         }
                         autoExpandChatIfEnabled(actionToken);
                         return;
                     }
 
                     if (res.status !== 200) {
-                        let gmErrMsg = `HTTP ${res.status}`;
-                        try { const d = JSON.parse(fullText); if (d.error) gmErrMsg = `API Error: ${d.error.message}`; } catch (e) { }
-                        resultDiv.innerHTML = `<span style='color:red'>${gmErrMsg}</span>`;
+                        const apiErr = parseApiError(fullText);
+                        if (apiErr && isQuotaError(apiErr)) {
+                            resultDiv.innerHTML = getQuotaErrorHTML(provider, apiErr.message);
+                        } else {
+                            let gmErrMsg = `HTTP ${res.status}`;
+                            if (apiErr && apiErr.message) gmErrMsg = `API Error: ${apiErr.message}`;
+                            resultDiv.innerHTML = `<span style='color:red'>${escapeHTML(gmErrMsg)}</span>`;
+                        }
                         autoExpandChatIfEnabled(actionToken);
                         return;
                     }
                     if (fullText) {
                         const lines = fullText.split(/\r?\n/);
-                        for (const line of lines) processLine(line);
+                        for (const line of lines) processStreamLine(provider, line);
                         renderContent();
                         historyEntry.assistantText = streamTextBuffer;
+                        logAiResponse(provider, config.modelName, mode, streamTextBuffer);
                         recordHistoryEntry(historyEntry);
                         autoExpandChatIfEnabled(actionToken);
                     } else {
@@ -3322,16 +3724,103 @@
         renderContent();
     }
 
-    function processLine(line) {
+    function resetStreamParsingState() {
+        streamErrorHandled = false;
+        openaiStreamHasDelta = false;
+        openaiStreamHasFull = false;
+    }
+
+    function abortActiveStream() {
+        if (abortController) abortController.abort();
+        if (gmRequest && gmRequest.abort) gmRequest.abort();
+    }
+
+    function escapeHTML(str) {
+        return String(str).replace(/[&<>"']/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
+    }
+
+    function parseApiError(payload) {
+        if (!payload) return null;
+        let data = payload;
+        if (typeof payload === "string") {
+            try {
+                data = JSON.parse(payload);
+            } catch (e) {
+                return null;
+            }
+        }
+        if (!data || typeof data !== "object") return null;
+        if (data.error) {
+            const err = data.error || {};
+            return {
+                type: err.type || err.code || "",
+                message: err.message || err.msg || "",
+                raw: err
+            };
+        }
+        if (data.msg && data.code) {
+            return { type: data.code, message: data.msg, raw: data };
+        }
+        return null;
+    }
+
+    function isQuotaError(err) {
+        if (!err) return false;
+        const type = String(err.type || "").toLowerCase();
+        const message = String(err.message || "").toLowerCase();
+        return type === "insufficient_quota"
+            || message.includes("insufficient_quota")
+            || message.includes("exceeded your current quota");
+    }
+
+    function logAiResponse(provider, model, mode, text) {
+        const output = (text || "").trim();
+        if (!output) return;
+        const label = [provider, model, mode].filter(Boolean).join("/");
+        const prefix = label ? `AI Response (${label})` : "AI Response";
+        Logger.info(prefix, output);
+    }
+
+    function handleApiError(provider, err) {
+        if (!err || streamErrorHandled) return false;
+        streamErrorHandled = true;
+        Logger.error("API Error:", err);
+        const resultDiv = popup ? popup.querySelector("#coolauxv-result") : null;
+        const rawMessage = err.message || "Unknown error";
+        const safeMessage = escapeHTML(rawMessage);
+        const html = isQuotaError(err)
+            ? getQuotaErrorHTML(provider, rawMessage)
+            : `<span style='color:red'>API Error: ${safeMessage}</span>`;
+
+        if (streamMode === "chat") {
+            appendChatError(html, { allowHtml: true, recordAsAssistant: true, recordContent: rawMessage });
+        } else if (resultDiv && !shouldSuppressResultError()) {
+            resultDiv.innerHTML = html;
+        }
+
+        abortActiveStream();
+        stopRenderLoop();
+        return true;
+    }
+
+    function processZhipuStreamLine(line) {
         line = line.trim();
         if (!line) return;
-        if (line.startsWith("data:")) {
-            const jsonStr = line.slice(5).trim();
-            if (jsonStr === "[DONE]") return;
-            try {
-                const data = JSON.parse(jsonStr);
-                const delta = data.choices[0]?.delta;
-                const isChatMode = streamMode === "chat";
+        if (!line.startsWith("data:")) {
+            if (line.startsWith("{")) {
+                const apiErr = parseApiError(line);
+                if (apiErr && handleApiError("zhipu", apiErr)) return;
+            }
+            return;
+        }
+        const jsonStr = line.slice(5).trim();
+        if (jsonStr === "[DONE]") return;
+        try {
+            const data = JSON.parse(jsonStr);
+            const apiErr = parseApiError(data);
+            if (apiErr && handleApiError("zhipu", apiErr)) return;
+            const delta = data.choices[0]?.delta;
+            const isChatMode = streamMode === "chat";
 
                 // --- 1. 处理推理内容 (自动展开逻辑) ---
                 if (delta?.reasoning_content) {
@@ -3362,10 +3851,109 @@
                         streamTextBuffer += delta.content;
                     }
                 }
+        } catch (e) {
+            Logger.debug("JSON Parse Error (Ignore)", line);
+        }
+    }
+
+    function extractOpenaiOutputText(payload) {
+        let data = payload;
+        if (typeof payload === "string") {
+            try {
+                data = JSON.parse(payload);
             } catch (e) {
-                Logger.debug("JSON Parse Error (Ignore)", line);
+                return "";
             }
         }
+        if (!data || typeof data !== "object") return "";
+        if (typeof data.output_text === "string") return data.output_text;
+        if (!Array.isArray(data.output)) return "";
+        let text = "";
+        data.output.forEach((item) => {
+            if (!item || item.type !== "message" || !Array.isArray(item.content)) return;
+            item.content.forEach((block) => {
+                if (block && block.type === "output_text" && block.text) {
+                    text += block.text;
+                }
+            });
+        });
+        return text;
+    }
+
+    function processOpenaiStreamLine(line) {
+        line = line.trim();
+        if (!line) return;
+        if (streamErrorHandled) return;
+        if (!line.startsWith("data:")) {
+            if (line.startsWith("{")) {
+                const apiErr = parseApiError(line);
+                if (apiErr && handleApiError("openai", apiErr)) return;
+                const fullText = extractOpenaiOutputText(line);
+                if (fullText) {
+                    const isChatMode = streamMode === "chat";
+                    if (isChatMode) {
+                        chatAssistantBuffer += fullText;
+                        updateChatStreamText();
+                    } else {
+                        streamTextBuffer += fullText;
+                    }
+                    openaiStreamHasFull = true;
+                }
+            }
+            return;
+        }
+        const jsonStr = line.slice(5).trim();
+        if (jsonStr === "[DONE]") return;
+        try {
+            const data = JSON.parse(jsonStr);
+            const apiErr = parseApiError(data);
+            if (apiErr && handleApiError("openai", apiErr)) return;
+            if (data.type === "response.output_text.delta") {
+                const delta = data.delta || "";
+                if (!delta) return;
+                openaiStreamHasDelta = true;
+                const isChatMode = streamMode === "chat";
+                if (isChatMode) {
+                    chatAssistantBuffer += delta;
+                    updateChatStreamText();
+                } else {
+                    streamTextBuffer += delta;
+                }
+            } else if (data.type === "response.output_text.done" && data.text) {
+                if (openaiStreamHasDelta || openaiStreamHasFull) return;
+                const isChatMode = streamMode === "chat";
+                if (isChatMode) {
+                    chatAssistantBuffer += data.text;
+                    updateChatStreamText();
+                } else {
+                    streamTextBuffer += data.text;
+                }
+                openaiStreamHasFull = true;
+            } else if (data.type === "response.completed" && data.response) {
+                if (openaiStreamHasDelta || openaiStreamHasFull) return;
+                const fullText = extractOpenaiOutputText(data.response);
+                if (fullText) {
+                    const isChatMode = streamMode === "chat";
+                    if (isChatMode) {
+                        chatAssistantBuffer += fullText;
+                        updateChatStreamText();
+                    } else {
+                        streamTextBuffer += fullText;
+                    }
+                    openaiStreamHasFull = true;
+                }
+            }
+        } catch (e) {
+            Logger.debug("OpenAI JSON Parse Error (Ignore)", line);
+        }
+    }
+
+    function processStreamLine(provider, line) {
+        if (provider === "openai") {
+            processOpenaiStreamLine(line);
+            return;
+        }
+        processZhipuStreamLine(line);
     }
 
     // ========================================================================
@@ -3878,9 +4466,9 @@
             assistantText: ""
         };
 
-        if (!config.apiKey || config.apiKey === DEFAULT_API_KEY) {
+        if (isMissingApiKey(provider, config.apiKey)) {
             if (!shouldSuppressResultError()) {
-                showNoKeyError(resultDiv);
+                showNoKeyError(resultDiv, provider);
             }
             return;
         }
@@ -3889,41 +4477,37 @@
         const actionToken = ++activeActionToken;
 
         streamTextBuffer = ""; streamReasoningBuffer = ""; lastRenderedText = ""; lastRenderedReasoning = ""; hasReasoning = false;
+        resetStreamParsingState();
 
         // 设置 Loading
         const loadingHTML = "<span style='color:#888; display:flex; align-items:center; gap:6px;'>⏳ <span class='coolauxv-pulse'>AI 思考中...</span></span>";
         resultDiv.innerHTML = loadingHTML;
         reasoningDiv.innerHTML = loadingHTML;
 
-        // 强制显示推理框
-        setReasoningAnimatedVisibility(true);
-        popup.querySelector("#coolauxv-reasoning-toggle-container").style.display = "flex";
-        popup.querySelector("#coolauxv-separator").style.display = "flex";
+        if (provider === "openai") {
+            if (reasoningWrapper) reasoningWrapper.style.display = "none";
+            const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle-container");
+            if (reasoningToggle) reasoningToggle.style.display = "none";
+            const separator = popup.querySelector("#coolauxv-separator");
+            if (separator) separator.style.display = "none";
+        } else {
+            // 强制显示推理框
+            setReasoningAnimatedVisibility(true);
+            popup.querySelector("#coolauxv-reasoning-toggle-container").style.display = "flex";
+            popup.querySelector("#coolauxv-separator").style.display = "flex";
+        }
 
-        const url = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+        const url = getProviderRequestUrl(provider);
 
-        const payload = {
-            model: config.modelVision,
-            messages: [
-                {
-                    role: "user",
-                    content: [
-                        { type: "image_url", image_url: { url: imageBase64 } },
-                        { type: "text", text: textPrompt }
-                    ]
-                }
-            ],
-            stream: true
-        };
+        const payload = provider === "openai"
+            ? buildOpenaiVisionPayload(config.modelVision, textPrompt, imageBase64)
+            : buildZhipuVisionPayload(config.modelVision, textPrompt, imageBase64);
 
         // 打印 JSON 请求体
         const requestBody = JSON.stringify(payload);
-        Logger.debug("📸 [Vision API Data]", requestBody);
+        Logger.debug(`📸 [${provider} Vision Request]`, requestBody);
 
-        const headers = {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${config.apiKey}`
-        };
+        const headers = getProviderHeaders(provider, config.apiKey);
 
         if (abortController) abortController.abort();
         if (gmRequest && gmRequest.abort) gmRequest.abort();
@@ -3940,8 +4524,6 @@
 
             onloadstart: (res) => {
                 if (res.response && res.response.getReader) {
-                    resultDiv.innerHTML = "";
-                    reasoningDiv.innerHTML = "";
                     startRenderLoop();
                     const reader = res.response.getReader();
                     const decoder = new TextDecoder("utf-8");
@@ -3956,14 +4538,18 @@
                                 buffer += chunk;
                                 const lines = buffer.split(/\r?\n/);
                                 buffer = lines.pop();
-                                for (const line of lines) processLine(line);
+                                for (const line of lines) processStreamLine(provider, line);
                             }
                         } catch (e) {
                             Logger.error("Stream Error", e);
                             resultDiv.innerHTML += `<br><span style='color:red'>流读取错误: ${e.message}</span>`;
                         } finally {
+                            if (buffer && buffer.trim()) {
+                                processStreamLine(provider, buffer);
+                            }
                             stopRenderLoop();
                             historyEntry.assistantText = streamTextBuffer;
+                            logAiResponse(provider, config.modelVision, mode, streamTextBuffer);
                             recordHistoryEntry(historyEntry);
                             autoExpandChatIfEnabled(actionToken);
                         }
@@ -3974,17 +4560,36 @@
                 if (res.status === 429) {
                     stopRenderLoop();
                     if (!shouldSuppressResultError()) {
-                        resultDiv.innerHTML = get429ErrorHTML();
+                        const apiErr = parseApiError(res.responseText);
+                        resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
+                            ? getQuotaErrorHTML(provider, apiErr.message)
+                            : get429ErrorHTML();
                     }
                     reasoningWrapper.style.display = "none";
                     autoExpandChatIfEnabled(actionToken);
                     return;
                 }
 
+                if (res.status === 401 || res.status === 403) {
+                    stopRenderLoop();
+                    if (!shouldSuppressResultError()) {
+                        showInvalidKeyError(resultDiv, provider);
+                    }
+                    if (reasoningWrapper) reasoningWrapper.style.display = "none";
+                    autoExpandChatIfEnabled(actionToken);
+                    return;
+                }
+
                 if (res.status !== 200) {
                     stopRenderLoop();
-                    Logger.error("API Error", res.responseText);
-                    resultDiv.innerHTML = `<span style='color:red'>API Error ${res.status}: ${res.responseText}</span>`;
+                    const apiErr = parseApiError(res.responseText);
+                    if (apiErr && isQuotaError(apiErr)) {
+                        resultDiv.innerHTML = getQuotaErrorHTML(provider, apiErr.message);
+                    } else {
+                        Logger.error("API Error", res.responseText);
+                        const detail = apiErr && apiErr.message ? apiErr.message : res.responseText;
+                        resultDiv.innerHTML = `<span style='color:red'>API Error ${res.status}: ${escapeHTML(detail)}</span>`;
+                    }
                     autoExpandChatIfEnabled(actionToken);
                 }
             },
@@ -4010,8 +4615,9 @@
         }
 
         const config = getActiveConfig();
-        if (config.apiKey === DEFAULT_API_KEY || !config.apiKey) {
-            appendChatError(getNoKeyErrorHTML(), { allowHtml: true });
+        const provider = config.provider;
+        if (isMissingApiKey(provider, config.apiKey)) {
+            appendChatError(getNoKeyErrorHTML(provider), { allowHtml: true });
             return;
         }
 
@@ -4019,6 +4625,7 @@
         const actionToken = ++activeActionToken;
 
         startChatSessionIfNeeded();
+        syncChatProvider(provider);
 
         const imageId = hasImage ? `chat-img-${++chatImageCounter}` : null;
         if (imageId) chatImageStore[imageId] = chatCapturedImageBase64;
@@ -4032,8 +4639,9 @@
         renderContent();
 
         const messageText = userText || (hasImage ? config.promptVision : "");
-        const userMessageContent = buildUserMessageContent(messageText, hasImage ? chatCapturedImageBase64 : "");
-        chatMessages.push({ role: "user", content: userMessageContent });
+        appendChatHistoryRecord("user", messageText, hasImage ? chatCapturedImageBase64 : "");
+        const userMessage = buildProviderMessage(provider, "user", messageText, hasImage ? chatCapturedImageBase64 : "");
+        if (userMessage) chatMessages.push(userMessage);
 
         chatInput.value = "";
         chatCapturedImageBase64 = "";
@@ -4045,6 +4653,7 @@
         streamReasoningBuffer = "";
         lastRenderedReasoning = "";
         hasReasoning = false;
+        resetStreamParsingState();
 
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
@@ -4060,20 +4669,15 @@
 
         streamMode = "chat";
 
-        const url = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
-        const payload = {
-            model: config.modelVision,
-            stream: true,
-            messages: chatMessages
-        };
+        const url = getProviderRequestUrl(provider);
+        const payload = provider === "openai"
+            ? buildOpenaiChatPayload(config.modelVision, chatMessages)
+            : buildZhipuChatPayload(config.modelVision, chatMessages);
 
         const requestBody = JSON.stringify(payload);
-        Logger.debug("💬 [Chat API Data]", requestBody);
+        Logger.debug(`💬 [${provider} Chat Request]`, requestBody);
 
-        const headers = {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${config.apiKey}`
-        };
+        const headers = getProviderHeaders(provider, config.apiKey);
 
         gmRequest = GM_xmlhttpRequest({
             method: "POST",
@@ -4100,12 +4704,15 @@
                                 buffer += chunk;
                                 const lines = buffer.split(/\r?\n/);
                                 buffer = lines.pop();
-                                for (const line of lines) processLine(line);
+                                for (const line of lines) processStreamLine(provider, line);
                             }
                         } catch (e) {
                             Logger.error("Chat Stream Error", e);
                             streamErr = `流读取错误: ${e.message}`;
                         } finally {
+                            if (buffer && buffer.trim()) {
+                                processStreamLine(provider, buffer);
+                            }
                             stopRenderLoop();
                             finalizeChatResponse(actionToken);
                             if (streamErr) appendChatError(streamErr);
@@ -4117,19 +4724,25 @@
                 if (res.status === 429) {
                     stopRenderLoop();
                     finalizeChatResponse(actionToken);
-                    appendChatError(get429ErrorHTML(), { allowHtml: true, recordAsAssistant: true });
+                    const apiErr = parseApiError(res.responseText);
+                    const html = (apiErr && isQuotaError(apiErr))
+                        ? getQuotaErrorHTML(provider, apiErr.message)
+                        : get429ErrorHTML();
+                    appendChatError(html, { allowHtml: true, recordAsAssistant: true });
                     return;
                 }
                 if (res.status === 401 || res.status === 403) {
                     stopRenderLoop();
                     finalizeChatResponse(actionToken);
-                    appendChatError(getInvalidKeyErrorHTML(), { allowHtml: true });
+                    appendChatError(getInvalidKeyErrorHTML(provider), { allowHtml: true });
                     return;
                 }
                 if (res.status !== 200) {
                     stopRenderLoop();
                     finalizeChatResponse(actionToken);
-                    appendChatError(`API Error ${res.status}`);
+                    const apiErr = parseApiError(res.responseText);
+                    const msg = apiErr && apiErr.message ? `API Error: ${apiErr.message}` : `API Error ${res.status}`;
+                    appendChatError(escapeHTML(msg));
                 }
             },
             onerror: () => {
@@ -4145,23 +4758,27 @@
         });
     }
 
-    function getNoKeyErrorHTML() {
+    function getNoKeyErrorHTML(provider) {
+        const label = getProviderLabel(provider);
+        const link = getProviderKeyLink(provider);
         return `
             <div style="color:#e65100; font-weight:bold; padding:10px;">⚠️ 请配置 API KEY</div>
             <div style="font-size:13px; color:#555; padding:0 10px;">
             您尚未配置 API Key，无法使用翻译功能。<br><br>
             1. 点击顶部 <span style="background:#f0f0f0; border-radius:4px; padding:0 4px;">⚙️ 设置</span> 图标。<br>
-            2. 点击 <a href="https://bigmodel.cn/usercenter/proj-mgmt/apikeys" target="_blank" style="color:#3b82f6;">获取 KEY</a> 去智谱平台申请。<br>
+            2. 点击 <a href="${link}" target="_blank" style="color:#3b82f6;">获取 KEY</a> 去 ${label} 平台申请。<br>
             3. 将申请到的 Key 填入设置框并保存。
             </div>
         `;
     }
 
-    function showNoKeyError(container) {
-        if (container) container.innerHTML = getNoKeyErrorHTML();
+    function showNoKeyError(container, provider) {
+        if (container) container.innerHTML = getNoKeyErrorHTML(provider);
     }
 
-    function getInvalidKeyErrorHTML() {
+    function getInvalidKeyErrorHTML(provider) {
+        const label = getProviderLabel(provider);
+        const link = getProviderKeyLink(provider);
         return `
             <div style="color:#d32f2f; font-weight:bold; padding:10px;">🚫 API KEY 无效</div>
             <div style="font-size:13px; color:#555; padding:0 10px;">
@@ -4170,13 +4787,30 @@
             1. Key 已过期或被撤销。<br>
             2. 复制时多复制了空格。<br>
             3. 账户余额不足。<br><br>
-            请检查设置或重新 <a href="https://bigmodel.cn/usercenter/proj-mgmt/apikeys" target="_blank" style="color:#3b82f6;">获取 KEY</a>。
+            请检查设置或重新 <a href="${link}" target="_blank" style="color:#3b82f6;">获取 KEY</a>（${label}）。
             </div>
         `;
     }
 
-    function showInvalidKeyError(container) {
-        if (container) container.innerHTML = getInvalidKeyErrorHTML();
+    function showInvalidKeyError(container, provider) {
+        if (container) container.innerHTML = getInvalidKeyErrorHTML(provider);
+    }
+
+    function getQuotaErrorHTML(provider, message) {
+        const label = getProviderLabel(provider);
+        const detail = message ? `<div style="font-size:12px; color:#999; margin-top:6px;">${escapeHTML(message)}</div>` : "";
+        return `
+            <div style="border: 1px solid #f5c6cb; background-color: #fff5f5; padding: 10px; border-radius: 6px; margin-top: 5px;">
+                <div style="display:flex; align-items:center; color: #b71c1c; font-weight: bold; margin-bottom: 5px;">
+                    <span style="font-size:18px; margin-right:6px;">⛔</span> ${label} 额度不足 (insufficient_quota)
+                </div>
+                <div style="font-size: 13px; color: #666; line-height: 1.5;">
+                    当前账户额度不足或已用尽。解决方案：更换模型或增加额度。<br>
+                    <span style="font-size:12px; color:#999;">(Suggestion: switch model or add quota)</span>
+                </div>
+                ${detail}
+            </div>
+        `;
     }
 
     function get429ErrorHTML() {
