@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v13.1
+// @version      v13.2
 // @description  使用不同提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v13.1 更新日志] 回答时会显示模型提供商和类型了。支持 OpenAI 模型、聊天中动态切换模型与提供商（共享聊天记录）。
+// @changelog    [v13.2 更新日志] 修复v1/v2识屏在某些场景下失效的问题。统一所有输入框的css布局。连续对话输入框自动展开更智慧了。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @match        https://mozilla.github.io/pdf.js/web/viewer.html*
@@ -15,6 +15,7 @@
 // @grant        GM_deleteValue
 // @grant        GM_setClipboard
 // @grant        GM_getResourceText
+// @grant        GM_listValues
 // @require      https://cdn.jsdelivr.net/npm/marked/marked.min.js
 // @require      https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js
 // @require      https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js
@@ -71,7 +72,7 @@
     const LOG_PRESETS = ["debug", "info", "warn", "error", "none"];
 
     const ZHIPU_DEFAULT_API_KEY = "1145141919810哼哼啊啊啊啊啊";
-    const OPENAI_DEFAULT_API_KEY = "sk-xxxxxxx";
+    const OPENAI_DEFAULT_API_KEY = "sk-1145141919810";
     const ZHIPU_DEFAULT_MODEL_NAME = ZHIPU_TEXT_MODELS[0].id;
     const OPENAI_DEFAULT_MODEL_NAME = OPENAI_TEXT_MODELS[0].id;
     const DEFAULT_LOG_LEVEL = "none";
@@ -96,6 +97,11 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v13.2 更新日志
+        ## 🛠️ Bug修复
+        *   修复v1/v2识屏在某些场景下失效的问题。
+        *   统一所有输入框的css布局。
+        *   连续对话输入框自动展开更智慧了。
         v13.1 更新日志
         ## ✨ 功能更新
         *   回答时会显示模型的提供商和类型了。
@@ -105,6 +111,7 @@
         *   聊天过程中可动态切换模型与提供商。
         *   切换时共享同一套聊天记录与上下文。
     `;
+
 
     // ========================================================================
     // 日志工具
@@ -355,20 +362,48 @@
     /* 配置输入框 */
     .coolauxv-input-wrapper { position: relative; width: 100%; }
 
+    /* ============================
+    统一输入框样式 (Unified Inputs)
+    ============================ */
+    #coolauxv-input,
+    #coolauxv-chat-input,
     .coolauxv-setting-input {
-        width: 100%; padding: 8px; padding-right: 30px;
-        border: 1px solid #ddd; border-radius: 6px;
-        font-size: 13px; outline: none; transition: border 0.2s;
-        font-family: inherit; text-align: left !important;
+        width: 100%;
+        padding: 8px;
+        padding-right: 30px; /* 统一预留右侧图标空间 */
+        border: 1px solid #ddd;
+        border-radius: 8px; /* 统一圆角 */
+        font-size: 14px;    /* 统一字号 */
+        outline: none;
+        transition: border 0.2s, box-shadow 0.2s, background-color 0.2s;
+        font-family: inherit;
+        box-sizing: border-box;
+        background-color: #fff;
+        color: #333;
+        text-align: left !important;
+        line-height: 1.5;
     }
-    .coolauxv-setting-input:focus { border-color: #3b82f6; }
+
+    /* 聚焦状态 (高亮 + 淡淡的光晕) */
+    #coolauxv-input:focus,
+    #coolauxv-chat-input:focus,
+    .coolauxv-setting-input:focus {
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+    }
+
+    /* 各自独有的布局属性 (Specific Layouts) */
+    #coolauxv-input { height: 70px; resize: none; }
+    #coolauxv-chat-input { min-height: 70px; max-height: 60vh; resize: vertical !important; overflow: auto; }
+    .coolauxv-fixed-input { resize: none; }
+    .coolauxv-resizable-input { resize: vertical; min-height: 60px; max-height: 300px; }
+
 
     .coolauxv-clear-icon {
         position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
         cursor: pointer; color: #ccc; font-weight: bold; font-size: 16px;
         line-height: 1; display: none;
     }
-    .coolauxv-setting-input:not(:placeholder-shown) + .coolauxv-clear-icon { display: block; }
 
     .coolauxv-fixed-input { resize: none; }
     .coolauxv-read-only { background-color: #f9fafb; color: #666; cursor: default; }
@@ -527,19 +562,6 @@
         transform: translateY(-4px);
         pointer-events: none;
     }
-    #coolauxv-chat-input {
-        width: 100%;
-        min-height: 70px;
-        max-height: 60vh;
-        resize: vertical !important;
-        overflow: auto;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 8px;
-        font-size: 14px;
-        box-sizing: border-box;
-        font-family: inherit;
-    }
     #coolauxv-chat-actions { display: flex; }
     #coolauxv-chat-actions > .coolauxv-action-btn { margin-right: 10px; }
     #coolauxv-chat-actions > .coolauxv-action-btn:last-child { margin-right: 0; }
@@ -692,30 +714,24 @@
         border-bottom: 1px solid rgba(255, 255, 255, 0.3) !important;
     }
 
-    /* 3. 首页输入框：高对比度 + 气泡感 */
-    .coolauxv-blur-glass-enabled #coolauxv-input {
+    /* 3. 输入框玻璃特效 (统一) */
+    .coolauxv-blur-glass-enabled #coolauxv-input,
+    .coolauxv-blur-glass-enabled #coolauxv-chat-input,
+    .coolauxv-blur-glass-enabled .coolauxv-setting-input {
         background-color: rgba(255, 255, 255, 0.75) !important;
         border: 1px solid rgba(255, 255, 255, 0.6) !important;
         box-shadow: inset 0 1px 4px rgba(0,0,0,0.05);
         color: #000 !important;
     }
-    .coolauxv-blur-glass-enabled #coolauxv-input:focus {
+    .coolauxv-blur-glass-enabled #coolauxv-input:focus,
+    .coolauxv-blur-glass-enabled #coolauxv-chat-input:focus,
+    .coolauxv-blur-glass-enabled .coolauxv-setting-input:focus {
         background-color: rgba(255, 255, 255, 0.95) !important;
+        border-color: #3b82f6 !important;
         box-shadow: 0 0 8px rgba(255,255,255,0.8) !important;
     }
 
-    /* 4. 设置页面的输入框：液态玻璃风格 */
-    .coolauxv-blur-glass-enabled .coolauxv-setting-input {
-        background-color: rgba(255, 255, 255, 0.6) !important;
-        border: 1px solid rgba(255, 255, 255, 0.5) !important;
-        transition: all 0.2s;
-    }
-    .coolauxv-blur-glass-enabled .coolauxv-setting-input:focus {
-        background-color: rgba(255, 255, 255, 0.9) !important;
-        border-color: #3b82f6 !important;
-    }
-
-    /* 5. 结果显示区：雾白背景 */
+    /* 4. 结果显示区：雾白背景 */
     .coolauxv-blur-glass-enabled #coolauxv-content-container {
         background: transparent !important;
         border: 1px solid rgba(255, 255, 255, 0.4) !important;
@@ -730,7 +746,7 @@
         background-color: rgba(255, 255, 255, 0.75) !important;
     }
 
-    /* 6. 功能按钮：半透明磨砂 */
+    /* 5. 功能按钮：半透明磨砂 */
     .coolauxv-blur-glass-enabled #coolauxv-btn-trans {
         background: rgba(243, 244, 246, 0.65) !important;
         border: 1px solid rgba(255, 255, 255, 0.6) !important;
@@ -789,12 +805,12 @@
         background: rgba(254, 226, 226, 0.8) !important;
     }
 
-    /* 7. 分隔条 */
+    /* 6. 分隔条 */
     .coolauxv-blur-glass-enabled #coolauxv-separator {
         background: rgba(255, 255, 255, 0.5) !important;
     }
 
-    /* 8. 模型按钮样式 (特定) */
+    /* 7. 模型按钮样式 (特定) */
     .coolauxv-model-btn.coolauxv-blur-glass-style-btn {
         background: rgba(220, 245, 255, 0.25) !important;
         backdrop-filter: blur(8px);
@@ -1037,7 +1053,7 @@
     let chatPendingAssistantPrefix = "";
     let chatAssistantLabel = "";
     let isChatCollapsed = true;
-    let updateChatCollapseUI = () => {};
+    let updateChatCollapseUI = () => { };
 
     let lastRenderedText = "";
     let lastRenderedReasoning = "";
@@ -2147,7 +2163,7 @@
             if (typeof GM_setClipboard !== "undefined") {
                 GM_setClipboard(payload, "text");
             } else if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(payload).catch(() => {});
+                navigator.clipboard.writeText(payload).catch(() => { });
             }
             alert("配置已导出并复制到剪贴板。");
         };
@@ -3041,6 +3057,27 @@
         if (reasoningToggle) reasoningToggle.onchange = (e) => {
             isShowReasoning = e.target.checked;
             renderContent();
+
+            // 新增需求：非输出状态下，联动连续对话框的收起与展开
+            if (!isRendering) {
+                const chatBar = popup.querySelector("#coolauxv-chat-bar");
+                // 仅当连续对话功能启用且显示时才执行
+                if (chatBar && chatBar.style.display !== "none") {
+                    if (isShowReasoning) {
+                        // 展开推理 -> 收起连续对话
+                        if (!isChatCollapsed) {
+                            isChatCollapsed = true;
+                            updateChatCollapseUI();
+                        }
+                    } else {
+                        // 收起推理 -> 展开连续对话
+                        if (isChatCollapsed) {
+                            isChatCollapsed = false;
+                            updateChatCollapseUI();
+                        }
+                    }
+                }
+            }
         };
 
         if (btnTrans) btnTrans.onclick = () => doAction("translate");
@@ -3838,35 +3875,35 @@
             const delta = data.choices[0]?.delta;
             const isChatMode = streamMode === "chat";
 
-                // --- 1. 处理推理内容 (自动展开逻辑) ---
-                if (delta?.reasoning_content) {
-                    // 回调时机 A：检测到首个推理包
-                    // 如果 hasReasoning 为 false，说明这是本轮对话第一次收到推理内容
-                    if (!hasReasoning) {
-                        hasReasoning = true;
-                        // 既然 API 返回了推理内容，说明这是推理模型，立即自动展开
-                        Logger.info("检测到推理流，自动展开推理框");
-                        setReasoningVisibility(true);
-                    }
-                    streamReasoningBuffer += delta.reasoning_content;
+            // --- 1. 处理推理内容 (自动展开逻辑) ---
+            if (delta?.reasoning_content) {
+                // 回调时机 A：检测到首个推理包
+                // 如果 hasReasoning 为 false，说明这是本轮对话第一次收到推理内容
+                if (!hasReasoning) {
+                    hasReasoning = true;
+                    // 既然 API 返回了推理内容，说明这是推理模型，立即自动展开
+                    Logger.info("检测到推理流，自动展开推理框");
+                    setReasoningVisibility(true);
                 }
+                streamReasoningBuffer += delta.reasoning_content;
+            }
 
-                // --- 2. 处理正式结果 (自动收起逻辑) ---
-                if (delta?.content) {
-                    // 回调时机 B：检测到首个正文包
-                    // 如果正文缓冲区长度为 0 (说明是正文的第一个字) 且之前有推理内容
-                    const isFirstContentChunk = isChatMode ? chatAssistantBuffer.length === 0 : streamTextBuffer.length === 0;
-                    if (isFirstContentChunk && hasReasoning) {
-                        Logger.info("推理结束，正文开始，自动收起推理框");
-                        setReasoningVisibility(false);
-                    }
-                    if (isChatMode) {
-                        chatAssistantBuffer += delta.content;
-                        updateChatStreamText();
-                    } else {
-                        streamTextBuffer += delta.content;
-                    }
+            // --- 2. 处理正式结果 (自动收起逻辑) ---
+            if (delta?.content) {
+                // 回调时机 B：检测到首个正文包
+                // 如果正文缓冲区长度为 0 (说明是正文的第一个字) 且之前有推理内容
+                const isFirstContentChunk = isChatMode ? chatAssistantBuffer.length === 0 : streamTextBuffer.length === 0;
+                if (isFirstContentChunk && hasReasoning) {
+                    Logger.info("推理结束，正文开始，自动收起推理框");
+                    setReasoningVisibility(false);
                 }
+                if (isChatMode) {
+                    chatAssistantBuffer += delta.content;
+                    updateChatStreamText();
+                } else {
+                    streamTextBuffer += delta.content;
+                }
+            }
         } catch (e) {
             Logger.debug("JSON Parse Error (Ignore)", line);
         }
@@ -4442,6 +4479,7 @@
         }
 
         const config = getActiveConfig();
+        const provider = config.provider;
         const input = popup.querySelector("#coolauxv-input");
         const resultDiv = popup.querySelector("#coolauxv-result");
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");

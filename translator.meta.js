@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v13.1
+// @version      v13.2
 // @description  使用不同提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v13.1 更新日志] 回答时会显示模型提供商和类型了。支持 OpenAI 模型、聊天中动态切换模型与提供商（共享聊天记录）。
+// @changelog    [v13.2 更新日志] 修复v1/v2识屏在某些场景下失效的问题。统一所有输入框的css布局。连续对话输入框自动展开更智慧了。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @match        https://mozilla.github.io/pdf.js/web/viewer.html*
