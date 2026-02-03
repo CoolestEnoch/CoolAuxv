@@ -4548,7 +4548,17 @@
         };
 
         const renderProviderUI = () => {
-            const templates = getProviderTemplates();
+            let templates = getProviderTemplates();
+            let templatesChanged = false;
+            templates.forEach((tpl) => {
+                if (!Array.isArray(tpl.modelGroups) || !tpl.modelGroups.length) {
+                    tpl.modelGroups = normalizeModelGroups(tpl);
+                    templatesChanged = true;
+                }
+            });
+            if (templatesChanged) {
+                templates = saveProviderTemplates(templates);
+            }
             const defaultProviderId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), templates);
             if (defaultProviderId !== GM_getValue("coolauxv_default_provider", "")) {
                 GM_setValue("coolauxv_default_provider", defaultProviderId);
