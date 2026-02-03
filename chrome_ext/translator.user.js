@@ -1372,6 +1372,12 @@
         transform: scale(0.98);
         background: #f3f4f6;
     }
+    .coolauxv-action-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+        box-shadow: none;
+        transform: none;
+    }
 
     /* 特定颜色的变种 (通过 style 覆盖，但保留 hover 动画) */
     .coolauxv-btn-primary { background: #e0f2fe; color: #0284c7; border-color: #bae6fd; }
@@ -3353,7 +3359,7 @@
             const titleText = mode === "edit" ? "⚙️ 高级选项" : "➕ 新增提供商";
             const submitText = mode === "edit" ? "保存修改" : "保存";
             const displayCheck = (key) => displayState[key] ? "checked" : "";
-            const idReadonly = mode === "edit" ? "readonly" : "";
+            const idReadonly = "";
             const headersJson = formatTemplateJson(baseTemplate.headersTemplate);
             const bodyJson = formatTemplateJson(baseTemplate.bodyTemplate);
             const deltaPathVal = baseTemplate.stream && baseTemplate.stream.deltaPath ? baseTemplate.stream.deltaPath : "choices.0.delta.content";
@@ -3380,6 +3386,7 @@
 
                         <div class="coolauxv-sub-label">Provider ID (唯一)</div>
                         <input type="text" id="coolauxv-provider-form-id" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="例如：my-provider" value="${escapeAttr(baseTemplate.id)}" ${idReadonly}>
+                        <div id="coolauxv-provider-id-warning" style="display:none; margin-top:-4px; font-size:12px; color:#dc2626;">Provider ID 已存在，请更换其他 ID。</div>
 
                         <div class="coolauxv-sub-label">Base URL (支持 {{自定义字段}})
                             <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
@@ -3517,6 +3524,7 @@
             const base64Section = box.querySelector("#coolauxv-provider-form-base64");
             const labelInput = box.querySelector("#coolauxv-provider-form-label");
             const idInput = box.querySelector("#coolauxv-provider-form-id");
+            const idWarning = box.querySelector("#coolauxv-provider-id-warning");
             const typeInput = box.querySelector("#coolauxv-provider-form-type");
             const headersInput = box.querySelector("#coolauxv-provider-form-headers");
             const bodyInput = box.querySelector("#coolauxv-provider-form-body-template");
@@ -3534,12 +3542,31 @@
             let modeType = "manual";
             let idTouched = false;
 
+            const isDuplicateProviderId = (candidateId) => {
+                if (!candidateId) return false;
+                return templates.some((tpl) => tpl.id === candidateId && (!existing || tpl.id !== existing.id));
+            };
+
+            const updateProviderIdState = () => {
+                if (!idInput || !submitBtn || !idWarning) return;
+                if (modeType !== "manual") {
+                    idWarning.style.display = "none";
+                    submitBtn.disabled = false;
+                    return;
+                }
+                const candidateId = normalizeProviderId(idInput.value || "");
+                const duplicated = isDuplicateProviderId(candidateId);
+                idWarning.style.display = duplicated ? "block" : "none";
+                submitBtn.disabled = duplicated;
+            };
+
             const setMode = (nextMode) => {
                 modeType = nextMode;
                 manualSection.style.display = modeType === "manual" ? "block" : "none";
                 base64Section.style.display = modeType === "base64" ? "block" : "none";
                 btnManual.classList.toggle("coolauxv-btn-primary", modeType === "manual");
                 btnBase64.classList.toggle("coolauxv-btn-primary", modeType === "base64");
+                updateProviderIdState();
             };
 
             const renderModelGroupsEditor = () => {
@@ -3650,10 +3677,14 @@
                     if (idTouched || mode === "edit") return;
                     const normalized = normalizeProviderId(labelInput.value);
                     if (normalized) idInput.value = normalized;
+                    updateProviderIdState();
                 });
                 idInput.addEventListener("input", () => {
                     idTouched = true;
+                    updateProviderIdState();
                 });
+            } else if (idInput) {
+                idInput.addEventListener("input", updateProviderIdState);
             }
 
             if (typeInput) {
@@ -3798,6 +3829,13 @@
                         return;
                     }
 
+                    const candidateId = normalizeProviderId((idInput && idInput.value || "").trim());
+                    if (isDuplicateProviderId(candidateId)) {
+                        alert("Provider ID 已存在，请更换其他 ID。");
+                        updateProviderIdState();
+                        return;
+                    }
+
                     const label = (labelInput && labelInput.value || "").trim();
                     const idValue = (idInput && idInput.value || "").trim();
                     const baseUrl = (box.querySelector("#coolauxv-provider-form-base-url") || {}).value || "";
@@ -3823,10 +3861,13 @@
                     let customFields = buildCustomFieldsPayload();
                     const customFieldMeta = buildCustomFieldMetaPayload();
                     const apiKeyValue = existing ? existing.apiKey : "";
-                    const finalId = existing ? existing.id : normalizeProviderId(idValue || label || `provider-${Date.now().toString(36)}`);
+                    const normalizedId = normalizeProviderId(idValue || "");
+                    const generatedId = normalizeProviderId(label || `provider-${Date.now().toString(36)}`);
+                    const finalId = normalizedId || (existing && existing.id ? existing.id : generatedId);
                     const finalLabel = label || finalId || "Provider";
                     const prevMeta = existing ? getCustomFieldMetaMap(existing) : {};
-                    const prevSecrets = existing ? getProviderSecretFields(existing.id) : {};
+                    const prevId = existing ? existing.id : "";
+                    const prevSecrets = prevId ? getProviderSecretFields(prevId) : {};
                     const nextSecrets = {};
                     const nextCustomFields = {};
                     Object.keys(customFields).forEach((key) => {
@@ -3843,10 +3884,26 @@
                         }
                     });
                     setProviderSecretFields(finalId, nextSecrets);
-                    if (existing && existing.id && existing.id !== finalId) {
-                        clearProviderSecretFields(existing.id);
+                    if (prevId && prevId !== finalId) {
+                        clearProviderSecretFields(prevId);
                     }
                     customFields = nextCustomFields;
+
+                    if (prevId && prevId !== finalId) {
+                        const defaultProvider = GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER);
+                        if (defaultProvider === prevId) GM_setValue("coolauxv_default_provider", finalId);
+                        const modelProvider = GM_getValue("coolauxv_model_provider", DEFAULT_MODEL_PROVIDER);
+                        if (modelProvider === prevId) GM_setValue("coolauxv_model_provider", finalId);
+                        if (selectedProviderIds.has(prevId)) {
+                            selectedProviderIds.delete(prevId);
+                            selectedProviderIds.add(finalId);
+                        }
+                        if (providerSectionStates.has(prevId)) {
+                            const prevState = providerSectionStates.get(prevId);
+                            providerSectionStates.delete(prevId);
+                            providerSectionStates.set(finalId, prevState);
+                        }
+                    }
 
                     const template = ensureProviderTemplate({
                         id: finalId,
