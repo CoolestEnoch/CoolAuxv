@@ -32,7 +32,7 @@
   let bridgePingIntervalId = null;
   let bridgePingStopTimerId = null;
 
-  const isCoolauxvKey = (key) => typeof key === "string" && key.startsWith("coolauxv_");
+  const isCoolauxvKey = (key) => typeof key === "string";
 
   globalThis.__coolauxv_storage_ready = new Promise((resolve) => {
     storageReadyResolve = resolve;
@@ -338,6 +338,8 @@
     }
   };
 
+  const GM_listValues = () => Object.keys(gmStore);
+
   const fallbackCopy = (text) => {
     const textarea = document.createElement("textarea");
     textarea.value = text;
@@ -499,6 +501,7 @@
   globalThis.GM_getValue = GM_getValue;
   globalThis.GM_setValue = GM_setValue;
   globalThis.GM_deleteValue = GM_deleteValue;
+  globalThis.GM_listValues = GM_listValues;
   globalThis.GM_setClipboard = GM_setClipboard;
   globalThis.GM_getResourceText = GM_getResourceText;
   globalThis.GM_xmlhttpRequest = GM_xmlhttpRequest;

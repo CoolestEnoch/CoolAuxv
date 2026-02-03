@@ -1,9 +1,8 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v13.2
+// @version      v14.0
 // @description  使用不同提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
-// @changelog    [v13.2 更新日志] 修复v1/v2识屏在某些场景下失效的问题。统一所有输入框的css布局。连续对话输入框自动展开更智慧了。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @match        https://mozilla.github.io/pdf.js/web/viewer.html*
@@ -23,6 +22,7 @@
 // @resource     katexCSS https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css
 // @connect      open.bigmodel.cn
 // @connect      api.openai.com
+// @connect      api.cnb.cool
 // @license      GPL-3.0
 // @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js
 // @updateURL    https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.meta.js
@@ -36,50 +36,16 @@
     // 全局配置与常量
     // ========================================================================
 
-    const PROVIDERS = [
-        { id: "zhipu", label: "智谱" },
-        { id: "openai", label: "OpenAI" }
-    ];
     const DEFAULT_PROVIDER = "zhipu";
     const DEFAULT_MODEL_PROVIDER = "zhipu";
-
-    // 智谱文本模型 (整合了原来的 语言模型 和 推理模型)
-    const ZHIPU_TEXT_MODELS = [
-        { id: "glm-4-flash", class: "语言模型", tag: "免费" },
-        { id: "glm-4-flash-250414", class: "语言模型", tag: "免费" },
-        { id: "glm-4v-flash", class: "通用模型", tag: "免费 | 多模态" },
-        { id: "glm-4.5-flash", class: "推理模型", tag: "免费" },
-        { id: "glm-z1-flash", class: "推理模型", tag: "免费" },
-        { id: "glm-4.6v-flash", class: "推理模型", tag: "免费 | 多模态" },
-        { id: "glm-4.1v-thinking-flash", class: "推理模型", tag: "免费 | 多模态" },
-        { id: "glm-4.7", class: "推理模型", tag: "付费" },
-        { id: "deepseek-r1", class: "推理模型", tag: "付费" },
-    ];
-
-    // 智谱视觉模型 (添加 class 分类)
-    const ZHIPU_VISION_MODELS = [
-        { id: "glm-4v-flash", class: "通用模型", tag: "免费 | 多模态" },
-        { id: "glm-4.6v-flash", class: "推理模型", tag: "免费 | 多模态" },
-        { id: "glm-4.1v-thinking-flash", class: "推理模型", tag: "免费 | 多模态" },
-    ];
-
-    const OPENAI_TEXT_MODELS = [
-        { id: "gpt-4o-mini", class: "通用模型", tag: "推荐" },
-        { id: "gpt-4o", class: "通用模型", tag: "高性能" },
-        { id: "gpt-4.1-mini", class: "通用模型", tag: "高性价比" }
-    ];
+    const PROVIDER_TEMPLATE_STORAGE_KEY = "coolauxv_provider_templates_v1";
+    const PROVIDER_SECRET_STORAGE_KEY = "coolauxv_provider_custom_secrets_v1";
+    const PROVIDER_SHARE_VERSION = 1;
 
     const LOG_PRESETS = ["debug", "info", "warn", "error", "none"];
 
-    const ZHIPU_DEFAULT_API_KEY = "1145141919810哼哼啊啊啊啊啊";
-    const OPENAI_DEFAULT_API_KEY = "sk-1145141919810";
-    const ZHIPU_DEFAULT_MODEL_NAME = ZHIPU_TEXT_MODELS[0].id;
-    const OPENAI_DEFAULT_MODEL_NAME = OPENAI_TEXT_MODELS[0].id;
     const DEFAULT_LOG_LEVEL = "none";
 
-    const ZHIPU_DEFAULT_VISION_MODEL = ZHIPU_VISION_MODELS[0].id;
-    const ZHIPU_API_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
-    const OPENAI_API_URL = "https://api.openai.com/v1/responses";
     const DEFAULT_PROMPT_VISION = "请先详细描述这张图，然后再详细解读这张图。";
     const DEFAULT_ENABLE_CONTINUOUS_CHAT = false;
     const DEFAULT_PROMPT_CONTINUOUS_CHAT = "忽略之前给你的提示词，现在开始你是一个连续对话助手，要结合上下文用中文回答用户问题；如有图片，请结合图片内容回答；要听从用户指示。";
@@ -91,26 +57,667 @@
     const DEFAULT_SHOW_REASONING = true;
     const DEFAULT_ENABLE_BLUR_GLASS = false; // 默认关闭模糊
     const DEFAULT_USE_NEW_SCREENSHOT = "v1"; // 默认使用老逻辑截图
+    const DEFAULT_ENABLE_MINIMIZE_ANIM = false; // 默认关闭收起动画
+    const POPUP_ANIM_EASING = "cubic-bezier(0.2, 0, 0, 1)";
 
 
     const DEFAULT_PROMPT_TRANSLATE = "你是一个翻译引擎。将用户输入直接翻译成中文。如果输入是中文则译为英文。不要输出任何多余的解释。";
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
+    const SCRIPT_VERSION = "v14.0";
 
     const LATEST_CHANGELOG = `
-        v13.2 更新日志
-        ## 🛠️ Bug修复
-        *   修复v1/v2识屏在某些场景下失效的问题。
-        *   统一所有输入框的css布局。
-        *   连续对话输入框自动展开更智慧了。
-        v13.1 更新日志
-        ## ✨ 功能更新
-        *   回答时会显示模型的提供商和类型了。
-        v13.0 更新日志
-        ## ✨ 功能更新
-        *   支持使用 OpenAI 模型。
-        *   聊天过程中可动态切换模型与提供商。
-        *   切换时共享同一套聊天记录与上下文。
+        v14.0 更新日志
+        ## 🏗️ 模块化提供商系统
+        *   新增模块化AI提供商系统，支持通过模板自定义添加任意AI服务
+        *   现有提供商（OpenAI、智谱、CNB）全部迁移至新系统
+        *   支持自定义请求URL、请求头/体、角色名称等所有参数
+        *   提供一键分享（base64导出）、批量删除、导入功能
+        ## 🔧 提供商高级配置
+        *   新增提供商分类功能（如视觉模型、通用模型），每类可添加多个模型
+        *   每个模型支持名称、子类别、标签三重属性
+        *   自定义字段支持键值对插值（如 {{apiKey}} 用于请求头）
+        *   隐私字段可勾选"打码"，导出配置时可选择排除隐私信息
+        ## 🎨 设置界面全面升级
+        *   设置界面全新设计，提供商配置可折叠展开
+        *   "默认大模型提供商"旁新增"展开/收起全部"切换按钮
+        *   所有输入框后增加清空按钮，API KEY等敏感字段支持显示/隐藏
+        *   提供商配置移至高级选项弹窗，界面更清晰
+        *   设置面板打开/关闭增加随机方向动画效果
+        ## ✨ 新提供商支持
+        *   新增CNB AI提供商，支持连续对话，默认模型 hunyuan-a13b
+        *   CNB Repo和KEY输入框支持隐藏/显示，配置更灵活
+        ## 🛡️ 隐私与权限控制
+        *   提供商可独立控制是否支持识图、连续对话功能
+        *   首页功能按钮（识图、连续对话）根据提供商权限动态显示
+        *   自定义字段支持单独设置"打码"和"默认展示"选项
+        ## 🔄 动画体验优化
+        *   设置界面切换提供商时，旧提供商收起与新提供商展开动画同步进行
+        *   启用实验性功能后，最小化按钮使用"悬浮球"缩放动画
+        *   错误信息展示支持展开/收起动画，查看原始错误更便捷
+        ## 🐛 问题修复与优化
+        *   修复翻译后切换模型导致AI来源混淆的问题
+        *   改进API错误处理，支持多种错误格式，提示更友好
+        *   修复配置导出/导入功能失效问题
+        *   重置功能现在删除脚本创建的所有存储键值
+        *   修复连续对话时未添加@connect导致的连接问题
     `;
+
+    const DEFAULT_PROVIDER_BASE64_LIST = [
+        "eyJpZCI6InpoaXB1IiwibGFiZWwiOiLmmbrosLEiLCJ0eXBlIjoiY2hhdC1jb21wbGV0aW9ucyIsImJhc2VVcmwiOiJodHRwczovL29wZW4uYmlnbW9kZWwuY24vYXBpL3BhYXMvdjQvY2hhdC9jb21wbGV0aW9ucyIsImFwaUtleSI6IiIsImFwaUtleVBsYWNlaG9sZGVyIjoiMTE0NTE0MTkxOTgxMOWTvOWTvOWViuWViuWViuWViuWViiIsImtleUxpbmsiOiJodHRwczovL2JpZ21vZGVsLmNuL3VzZXJjZW50ZXIvcHJvai1tZ210L2FwaWtleXMiLCJyb2xlcyI6eyJzeXN0ZW0iOiJzeXN0ZW0iLCJ1c2VyIjoidXNlciIsImFzc2lzdGFudCI6ImFzc2lzdGFudCJ9LCJoZWFkZXJzVGVtcGxhdGUiOnsiQ29udGVudC1UeXBlIjoiYXBwbGljYXRpb24vanNvbiIsIkF1dGhvcml6YXRpb24iOiJCZWFyZXIge3thcGlLZXl9fSJ9LCJib2R5VGVtcGxhdGUiOnsibW9kZWwiOiJ7e21vZGVsfX0iLCJzdHJlYW0iOnRydWUsIm1lc3NhZ2VzIjoie3ttZXNzYWdlc319In0sInN0cmVhbSI6eyJwYXJzZXIiOiJjaGF0LWNvbXBsZXRpb25zIiwiZGVsdGFQYXRoIjoiY2hvaWNlcy4wLmRlbHRhLmNvbnRlbnQiLCJyZWFzb25pbmdQYXRoIjoiY2hvaWNlcy4wLmRlbHRhLnJlYXNvbmluZ19jb250ZW50In0sInN1cHBvcnRzVmlzaW9uIjp0cnVlLCJtb2RlbEdyb3VwcyI6W3siaWQiOiJnZW5lcmFsIiwibGFiZWwiOiLpgJrnlKjmqKHlnosiLCJ0eXBlIjoidGV4dCIsIm1vZGVscyI6W3siaWQiOiJnbG0tNC1mbGFzaCIsImNsYXNzIjoi6K+t6KiA5qih5Z6LIiwidGFnIjoi5YWN6LS5In0seyJpZCI6ImdsbS00LWZsYXNoLTI1MDQxNCIsImNsYXNzIjoi6K+t6KiA5qih5Z6LIiwidGFnIjoi5YWN6LS5In0seyJpZCI6ImdsbS00di1mbGFzaCIsImNsYXNzIjoi6YCa55So5qih5Z6LIiwidGFnIjoi5YWN6LS5IHwg5aSa5qih5oCBIn0seyJpZCI6ImdsbS00LjUtZmxhc2giLCJjbGFzcyI6IuaOqOeQhuaooeWeiyIsInRhZyI6IuWFjei0uSJ9LHsiaWQiOiJnbG0tejEtZmxhc2giLCJjbGFzcyI6IuaOqOeQhuaooeWeiyIsInRhZyI6IuWFjei0uSJ9LHsiaWQiOiJnbG0tNC42di1mbGFzaCIsImNsYXNzIjoi5o6o55CG5qih5Z6LIiwidGFnIjoi5YWN6LS5IHwg5aSa5qih5oCBIn0seyJpZCI6ImdsbS00LjF2LXRoaW5raW5nLWZsYXNoIiwiY2xhc3MiOiLmjqjnkIbmqKHlnosiLCJ0YWciOiLlhY3otLkgfCDlpJrmqKHmgIEifSx7ImlkIjoiZ2xtLTQuNyIsImNsYXNzIjoi5o6o55CG5qih5Z6LIiwidGFnIjoi5LuY6LS5In0seyJpZCI6ImRlZXBzZWVrLXIxIiwiY2xhc3MiOiLmjqjnkIbmqKHlnosiLCJ0YWciOiLku5jotLkifV19LHsiaWQiOiJ2aXNpb24iLCJsYWJlbCI6IuinhuinieaooeWeiyIsInR5cGUiOiJ2aXNpb24iLCJtb2RlbHMiOlt7ImlkIjoiZ2xtLTR2LWZsYXNoIiwiY2xhc3MiOiLpgJrnlKjmqKHlnosiLCJ0YWciOiLlhY3otLkgfCDlpJrmqKHmgIEifSx7ImlkIjoiZ2xtLTQuNnYtZmxhc2giLCJjbGFzcyI6IuaOqOeQhuaooeWeiyIsInRhZyI6IuWFjei0uSB8IOWkmuaooeaAgSJ9LHsiaWQiOiJnbG0tNC4xdi10aGlua2luZy1mbGFzaCIsImNsYXNzIjoi5o6o55CG5qih5Z6LIiwidGFnIjoi5YWN6LS5IHwg5aSa5qih5oCBIn1dfV0sImRpc3BsYXkiOnsiYXBpS2V5Ijp0cnVlLCJtb2RlbEdyb3VwcyI6dHJ1ZX0sInJlcG8iOiIifQ==",
+        "eyJpZCI6Im9wZW5haSIsImxhYmVsIjoiT3BlbkFJIiwidHlwZSI6Im9wZW5haS1yZXNwb25zZXMiLCJiYXNlVXJsIjoiaHR0cHM6Ly9hcGkub3BlbmFpLmNvbS92MS9yZXNwb25zZXMiLCJhcGlLZXkiOiIiLCJhcGlLZXlQbGFjZWhvbGRlciI6InNrLTExNDUxNDE5MTk4MTAiLCJrZXlMaW5rIjoiaHR0cHM6Ly9wbGF0Zm9ybS5vcGVuYWkuY29tL2FwaS1rZXlzIiwicm9sZXMiOnsic3lzdGVtIjoic3lzdGVtIiwidXNlciI6InVzZXIiLCJhc3Npc3RhbnQiOiJhc3Npc3RhbnQifSwiaGVhZGVyc1RlbXBsYXRlIjp7IkNvbnRlbnQtVHlwZSI6ImFwcGxpY2F0aW9uL2pzb24iLCJBdXRob3JpemF0aW9uIjoiQmVhcmVyIHt7YXBpS2V5fX0iLCJPcGVuQUktQ2xpZW50IjoiQ29vbEF1eHYifSwiYm9keVRlbXBsYXRlIjp7Im1vZGVsIjoie3ttb2RlbH19Iiwic3RyZWFtIjp0cnVlLCJpbnB1dCI6Int7bWVzc2FnZXN9fSJ9LCJzdHJlYW0iOnsicGFyc2VyIjoib3BlbmFpLXJlc3BvbnNlcyIsImRlbHRhUGF0aCI6IiIsInJlYXNvbmluZ1BhdGgiOiIifSwic3VwcG9ydHNWaXNpb24iOnRydWUsIm1vZGVsR3JvdXBzIjpbeyJpZCI6ImdlbmVyYWwiLCJsYWJlbCI6IumAmueUqOaooeWeiyIsInR5cGUiOiJ0ZXh0IiwibW9kZWxzIjpbeyJpZCI6ImdwdC00by1taW5pIiwiY2xhc3MiOiLpgJrnlKjmqKHlnosiLCJ0YWciOiLmjqjojZAifSx7ImlkIjoiZ3B0LTRvIiwiY2xhc3MiOiLpgJrnlKjmqKHlnosiLCJ0YWciOiLpq5jmgKfog70ifSx7ImlkIjoiZ3B0LTQuMS1taW5pIiwiY2xhc3MiOiLpgJrnlKjmqKHlnosiLCJ0YWciOiLpq5jmgKfku7fmr5QifV19XSwiZGlzcGxheSI6eyJhcGlLZXkiOnRydWUsIm1vZGVsR3JvdXBzIjp0cnVlfSwicmVwbyI6IiJ9",
+        "eyJpZCI6ImNuYiIsImxhYmVsIjoiQ05CIiwidHlwZSI6ImNoYXQtY29tcGxldGlvbnMiLCJiYXNlVXJsIjoiaHR0cHM6Ly9hcGkuY25iLmNvb2wve3JlcG99Ly0vYWkvY2hhdC9jb21wbGV0aW9ucyIsImFwaUtleSI6IiIsImFwaUtleVBsYWNlaG9sZGVyIjoiY25iLTExNDUxNDE5MTk4MTAiLCJrZXlMaW5rIjoiaHR0cHM6Ly9jbmIuY29vbC9wcm9maWxlL3Rva2VuL2NyZWF0ZSIsInJvbGVzIjp7InN5c3RlbSI6InN5c3RlbSIsInVzZXIiOiJ1c2VyIiwiYXNzaXN0YW50IjoiYXNzaXN0YW50In0sImhlYWRlcnNUZW1wbGF0ZSI6eyJDb250ZW50LVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIiwiQWNjZXB0IjoiYXBwbGljYXRpb24vdm5kLmNuYi5hcGkranNvbiIsIkF1dGhvcml6YXRpb24iOiJCZWFyZXIge3thcGlLZXl9fSJ9LCJib2R5VGVtcGxhdGUiOnsibW9kZWwiOiJ7e21vZGVsfX0iLCJzdHJlYW0iOnRydWUsIm1lc3NhZ2VzIjoie3ttZXNzYWdlc319In0sInN0cmVhbSI6eyJwYXJzZXIiOiJjaGF0LWNvbXBsZXRpb25zIiwiZGVsdGFQYXRoIjoiY2hvaWNlcy4wLmRlbHRhLmNvbnRlbnQiLCJyZWFzb25pbmdQYXRoIjoiIn0sInN1cHBvcnRzVmlzaW9uIjpmYWxzZSwibW9kZWxHcm91cHMiOlt7ImlkIjoiZ2VuZXJhbCIsImxhYmVsIjoi6YCa55So5qih5Z6LIiwidHlwZSI6InRleHQiLCJtb2RlbHMiOlt7ImlkIjoiaHVueXVhbi1hMTNiIiwiY2xhc3MiOiLpgJrnlKjmqKHlnosiLCJ0YWciOiLpu5jorqQifV19XSwiZGlzcGxheSI6eyJhcGlLZXkiOnRydWUsIm1vZGVsR3JvdXBzIjp0cnVlfSwicmVwbyI6IiJ9"
+    ];
+
+    const DEFAULT_DISPLAY_FIELDS = {
+        apiKey: true,
+        modelGroups: true,
+        label: false,
+        baseUrl: false,
+        apiKeyPlaceholder: false,
+        keyLink: false,
+        roles: false,
+        type: false,
+        supportsVision: false,
+        streamDelta: false,
+        streamReasoning: false,
+        headersTemplate: false,
+        bodyTemplate: false,
+        customFields: false,
+        customFieldsMask: false
+    };
+
+    let providerTemplatesCache = null;
+
+    const cloneDeep = (obj) => JSON.parse(JSON.stringify(obj));
+
+    const normalizeProviderId = (id) => String(id || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+
+    const decodeBase64Utf8 = (base64) => {
+        try {
+            const raw = atob(base64);
+            const bytes = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) {
+                bytes[i] = raw.charCodeAt(i);
+            }
+            if (typeof TextDecoder !== "undefined") {
+                return new TextDecoder().decode(bytes);
+            }
+            return decodeURIComponent(escape(raw));
+        } catch (e) {
+            return "";
+        }
+    };
+
+    const parseProviderBase64 = (base64) => {
+        const decoded = decodeBase64Utf8(base64);
+        if (!decoded) return null;
+        try {
+            return JSON.parse(decoded);
+        } catch (e) {
+            return null;
+        }
+    };
+
+    const normalizeModelItem = (item) => {
+        if (!item || typeof item !== "object") return null;
+        const id = String(item.id || item.name || "").trim();
+        if (!id) return null;
+        return {
+            id: id,
+            class: String(item.class || item.sub || item.category || "").trim(),
+            tag: String(item.tag || "").trim()
+        };
+    };
+
+    const normalizeModelGroup = (group, idx) => {
+        if (!group || typeof group !== "object") return null;
+        const label = String(group.label || group.name || `模型分类${idx + 1}`);
+        const id = normalizeProviderId(group.id || label || `group-${idx + 1}`);
+        const type = group.type === "vision" ? "vision" : "text";
+        const rawModels = Array.isArray(group.models) ? group.models : (Array.isArray(group.list) ? group.list : []);
+        const models = rawModels.map(normalizeModelItem).filter(Boolean);
+        let selectedModel = String(group.selectedModel || group.model || "").trim();
+        if (!selectedModel && models.length) {
+            selectedModel = models[0].id;
+        }
+        return {
+            id: id,
+            label: label,
+            type: type,
+            models: models,
+            selectedModel: selectedModel
+        };
+    };
+
+    const normalizeModelGroups = (tpl) => {
+        let groups = Array.isArray(tpl.modelGroups) ? tpl.modelGroups : null;
+        if (!groups && tpl.models) {
+            groups = [];
+            if (tpl.models.text && tpl.models.text.length) {
+                groups.push({
+                    id: "general",
+                    label: "通用模型",
+                    type: "text",
+                    models: tpl.models.text,
+                    selectedModel: tpl.modelName || ""
+                });
+            }
+            if (tpl.models.vision && tpl.models.vision.length) {
+                groups.push({
+                    id: "vision",
+                    label: "视觉模型",
+                    type: "vision",
+                    models: tpl.models.vision,
+                    selectedModel: tpl.visionModel || ""
+                });
+            }
+        }
+        if (!groups || !groups.length) {
+            groups = [{ id: "general", label: "通用模型", type: "text", models: [], selectedModel: "" }];
+        }
+        return groups.map((group, idx) => normalizeModelGroup(group, idx)).filter(Boolean);
+    };
+
+    const normalizeTemplateKey = (key) => String(key || "").trim().replace(/[^a-zA-Z0-9_.-]/g, "");
+
+    const normalizeCustomFields = (input) => {
+        const result = {};
+        if (!input) return result;
+        if (Array.isArray(input)) {
+            input.forEach((item) => {
+                if (!item || typeof item !== "object") return;
+                const rawKey = item.key || item.name || "";
+                const key = normalizeTemplateKey(rawKey);
+                if (!key) return;
+                const value = item.value !== undefined ? item.value : (item.val !== undefined ? item.val : "");
+                result[key] = String(value);
+            });
+            return result;
+        }
+        if (typeof input === "object") {
+            Object.keys(input).forEach((rawKey) => {
+                const key = normalizeTemplateKey(rawKey);
+                if (!key) return;
+                result[key] = String(input[rawKey]);
+            });
+        }
+        return result;
+    };
+
+    const normalizeCustomFieldMeta = (input, customFields, display) => {
+        const result = {};
+        const defaults = {
+            display: !(display && display.customFields === false),
+            masked: !!(display && display.customFieldsMask)
+        };
+        const ensureMeta = (rawKey, meta) => {
+            const key = normalizeTemplateKey(rawKey);
+            if (!key) return;
+            const displayVal = meta && meta.display !== undefined ? !!meta.display : defaults.display;
+            const maskedVal = meta && meta.masked !== undefined ? !!meta.masked : defaults.masked;
+            result[key] = { display: displayVal, masked: maskedVal };
+        };
+        if (Array.isArray(input)) {
+            input.forEach((item) => {
+                if (!item || typeof item !== "object") return;
+                const rawKey = item.key || item.name || "";
+                ensureMeta(rawKey, {
+                    display: item.display !== undefined ? item.display : (item.show !== undefined ? item.show : item.visible),
+                    masked: item.masked !== undefined ? item.masked : (item.mask !== undefined ? item.mask : item.secret)
+                });
+            });
+        } else if (input && typeof input === "object") {
+            Object.keys(input).forEach((rawKey) => {
+                const meta = input[rawKey];
+                if (meta && typeof meta === "object") {
+                    ensureMeta(rawKey, meta);
+                } else {
+                    ensureMeta(rawKey, null);
+                }
+            });
+        }
+        if (customFields && typeof customFields === "object") {
+            Object.keys(customFields).forEach((rawKey) => {
+                if (!Object.prototype.hasOwnProperty.call(result, rawKey)) {
+                    ensureMeta(rawKey, null);
+                }
+            });
+        }
+        const finalKeys = new Set(customFields ? Object.keys(customFields) : []);
+        Object.keys(result).forEach((key) => {
+            if (!finalKeys.has(key)) delete result[key];
+        });
+        return result;
+    };
+
+    const getCustomFieldMetaMap = (template) => {
+        const custom = template && template.customFields ? template.customFields : {};
+        const display = template && template.display ? template.display : {};
+        const input = template ? template.customFieldMeta : null;
+        return normalizeCustomFieldMeta(input, custom, display);
+    };
+
+    const ensureProviderTemplate = (tpl) => {
+        if (!tpl || typeof tpl !== "object") return null;
+        let headersTemplate = tpl.headersTemplate;
+        if (typeof headersTemplate === "string") {
+            try { headersTemplate = JSON.parse(headersTemplate); } catch (e) { headersTemplate = null; }
+        }
+        let bodyTemplate = tpl.bodyTemplate;
+        if (typeof bodyTemplate === "string") {
+            try { bodyTemplate = JSON.parse(bodyTemplate); } catch (e) { bodyTemplate = null; }
+        }
+
+        const modelGroups = normalizeModelGroups(tpl);
+        const customFields = normalizeCustomFields(tpl.customFields);
+        const display = Object.assign({}, DEFAULT_DISPLAY_FIELDS, tpl.display || {});
+        const customFieldMeta = normalizeCustomFieldMeta(tpl.customFieldMeta || tpl.customFields, customFields, display);
+        if (tpl.repo && !Object.prototype.hasOwnProperty.call(customFields, "repo")) {
+            customFields.repo = String(tpl.repo || "");
+        }
+        const supportsVision = tpl.supportsVision !== undefined
+            ? !!tpl.supportsVision
+            : modelGroups.some((group) => group.type === "vision");
+
+        const normalized = {
+            id: normalizeProviderId(tpl.id),
+            label: String(tpl.label || tpl.id || "Provider"),
+            type: tpl.type === "openai-responses" ? "openai-responses" : "chat-completions",
+            baseUrl: String(tpl.baseUrl || ""),
+            apiKey: String(tpl.apiKey || ""),
+            apiKeyPlaceholder: String(tpl.apiKeyPlaceholder || ""),
+            keyLink: String(tpl.keyLink || ""),
+            roles: {
+                system: (tpl.roles && tpl.roles.system) ? String(tpl.roles.system) : "system",
+                user: (tpl.roles && tpl.roles.user) ? String(tpl.roles.user) : "user",
+                assistant: (tpl.roles && tpl.roles.assistant) ? String(tpl.roles.assistant) : "assistant"
+            },
+            headersTemplate: headersTemplate && typeof headersTemplate === "object" ? headersTemplate : { "Content-Type": "application/json" },
+            bodyTemplate: bodyTemplate && typeof bodyTemplate === "object" ? bodyTemplate : { model: "{{model}}", stream: true, messages: "{{messages}}" },
+            stream: tpl.stream && typeof tpl.stream === "object" ? {
+                parser: tpl.stream.parser === "openai-responses" ? "openai-responses" : "chat-completions",
+                deltaPath: String(tpl.stream.deltaPath || "choices.0.delta.content"),
+                reasoningPath: String(tpl.stream.reasoningPath || "")
+            } : { parser: "chat-completions", deltaPath: "choices.0.delta.content", reasoningPath: "" },
+            supportsVision: supportsVision,
+            modelGroups: modelGroups,
+            display: display,
+            customFields: customFields,
+            customFieldMeta: customFieldMeta
+        };
+        if (!normalized.id) return null;
+        return normalized;
+    };
+
+    const normalizeProviderTemplates = (list) => {
+        if (!Array.isArray(list)) return [];
+        const result = [];
+        const seen = new Set();
+        list.forEach((item) => {
+            const normalized = ensureProviderTemplate(item);
+            if (!normalized) return;
+            if (seen.has(normalized.id)) {
+                let idx = 2;
+                let newId = `${normalized.id}-${idx}`;
+                while (seen.has(newId)) {
+                    idx += 1;
+                    newId = `${normalized.id}-${idx}`;
+                }
+                normalized.id = newId;
+            }
+            seen.add(normalized.id);
+            result.push(normalized);
+        });
+        return result;
+    };
+
+    const getDefaultProviderTemplates = () => {
+        const templates = DEFAULT_PROVIDER_BASE64_LIST
+            .map(parseProviderBase64)
+            .filter(Boolean);
+        return normalizeProviderTemplates(templates);
+    };
+
+    const loadProviderTemplates = () => {
+        let stored = null;
+        try {
+            stored = GM_getValue(PROVIDER_TEMPLATE_STORAGE_KEY, null);
+        } catch (e) {
+            stored = null;
+        }
+        let templates = null;
+        if (stored) {
+            try {
+                templates = typeof stored === "string" ? JSON.parse(stored) : stored;
+            } catch (e) {
+                templates = null;
+            }
+        }
+        if (!Array.isArray(templates) || !templates.length) {
+            templates = getDefaultProviderTemplates();
+            GM_setValue(PROVIDER_TEMPLATE_STORAGE_KEY, templates);
+        }
+        templates = normalizeProviderTemplates(templates);
+        templates = sanitizeMaskedCustomFields(templates);
+        providerTemplatesCache = templates;
+        return templates;
+    };
+
+    const getProviderTemplates = () => providerTemplatesCache || loadProviderTemplates();
+
+    const saveProviderTemplates = (list) => {
+        const normalized = normalizeProviderTemplates(list);
+        providerTemplatesCache = normalized;
+        GM_setValue(PROVIDER_TEMPLATE_STORAGE_KEY, normalized);
+        return normalized;
+    };
+
+    const getProviderTemplateById = (id) => {
+        const providerId = normalizeProviderId(id);
+        const templates = getProviderTemplates();
+        return templates.find((tpl) => tpl.id === providerId) || null;
+    };
+
+    const resolveProviderId = (id, templates) => {
+        const providerId = normalizeProviderId(id);
+        const list = templates || getProviderTemplates();
+        if (providerId && list.some((tpl) => tpl.id === providerId)) return providerId;
+        const fallback = list.find((tpl) => tpl.id === DEFAULT_PROVIDER);
+        return fallback ? fallback.id : (list[0] ? list[0].id : DEFAULT_PROVIDER);
+    };
+
+    const migrateLegacyProviderSettings = (templates) => {
+        let changed = false;
+        const list = templates || getProviderTemplates();
+        list.forEach((tpl) => {
+            if (tpl.id === "zhipu") {
+                const legacyKey = GM_getValue("coolauxv_zhipu_api_key", "") || GM_getValue("coolauxv_api_key", "");
+                if (legacyKey && (!tpl.apiKey || tpl.apiKey === tpl.apiKeyPlaceholder)) {
+                    tpl.apiKey = legacyKey;
+                    changed = true;
+                }
+                const legacyModel = GM_getValue("coolauxv_zhipu_model_name", "") || GM_getValue("coolauxv_model_name", "");
+                if (legacyModel) {
+                    const textGroup = tpl.modelGroups.find((group) => group.type !== "vision") || tpl.modelGroups[0];
+                    if (textGroup && textGroup.selectedModel !== legacyModel) {
+                        textGroup.selectedModel = legacyModel;
+                        changed = true;
+                    }
+                }
+                const legacyVision = GM_getValue("coolauxv_zhipu_model_vision", "") || GM_getValue("coolauxv_model_vision", "");
+                if (legacyVision) {
+                    const visionGroup = tpl.modelGroups.find((group) => group.type === "vision");
+                    if (visionGroup && visionGroup.selectedModel !== legacyVision) {
+                        visionGroup.selectedModel = legacyVision;
+                        changed = true;
+                    }
+                }
+            }
+            if (tpl.id === "openai") {
+                const legacyKey = GM_getValue("coolauxv_openai_api_key", "");
+                if (legacyKey && (!tpl.apiKey || tpl.apiKey === tpl.apiKeyPlaceholder)) {
+                    tpl.apiKey = legacyKey;
+                    changed = true;
+                }
+                const legacyModel = GM_getValue("coolauxv_openai_model_name", "");
+                if (legacyModel) {
+                    const textGroup = tpl.modelGroups.find((group) => group.type !== "vision") || tpl.modelGroups[0];
+                    if (textGroup && textGroup.selectedModel !== legacyModel) {
+                        textGroup.selectedModel = legacyModel;
+                        changed = true;
+                    }
+                }
+            }
+            if (tpl.id === "cnb") {
+                const legacyKey = GM_getValue("coolauxv_cnb_api_key", "");
+                if (legacyKey && (!tpl.apiKey || tpl.apiKey === tpl.apiKeyPlaceholder)) {
+                    tpl.apiKey = legacyKey;
+                    changed = true;
+                }
+                const legacyModel = GM_getValue("coolauxv_cnb_model_name", "");
+                if (legacyModel) {
+                    const textGroup = tpl.modelGroups.find((group) => group.type !== "vision") || tpl.modelGroups[0];
+                    if (textGroup && textGroup.selectedModel !== legacyModel) {
+                        textGroup.selectedModel = legacyModel;
+                        changed = true;
+                    }
+                }
+                const legacyRepo = GM_getValue("coolauxv_cnb_repo", "");
+                if (legacyRepo) {
+                    tpl.customFields = normalizeCustomFields(tpl.customFields);
+                    if (!Object.prototype.hasOwnProperty.call(tpl.customFields, "repo")) {
+                        tpl.customFields.repo = legacyRepo;
+                        changed = true;
+                    }
+                }
+            }
+        });
+        if (changed) {
+            saveProviderTemplates(list);
+        }
+        return list;
+    };
+
+    const normalizeSecretStore = (input) => {
+        if (!input) return {};
+        if (typeof input === "string") {
+            try {
+                const parsed = JSON.parse(input);
+                if (parsed && typeof parsed === "object") return parsed;
+            } catch (e) {
+                return {};
+            }
+        }
+        return (input && typeof input === "object") ? input : {};
+    };
+
+    const loadProviderSecretStore = () => {
+        try {
+            return normalizeSecretStore(GM_getValue(PROVIDER_SECRET_STORAGE_KEY, null));
+        } catch (e) {
+            return {};
+        }
+    };
+
+    const saveProviderSecretStore = (store) => {
+        const normalized = normalizeSecretStore(store);
+        GM_setValue(PROVIDER_SECRET_STORAGE_KEY, normalized);
+        return normalized;
+    };
+
+    const getProviderSecretFields = (providerId) => {
+        const store = loadProviderSecretStore();
+        const entry = store && providerId ? store[providerId] : null;
+        return entry && typeof entry === "object" ? Object.assign({}, entry) : {};
+    };
+
+    const setProviderSecretFields = (providerId, fields) => {
+        if (!providerId) return;
+        const store = loadProviderSecretStore();
+        if (fields && typeof fields === "object" && Object.keys(fields).length) {
+            store[providerId] = Object.assign({}, fields);
+        } else if (Object.prototype.hasOwnProperty.call(store, providerId)) {
+            delete store[providerId];
+        }
+        saveProviderSecretStore(store);
+    };
+
+    const updateProviderSecretField = (providerId, fieldKey, value) => {
+        if (!providerId || !fieldKey) return;
+        const store = loadProviderSecretStore();
+        const entry = store[providerId] && typeof store[providerId] === "object" ? store[providerId] : {};
+        const nextValue = value === undefined || value === null ? "" : String(value);
+        if (!nextValue) {
+            delete entry[fieldKey];
+        } else {
+            entry[fieldKey] = nextValue;
+        }
+        if (Object.keys(entry).length) {
+            store[providerId] = entry;
+        } else if (Object.prototype.hasOwnProperty.call(store, providerId)) {
+            delete store[providerId];
+        }
+        saveProviderSecretStore(store);
+    };
+
+    const clearProviderSecretFields = (providerId) => {
+        if (!providerId) return;
+        const store = loadProviderSecretStore();
+        if (Object.prototype.hasOwnProperty.call(store, providerId)) {
+            delete store[providerId];
+            saveProviderSecretStore(store);
+        }
+    };
+
+    const getTemplateCustomFields = (template) => {
+        const custom = template && template.customFields ? template.customFields : {};
+        const meta = getCustomFieldMetaMap(template);
+        const secrets = template && template.id ? getProviderSecretFields(template.id) : {};
+        const merged = Object.assign({}, custom);
+        Object.keys(meta).forEach((key) => {
+            if (meta[key] && meta[key].masked) {
+                if (Object.prototype.hasOwnProperty.call(secrets, key)) {
+                    merged[key] = secrets[key];
+                }
+            }
+        });
+        return merged;
+    };
+
+    const sanitizeMaskedCustomFields = (templates) => {
+        if (!Array.isArray(templates)) return [];
+        const store = loadProviderSecretStore();
+        let templatesChanged = false;
+        let secretsChanged = false;
+
+        templates.forEach((tpl) => {
+            if (!tpl || !tpl.id) return;
+            tpl.customFields = normalizeCustomFields(tpl.customFields);
+            tpl.customFieldMeta = normalizeCustomFieldMeta(tpl.customFieldMeta || tpl.customFields, tpl.customFields, tpl.display || {});
+            const meta = tpl.customFieldMeta || {};
+            const fieldKeys = Object.keys(tpl.customFields);
+            const entry = store[tpl.id] && typeof store[tpl.id] === "object" ? Object.assign({}, store[tpl.id]) : {};
+            let entryChanged = false;
+            let templateTouched = false;
+            fieldKeys.forEach((key) => {
+                const metaItem = meta[key] || { display: true, masked: false };
+                if (metaItem.masked) {
+                    const value = tpl.customFields[key];
+                    if (value !== undefined && value !== null && String(value)) {
+                        if (!Object.prototype.hasOwnProperty.call(entry, key)) {
+                            entry[key] = String(value);
+                            entryChanged = true;
+                        }
+                    }
+                    if (tpl.customFields[key] !== "") {
+                        tpl.customFields[key] = "";
+                        templateTouched = true;
+                    }
+                } else if (Object.prototype.hasOwnProperty.call(entry, key)) {
+                    delete entry[key];
+                    entryChanged = true;
+                }
+            });
+            Object.keys(entry).forEach((key) => {
+                if (!Object.prototype.hasOwnProperty.call(tpl.customFields, key)) {
+                    delete entry[key];
+                    entryChanged = true;
+                }
+            });
+            if (templateTouched) templatesChanged = true;
+            if (entryChanged) {
+                if (Object.keys(entry).length) {
+                    store[tpl.id] = entry;
+                } else if (Object.prototype.hasOwnProperty.call(store, tpl.id)) {
+                    delete store[tpl.id];
+                }
+                secretsChanged = true;
+            }
+        });
+
+        const validIds = new Set(templates.map((tpl) => (tpl && tpl.id ? tpl.id : null)).filter(Boolean));
+        Object.keys(store).forEach((id) => {
+            if (!validIds.has(id)) {
+                delete store[id];
+                secretsChanged = true;
+            }
+        });
+
+        if (secretsChanged) {
+            saveProviderSecretStore(store);
+        }
+        if (templatesChanged) {
+            return saveProviderTemplates(templates);
+        }
+        return templates;
+    };
+
+    const stringToColorStyles = (str) => {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            hash = str.charCodeAt(i) + ((hash << 5) - hash);
+        }
+
+        const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+        const palette = [
+            { h: 210, s: 60, bgL: 88 },
+            { h: 30, s: 78, bgL: 90 },
+            { h: 170, s: 55, bgL: 86 },
+            { h: 50, s: 82, bgL: 91 },
+            { h: 275, s: 55, bgL: 88 },
+            { h: 330, s: 60, bgL: 89 },
+            { h: 0, s: 68, bgL: 90 },
+            { h: 195, s: 70, bgL: 88 },
+            { h: 240, s: 55, bgL: 87 },
+            { h: 15, s: 70, bgL: 89 },
+            { h: 300, s: 58, bgL: 88 },
+            { h: 100, s: 50, bgL: 85 }
+        ];
+
+        const idx = Math.abs(hash) % palette.length;
+        const base = palette[idx];
+        const variant = Math.abs(hash >> 6) % 3;
+        const delta = (variant - 1) * 3;
+
+        const bgL = clamp(base.bgL + delta, 82, 92);
+        const borderL = clamp(bgL - 14, 64, 78);
+        const textS = clamp(base.s + 10, 50, 85);
+
+        return {
+            bg: `hsl(${base.h}, ${base.s}%, ${bgL}%)`,
+            border: `hsl(${base.h}, ${base.s}%, ${borderL}%)`,
+            text: `hsl(${base.h}, ${textS}%, 18%)`,
+            tag: `hsl(${base.h}, ${textS}%, 32%)`
+        };
+    };
+
+    const buildModelButtonsHTML = (group, providerId) => {
+        if (!group || !Array.isArray(group.models)) return "";
+        const buckets = {};
+        group.models.forEach((m) => {
+            const groupName = m.class || "模型";
+            if (!buckets[groupName]) buckets[groupName] = [];
+            buckets[groupName].push(m);
+        });
+
+        return Object.keys(buckets).map((className) => `
+            <div class="coolauxv-sub-label" style="font-size: 12px; color: #999; margin: 8px 0 4px 0;">${className}</div>
+            <div class="coolauxv-tag-container">
+                ${buckets[className].map((m) => {
+            const modelId = m.id || m.name || "";
+            const c = stringToColorStyles(m.tag || modelId || "");
+            return `
+                <div class="coolauxv-model-btn" data-provider-id="${providerId}" data-group-id="${group.id}" data-val="${modelId}" data-tag="${m.tag || ""}"
+                     style="background:${c.bg}; border: 1px solid ${c.border}; color:${c.text};">
+                    <span class="coolauxv-model-name">${modelId}</span>
+                    <span class="coolauxv-model-tag" style="color:${c.tag}">${m.tag || ""}</span>
+                </div>
+                `;
+        }).join("")}
+            </div>
+        `).join("");
+    };
 
 
     // ========================================================================
@@ -265,8 +872,25 @@
     .coolauxv-scroll-box::-webkit-scrollbar-thumb:hover { background: #999; }
 
     /* 布局容器 */
+    #coolauxv-view-stage {
+        position: relative;
+        flex: 1;
+        overflow: hidden;
+    }
+    #coolauxv-main-view,
+    #coolauxv-settings-view {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        height: 100%;
+        transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1);
+        will-change: transform, opacity;
+    }
     #coolauxv-main-view {
-        flex: 1; display: flex; flex-direction: column; overflow: hidden; width: 100%;
+        overflow: hidden;
     }
     #coolauxv-main-view > div {
         padding-bottom: 8px !important;
@@ -280,8 +904,10 @@
 
     /* 设置界面 */
     #coolauxv-settings-view {
-        flex: 1; display: none; flex-direction: column;
-        padding: 15px; background: #fff; overflow-y: auto; width: 100%;
+        display: none;
+        padding: 15px;
+        background: #fff;
+        overflow-y: auto;
         text-align: left !important;
     }
     .coolauxv-setting-group { margin-bottom: 15px; }
@@ -302,6 +928,68 @@
         float: none !important;
         text-align: left !important;
         box-sizing: border-box !important;
+    }
+
+    .coolauxv-provider-checkbox {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-right: 0;
+        font-size: 12px;
+        color: #666;
+        max-width: 0;
+        opacity: 0;
+        transform: translateX(-8px);
+        overflow: hidden;
+        pointer-events: none;
+        transition: max-width 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .coolauxv-provider-checkbox input {
+        margin: 0;
+    }
+    .coolauxv-batch-mode .coolauxv-provider-checkbox {
+        max-width: 80px;
+        opacity: 1;
+        transform: translateX(0);
+        pointer-events: auto;
+        margin-right: 6px;
+    }
+    .coolauxv-batch-actions {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 0;
+        align-items: center;
+        max-height: 0;
+        opacity: 0;
+        transform: translateY(-4px);
+        overflow: hidden;
+        pointer-events: none;
+        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .coolauxv-batch-mode .coolauxv-batch-actions {
+        max-height: 60px;
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+        margin-bottom: 8px;
+    }
+
+    .coolauxv-provider-title {
+        font-weight: 600;
+        color: #1f2937;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        padding: 2px 6px;
+        border-radius: 6px;
+    }
+    .coolauxv-provider-subtitle {
+        font-size: 11px;
+        font-weight: 600;
+        color: #6b7280;
     }
 
 
@@ -404,10 +1092,56 @@
         cursor: pointer; color: #ccc; font-weight: bold; font-size: 16px;
         line-height: 1; display: none;
     }
+    .coolauxv-input-wrapper.coolauxv-has-value .coolauxv-clear-icon {
+        display: block;
+    }
 
     .coolauxv-fixed-input { resize: none; }
     .coolauxv-read-only { background-color: #f9fafb; color: #666; cursor: default; }
     .coolauxv-resizable-input { resize: vertical; min-height: 60px; max-height: 300px; }
+
+    .coolauxv-collapse-section {
+        overflow: hidden;
+        max-height: none;
+        opacity: 1;
+        transform: translateY(0);
+        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+        will-change: max-height, opacity, transform;
+    }
+    .coolauxv-collapse-section.coolauxv-collapsed {
+        max-height: 0;
+        opacity: 0;
+        transform: translateY(-4px);
+        pointer-events: none;
+    }
+    .coolauxv-model-provider-section {
+        overflow: hidden;
+        max-height: 0;
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+        will-change: max-height, opacity, transform;
+        pointer-events: none;
+    }
+    .coolauxv-model-provider-section.coolauxv-model-visible {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+    }
+    .coolauxv-provider-row {
+        display: flex;
+        gap: 10px;
+        align-items: flex-start;
+        flex-wrap: wrap;
+    }
+    .coolauxv-provider-col {
+        flex: 1 1 180px;
+        min-width: 160px;
+    }
 
     /* 模型按钮容器 */
     .coolauxv-tag-container { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
@@ -1028,6 +1762,280 @@
     let isShowRaw = DEFAULT_SHOW_RAW;
     let isShowReasoning = DEFAULT_SHOW_REASONING;
     let isQuitted = false;
+    let activeView = "main";
+    let isViewSwitching = false;
+    let viewSwitchTimer = null;
+    let isPopupAnimating = false;
+
+    const VIEW_EDGES = ["left", "right", "top", "bottom"];
+    const getRandomViewEdge = () => VIEW_EDGES[Math.floor(Math.random() * VIEW_EDGES.length)];
+    const getOppositeViewEdge = (edge) => {
+        switch (edge) {
+            case "left": return "right";
+            case "right": return "left";
+            case "top": return "bottom";
+            case "bottom": return "top";
+            default: return "left";
+        }
+    };
+    const getViewTransform = (edge) => {
+        switch (edge) {
+            case "left": return "translate3d(-100%, 0, 0)";
+            case "right": return "translate3d(100%, 0, 0)";
+            case "top": return "translate3d(0, -100%, 0)";
+            case "bottom": return "translate3d(0, 100%, 0)";
+            default: return "translate3d(0, 0, 0)";
+        }
+    };
+
+    const setViewImmediate = (targetView) => {
+        if (!popup) return;
+        const mainView = popup.querySelector("#coolauxv-main-view");
+        const settingsView = popup.querySelector("#coolauxv-settings-view");
+        if (!mainView || !settingsView) return;
+        if (viewSwitchTimer) {
+            clearTimeout(viewSwitchTimer);
+            viewSwitchTimer = null;
+        }
+        isViewSwitching = false;
+        if (targetView === "settings") {
+            mainView.style.display = "none";
+            mainView.style.opacity = "0";
+            mainView.style.transform = "translate3d(0, 0, 0)";
+            mainView.style.pointerEvents = "none";
+
+            settingsView.style.display = "flex";
+            settingsView.style.opacity = "1";
+            settingsView.style.transform = "translate3d(0, 0, 0)";
+            settingsView.style.pointerEvents = "auto";
+            activeView = "settings";
+            return;
+        }
+
+        settingsView.style.display = "none";
+        settingsView.style.opacity = "0";
+        settingsView.style.transform = "translate3d(0, 0, 0)";
+        settingsView.style.pointerEvents = "none";
+
+        mainView.style.display = "flex";
+        mainView.style.opacity = "1";
+        mainView.style.transform = "translate3d(0, 0, 0)";
+        mainView.style.pointerEvents = "auto";
+        activeView = "main";
+    };
+
+    const animateViewSwap = (fromView, toView, edge, onDone) => {
+        if (!fromView || !toView) return;
+        if (isViewSwitching) return;
+        if (fromView === toView) return;
+        isViewSwitching = true;
+        if (viewSwitchTimer) {
+            clearTimeout(viewSwitchTimer);
+            viewSwitchTimer = null;
+        }
+
+        const outTransform = getViewTransform(edge);
+        const inTransform = getViewTransform(getOppositeViewEdge(edge));
+
+        toView.style.display = "flex";
+        toView.style.zIndex = "2";
+        fromView.style.zIndex = "1";
+
+        toView.style.transition = "none";
+        toView.style.transform = inTransform;
+        toView.style.opacity = "0";
+        toView.style.pointerEvents = "none";
+
+        fromView.style.transition = "none";
+        fromView.style.transform = "translate3d(0, 0, 0)";
+        fromView.style.opacity = "1";
+        fromView.style.pointerEvents = "auto";
+
+        void toView.offsetHeight;
+
+        toView.style.transition = "";
+        fromView.style.transition = "";
+
+        requestAnimationFrame(() => {
+            fromView.style.transform = outTransform;
+            fromView.style.opacity = "0";
+            fromView.style.pointerEvents = "none";
+
+            toView.style.transform = "translate3d(0, 0, 0)";
+            toView.style.opacity = "1";
+            toView.style.pointerEvents = "auto";
+        });
+
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            if (viewSwitchTimer) {
+                clearTimeout(viewSwitchTimer);
+                viewSwitchTimer = null;
+            }
+            fromView.style.display = "none";
+            fromView.style.zIndex = "";
+            toView.style.zIndex = "";
+            isViewSwitching = false;
+            if (typeof onDone === "function") onDone();
+        };
+        const onEnd = (e) => {
+            if (e.target !== toView) return;
+            if (e.propertyName !== "transform") return;
+            toView.removeEventListener("transitionend", onEnd);
+            finish();
+        };
+        toView.addEventListener("transitionend", onEnd);
+        viewSwitchTimer = setTimeout(finish, 320);
+    };
+
+    const combineTransform = (base, extra) => {
+        const normalized = base && base !== "none" ? base.trim() : "";
+        return normalized ? `${normalized} ${extra}` : extra;
+    };
+
+    const getPopupBaseTransform = () => {
+        if (!popup) return "";
+        return popup.dataset.baseTransform || popup.style.transform || "";
+    };
+
+    const setPopupBaseTransform = (value) => {
+        if (!popup) return;
+        popup.dataset.baseTransform = value || "";
+    };
+
+    const setPopupAnimating = (animating) => {
+        isPopupAnimating = animating;
+        if (popup) popup.style.pointerEvents = animating ? "none" : "auto";
+        if (floatBall) floatBall.style.pointerEvents = animating ? "none" : "auto";
+    };
+
+    const resetPopupAnimStyles = (baseTransform) => {
+        if (!popup) return;
+        popup.style.transition = "";
+        popup.style.opacity = "1";
+        popup.style.borderRadius = "12px";
+        popup.style.filter = "";
+        popup.style.transformOrigin = "";
+        popup.style.transform = baseTransform || "";
+    };
+
+    const measureFloatBallRect = () => {
+        if (!floatBall) return null;
+        const prevDisplay = floatBall.style.display;
+        const prevOpacity = floatBall.style.opacity;
+        if (prevDisplay === "none") {
+            floatBall.style.display = "block";
+            floatBall.style.opacity = "0";
+        }
+        const rect = floatBall.getBoundingClientRect();
+        return { rect, restore: () => {
+            floatBall.style.display = prevDisplay;
+            floatBall.style.opacity = prevOpacity;
+        }};
+    };
+
+    const animatePopupToFloatBall = (onDone) => {
+        if (!popup || !floatBall || isPopupAnimating) return;
+        const measured = measureFloatBallRect();
+        if (!measured || !measured.rect.width || !measured.rect.height) {
+            if (measured && measured.restore) measured.restore();
+            if (typeof onDone === "function") onDone();
+            return;
+        }
+        const ballRect = measured.rect;
+        const popupRect = popup.getBoundingClientRect();
+        const baseTransform = popup.style.transform || "";
+        setPopupBaseTransform(baseTransform);
+
+        const scale = Math.max(0.06, Math.min(0.25, Math.min(ballRect.width / popupRect.width, ballRect.height / popupRect.height)));
+        const dx = (ballRect.left + ballRect.width / 2) - (popupRect.left + popupRect.width / 2);
+        const dy = (ballRect.top + ballRect.height / 2) - (popupRect.top + popupRect.height / 2);
+        const targetTransform = combineTransform(baseTransform, `translate3d(${dx}px, ${dy}px, 0) scale(${scale})`);
+
+        setPopupAnimating(true);
+        popup.style.transition = `transform 0.32s ${POPUP_ANIM_EASING}, opacity 0.22s ${POPUP_ANIM_EASING}, border-radius 0.25s ${POPUP_ANIM_EASING}, filter 0.25s ${POPUP_ANIM_EASING}`;
+        popup.style.transformOrigin = "center center";
+        popup.style.opacity = "0.2";
+        popup.style.borderRadius = "999px";
+        popup.style.filter = "blur(2px)";
+        popup.style.transform = targetTransform;
+
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            popup.style.display = "none";
+            resetPopupAnimStyles(baseTransform);
+            setPopupAnimating(false);
+            if (measured && measured.restore) measured.restore();
+            if (typeof onDone === "function") onDone();
+        };
+        const onEnd = (e) => {
+            if (e.target !== popup || e.propertyName !== "transform") return;
+            popup.removeEventListener("transitionend", onEnd);
+            finish();
+        };
+        popup.addEventListener("transitionend", onEnd);
+        setTimeout(finish, 420);
+    };
+
+    const animatePopupFromFloatBall = (onDone) => {
+        if (!popup || !floatBall || isPopupAnimating) return;
+        const measured = measureFloatBallRect();
+        if (!measured || !measured.rect.width || !measured.rect.height) {
+            if (measured && measured.restore) measured.restore();
+            if (typeof onDone === "function") onDone();
+            return;
+        }
+        const ballRect = measured.rect;
+        const baseTransform = popup.style.transform || "";
+        setPopupBaseTransform(baseTransform);
+
+        popup.style.display = "flex";
+        popup.style.visibility = "hidden";
+        const popupRect = popup.getBoundingClientRect();
+        const scale = Math.max(0.06, Math.min(0.25, Math.min(ballRect.width / popupRect.width, ballRect.height / popupRect.height)));
+        const dx = (ballRect.left + ballRect.width / 2) - (popupRect.left + popupRect.width / 2);
+        const dy = (ballRect.top + ballRect.height / 2) - (popupRect.top + popupRect.height / 2);
+        const startTransform = combineTransform(baseTransform, `translate3d(${dx}px, ${dy}px, 0) scale(${scale})`);
+
+        setPopupAnimating(true);
+        popup.style.transition = "none";
+        popup.style.transformOrigin = "center center";
+        popup.style.opacity = "0.2";
+        popup.style.borderRadius = "999px";
+        popup.style.filter = "blur(2px)";
+        popup.style.transform = startTransform;
+        popup.style.visibility = "visible";
+
+        void popup.offsetHeight;
+
+        popup.style.transition = `transform 0.32s ${POPUP_ANIM_EASING}, opacity 0.22s ${POPUP_ANIM_EASING}, border-radius 0.25s ${POPUP_ANIM_EASING}, filter 0.25s ${POPUP_ANIM_EASING}`;
+        popup.style.transform = baseTransform || "";
+        popup.style.opacity = "1";
+        popup.style.borderRadius = "12px";
+        popup.style.filter = "";
+
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            popup.style.visibility = "";
+            resetPopupAnimStyles(baseTransform);
+            setPopupAnimating(false);
+            if (measured && measured.restore) measured.restore();
+            if (typeof onDone === "function") onDone();
+        };
+        const onEnd = (e) => {
+            if (e.target !== popup || e.propertyName !== "transform") return;
+            popup.removeEventListener("transitionend", onEnd);
+            finish();
+        };
+        popup.addEventListener("transitionend", onEnd);
+        setTimeout(finish, 420);
+    };
 
     let abortController = null;
     let gmRequest = null;
@@ -1072,7 +2080,7 @@
             Object.assign(cursorBtn.style, { display: "none", position: "absolute" });
 
             const onIconClick = (e) => {
-                if (isQuitted) return;
+                if (isQuitted || isPopupAnimating) return;
                 e.preventDefault(); e.stopPropagation();
 
                 // 每次点击浮窗图标（重新激活），清空截图和预览状态，回归文本模式
@@ -1097,10 +2105,7 @@
                     checkUpdateAndShowChangelog();
                 }
 
-                const mainView = popup.querySelector("#coolauxv-main-view");
-                const settingsView = popup.querySelector("#coolauxv-settings-view");
-                if (mainView) mainView.style.display = "flex";
-                if (settingsView) settingsView.style.display = "none";
+                setViewImmediate("main");
 
                 // 点击图标默认执行文本翻译
                 doAction("translate");
@@ -1134,10 +2139,19 @@
                 }
 
                 // 恢复默认操作
-                floatBall.style.display = "none";
                 resetPopupState();
-                popup.style.display = "flex";
-                checkUpdateAndShowChangelog();
+                setViewImmediate("main");
+                const enableMinAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+                if (enableMinAnim) {
+                    animatePopupFromFloatBall(() => {
+                        floatBall.style.display = "none";
+                        checkUpdateAndShowChangelog();
+                    });
+                } else {
+                    popup.style.display = "flex";
+                    floatBall.style.display = "none";
+                    checkUpdateAndShowChangelog();
+                }
             };
             // 1. 点击事件（增加防误触判断）
             floatBall.onclick = (e) => {
@@ -1232,86 +2246,6 @@
             });
             resetPopupState();
 
-            // 生成模型按钮 HTML (带字段区分)
-            // 根据 tag 动态色系：色弱友好 + 与白底保持对比
-            const stringToColorStyles = (str) => {
-                let hash = 0;
-                for (let i = 0; i < str.length; i++) {
-                    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-                }
-
-                const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-
-                // 色弱友好调色板：避免大面积绿紫偏色，拉开色相与亮度差异
-                const palette = [
-                    { h: 210, s: 60, bgL: 88 }, // 蓝
-                    { h: 30, s: 78, bgL: 90 },  // 橙
-                    { h: 170, s: 55, bgL: 86 }, // 青绿
-                    { h: 50, s: 82, bgL: 91 },  // 金黄
-                    { h: 275, s: 55, bgL: 88 }, // 靛紫
-                    { h: 330, s: 60, bgL: 89 }, // 品红
-                    { h: 0, s: 68, bgL: 90 },   // 红
-                    { h: 195, s: 70, bgL: 88 }, // 青蓝
-                    { h: 240, s: 55, bgL: 87 }, // 靛蓝
-                    { h: 15, s: 70, bgL: 89 },  // 朱橙
-                    { h: 300, s: 58, bgL: 88 }, // 紫红
-                    { h: 100, s: 50, bgL: 85 }  // 黄绿(偏黄，避免纯绿)
-                ];
-
-                const idx = Math.abs(hash) % palette.length;
-                const base = palette[idx];
-                const variant = Math.abs(hash >> 6) % 3; // 0..2
-                const delta = (variant - 1) * 3;
-
-                const bgL = clamp(base.bgL + delta, 82, 92);
-                const borderL = clamp(bgL - 14, 64, 78);
-                const textS = clamp(base.s + 10, 50, 85);
-
-                return {
-                    bg: `hsl(${base.h}, ${base.s}%, ${bgL}%)`,
-                    border: `hsl(${base.h}, ${base.s}%, ${borderL}%)`,
-                    text: `hsl(${base.h}, ${textS}%, 18%)`,
-                    tag: `hsl(${base.h}, ${textS}%, 32%)`
-                };
-            };
-
-            const generateGroupedBtns = (models, fieldName) => {
-                const groups = {};
-                models.forEach(m => {
-                    if (!groups[m.class]) groups[m.class] = [];
-                    groups[m.class].push(m);
-                });
-
-                return Object.keys(groups).map(className => `
-                    <div class="coolauxv-sub-label" style="font-size: 12px; color: #999; margin: 8px 0 4px 0;">${className}</div>
-                    <div class="coolauxv-tag-container">
-                                                ${groups[className].map(m => {
-                    const c = stringToColorStyles(m.tag);
-                    return `
-                            <!--
-                                样式逻辑：
-                                1. 背景色极浅 (bg)
-                                2. 边框很淡 (border)
-                                3. 文字极深 (text) - 这会覆盖内部所有文字颜色
-                            -->
-                            <div class="coolauxv-model-btn" data-field="${fieldName}" data-val="${m.id}" data-tag="${m.tag}"
-                                 style="background:${c.bg}; border: 1px solid ${c.border}; color:${c.text};">
-
-                                <span class="coolauxv-model-name">${m.id}</span>
-
-                                <!-- Tag 使用次级颜色，或者直接继承主色 -->
-                                <span class="coolauxv-model-tag" style="color:${c.tag}">${m.tag}</span>
-                            </div>
-                            `;
-                }).join("")}
-                    </div>
-                `).join("");
-            };
-
-            const zhipuTextModelsHTML = generateGroupedBtns(ZHIPU_TEXT_MODELS, "coolauxv_zhipu_model_name");
-            const zhipuVisionModelsHTML = generateGroupedBtns(ZHIPU_VISION_MODELS, "coolauxv_zhipu_model_vision");
-            const openaiModelsHTML = generateGroupedBtns(OPENAI_TEXT_MODELS, "coolauxv_openai_model_name");
-
             const currentLogLevel = GM_getValue("coolauxv_log_level", DEFAULT_LOG_LEVEL);
             const logRadioHTML = LOG_PRESETS.map(level => {
                 const isChecked = level === currentLogLevel ? "checked" : "";
@@ -1319,17 +2253,6 @@
                     <label class="coolauxv-radio-label">
                         <input type="radio" name="coolauxv_log_level_radio" value="${level}" ${isChecked}>
                         <span class="coolauxv-radio-text">${level}</span>
-                    </label>
-                `;
-            }).join("");
-
-            const currentProvider = GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER);
-            const providerRadioHTML = PROVIDERS.map((provider) => {
-                const isChecked = provider.id === currentProvider ? "checked" : "";
-                return `
-                    <label class="coolauxv-radio-label">
-                        <input type="radio" name="coolauxv_provider_radio" value="${provider.id}" ${isChecked}>
-                        <span class="coolauxv-radio-text">${provider.label}</span>
                     </label>
                 `;
             }).join("");
@@ -1355,6 +2278,7 @@
               </div>
             </div>
 
+            <div id="coolauxv-view-stage">
             <!-- 主界面 -->
             <div id="coolauxv-main-view">
                 <div style="padding:15px; flex:1; display:flex; flex-direction:column; overflow:hidden;">
@@ -1422,72 +2346,33 @@
                         <svg height="16" width="16" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
                         CoolAuxv (GitHub)
                     </a>
-                    <a href="https://github.com/CoolestEnoch/CoolAuxv/commits/main" target="_blank" class="coolauxv-github-btn" title="查看历史版本更新记录">更新记录</a>
+                    <a href="https://github.com/CoolestEnoch/CoolAuxv/commits/main" target="_blank" class="coolauxv-github-btn" title="查看历史版本更新日志">更新日志</a>
                 </h3>
 
                 <div class="coolauxv-setting-group">
-                    <label class="coolauxv-setting-label">默认大模型提供商</label>
-                    <div class="coolauxv-radio-group">
-                        ${providerRadioHTML}
-                    </div>
-                </div>
-
-                <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">
-                        智谱 API KEY
-                        <span id="coolauxv-btn-toggle-zhipu-key" class="coolauxv-link-btn" style="margin-left:auto; cursor:pointer; user-select:none;">👁️ 显示</span>
-                        <a href="https://bigmodel.cn/usercenter/proj-mgmt/apikeys" target="_blank" class="coolauxv-link-btn" title="打开智谱平台获取Key">🔑 获取KEY</a>
+                        默认大模型提供商
+                        <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
+                            <span id="coolauxv-btn-provider-add" class="coolauxv-link-btn" style="cursor:pointer; user-select:none;">➕ 添加</span>
+                            <span id="coolauxv-btn-provider-batch" class="coolauxv-link-btn" style="cursor:pointer; user-select:none;">🧩 批量</span>
+                            <span id="coolauxv-btn-toggle-provider-all" class="coolauxv-link-btn" style="cursor:pointer; user-select:none;">展开全部</span>
+                        </div>
                     </label>
-                    <input type="password" id="coolauxv-cfg-zhipu-key" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="${ZHIPU_DEFAULT_API_KEY}">
-
-                    <label class="coolauxv-setting-label" style="margin-top:8px;">
-                        OpenAI API KEY
-                        <span id="coolauxv-btn-toggle-openai-key" class="coolauxv-link-btn" style="margin-left:auto; cursor:pointer; user-select:none;">👁️ 显示</span>
-                        <a href="https://platform.openai.com/api-keys" target="_blank" class="coolauxv-link-btn" title="打开 OpenAI 平台获取 Key">🔑 获取KEY</a>
-                    </label>
-                    <input type="password" id="coolauxv-cfg-openai-key" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="${OPENAI_DEFAULT_API_KEY}">
+                    <div id="coolauxv-provider-radio-group" class="coolauxv-radio-group"></div>
                 </div>
+
+                <div id="coolauxv-provider-sections"></div>
 
                 <div class="coolauxv-setting-group">
+                    <div id="coolauxv-provider-batch-actions" class="coolauxv-batch-actions">
+                        <button id="coolauxv-btn-provider-share" class="coolauxv-action-btn">🔗 分享</button>
+                        <button id="coolauxv-btn-provider-batch-delete" class="coolauxv-action-btn" style="background:#ffe4e6; color:#b91c1c; border-color:#fecdd3;">🗑 删除</button>
+                    </div>
                     <label class="coolauxv-setting-label">模型提供商</label>
-                    <select id="coolauxv-cfg-model-provider" style="padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:12px; background:#fff;">
-                        ${PROVIDERS.map((provider) => `<option value="${provider.id}">${provider.label}</option>`).join("")}
-                    </select>
+                    <select id="coolauxv-cfg-model-provider" style="padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:12px; background:#fff;"></select>
                 </div>
 
-                <div id="coolauxv-model-section-zhipu">
-                    <div class="coolauxv-setting-group">
-                        <!-- 黑色大标题：文本模型 -->
-                        <label class="coolauxv-setting-label">
-                            文本模型 (Zhipu Text Models)
-                            <a href="https://bigmodel.cn/pricing" target="_blank" class="coolauxv-link-btn" title="查看定价">💵 定价</a>
-                        </label>
-                        <input type="text" id="coolauxv-cfg-zhipu-model" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${ZHIPU_DEFAULT_MODEL_NAME}">
-
-                        <!-- 插入自动生成的文本模型分组 (包含灰色小标题和按钮) -->
-                        ${zhipuTextModelsHTML}
-                    </div>
-
-                    <div class="coolauxv-setting-group">
-                        <!-- 黑色大标题：视觉模型 -->
-                        <label class="coolauxv-setting-label">视觉模型 (Zhipu Vision Models)</label>
-                        <input type="text" id="coolauxv-cfg-zhipu-model-vision" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${ZHIPU_DEFAULT_VISION_MODEL}">
-
-                        <!-- 插入自动生成的视觉模型分组 -->
-                        ${zhipuVisionModelsHTML}
-                    </div>
-                </div>
-
-                <div id="coolauxv-model-section-openai" style="display:none;">
-                    <div class="coolauxv-setting-group">
-                        <label class="coolauxv-setting-label">
-                            模型选择 (OpenAI)
-                            <a href="https://platform.openai.com/docs/models" target="_blank" class="coolauxv-link-btn" title="查看模型列表">📚 模型列表</a>
-                        </label>
-                        <input type="text" id="coolauxv-cfg-openai-model" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${OPENAI_DEFAULT_MODEL_NAME}">
-                        ${openaiModelsHTML}
-                    </div>
-                </div>
+                <div id="coolauxv-model-sections"></div>
 
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">窗口初始大小 (Width / Height)</label>
@@ -1585,6 +2470,12 @@
                         </label>
                         <span style="font-size:11px; color:#999;">使用视觉模型</span>
                     </div>
+
+                    <div style="display:flex; align-items:center; gap:12px; margin-top:10px; flex-wrap:wrap;">
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-cfg-minimize-anim"> 收起动画 (缩放到悬浮球)
+                        </label>
+                    </div>
                 </div>
 
 
@@ -1596,9 +2487,12 @@
                 <div class="coolauxv-reset-btn" id="coolauxv-cfg-reset">⚠️ 重置所有配置</div>
             </div>
 
+            </div>
+
             <div id="coolauxv-resize-handle"><svg id="coolauxv-resize-icon" viewBox="0 0 10 10"><path d="M10 10 L10 2 L2 10 Z" /></svg></div>
             `;
             document.body.appendChild(popup);
+            setViewImmediate("main");
 
             // 截图加载提示
             const loadingToast = document.createElement("div");
@@ -1694,86 +2588,88 @@
         // --- 切换逻辑核心 ---
         if (settingsBtn) {
             settingsBtn.onclick = () => {
-                // 如果设置界面正在显示，则切换回主界面
-                if (settingsView.style.display === "flex") {
-                    settingsView.style.display = "none";
-                    mainView.style.display = "flex";
-                }
-                // 否则（在主界面），切换到设置界面
-                else {
+                if (isViewSwitching) return;
+                const showSettings = activeView !== "settings";
+                const edge = getRandomViewEdge();
+                if (showSettings) {
                     loadConfig(); // 进入设置时重新加载配置，确保显示最新值
-                    mainView.style.display = "none";
-                    settingsView.style.display = "flex";
+                    animateViewSwap(mainView, settingsView, edge, () => {
+                        activeView = "settings";
+                    });
+                } else {
+                    animateViewSwap(settingsView, mainView, edge, () => {
+                        activeView = "main";
+                    });
                 }
             };
         }
 
         // --- 通用的配置加载与保存逻辑 ---
         const clearableInputs = [
-            "coolauxv-cfg-zhipu-key",
-            "coolauxv-cfg-openai-key",
-            "coolauxv-cfg-zhipu-model",
-            "coolauxv-cfg-zhipu-model-vision",
-            "coolauxv-cfg-openai-model",
             "coolauxv-cfg-width",
             "coolauxv-cfg-height",
             "coolauxv-cfg-prompt-trans",
             "coolauxv-cfg-prompt-explain",
             "coolauxv-cfg-prompt-vision",
-            "coolauxv-cfg-prompt-chat"
+            "coolauxv-cfg-prompt-chat",
+            "coolauxv-pdf-url"
         ];
-        clearableInputs.forEach(id => {
-            const input = popup.querySelector(`#${id}`);
-            if (input) {
-                // 防止重复添加 wrapper (虽然 init 理论上只运行一次，但为了稳健性)
-                if (input.parentNode.classList.contains("coolauxv-input-wrapper")) return;
-
-                const wrapper = document.createElement("div");
+        const attachClearButton = (input) => {
+            if (!input) return;
+            let wrapper = input.parentNode;
+            if (!wrapper || !wrapper.classList.contains("coolauxv-input-wrapper")) {
+                wrapper = document.createElement("div");
                 wrapper.className = "coolauxv-input-wrapper";
                 input.parentNode.insertBefore(wrapper, input);
                 wrapper.appendChild(input);
+            }
 
-                const clearBtn = document.createElement("span");
+            let clearBtn = wrapper.querySelector(".coolauxv-clear-icon");
+            if (!clearBtn) {
+                clearBtn = document.createElement("span");
                 clearBtn.className = "coolauxv-clear-icon";
                 clearBtn.innerText = "×";
                 clearBtn.title = "清空配置";
                 wrapper.appendChild(clearBtn);
-
-                clearBtn.onclick = () => {
-                    input.value = "";
-                    input.dispatchEvent(new Event('input'));
-                    input.focus();
-                };
             }
-        });
 
-        const inputZhipuKey = popup.querySelector("#coolauxv-cfg-zhipu-key");
-        const inputOpenaiKey = popup.querySelector("#coolauxv-cfg-openai-key");
-        const btnToggleZhipuKey = popup.querySelector("#coolauxv-btn-toggle-zhipu-key");
-        const btnToggleOpenaiKey = popup.querySelector("#coolauxv-btn-toggle-openai-key");
-
-        const bindKeyToggle = (input, btn) => {
-            if (!input || !btn) return;
-            btn.onclick = () => {
-                if (input.type === "password") {
-                    input.type = "text";
-                    btn.innerText = "🔒 隐藏";
-                } else {
-                    input.type = "password";
-                    btn.innerText = "👁️ 显示";
-                }
+            const syncClearBtn = () => {
+                wrapper.classList.toggle("coolauxv-has-value", !!input.value);
             };
+            input._coolauxvSyncClear = syncClearBtn;
+
+            clearBtn.onclick = () => {
+                input.value = "";
+                input.dispatchEvent(new Event('input'));
+                input.focus();
+                syncClearBtn();
+            };
+
+            input.addEventListener("input", syncClearBtn);
+            input.addEventListener("change", syncClearBtn);
+            syncClearBtn();
         };
 
-        bindKeyToggle(inputZhipuKey, btnToggleZhipuKey);
-        bindKeyToggle(inputOpenaiKey, btnToggleOpenaiKey);
+        clearableInputs.forEach(id => attachClearButton(popup.querySelector(`#${id}`)));
+        const syncAllClearButtons = () => {
+            clearableInputs.forEach((id) => {
+                const input = popup.querySelector(`#${id}`);
+                if (input && typeof input._coolauxvSyncClear === "function") {
+                    input._coolauxvSyncClear();
+                }
+            });
+        };
 
-        const inputZhipuModel = popup.querySelector("#coolauxv-cfg-zhipu-model");
-        const inputZhipuModelVision = popup.querySelector("#coolauxv-cfg-zhipu-model-vision");
-        const inputOpenaiModel = popup.querySelector("#coolauxv-cfg-openai-model");
+        const settingsRoot = popup.querySelector("#coolauxv-settings-view");
+        const providerRadioGroup = popup.querySelector("#coolauxv-provider-radio-group");
+        const providerSectionsContainer = popup.querySelector("#coolauxv-provider-sections");
+        const modelSectionsContainer = popup.querySelector("#coolauxv-model-sections");
         const inputModelProvider = popup.querySelector("#coolauxv-cfg-model-provider");
-        const zhipuModelSection = popup.querySelector("#coolauxv-model-section-zhipu");
-        const openaiModelSection = popup.querySelector("#coolauxv-model-section-openai");
+        const btnToggleProviderAll = popup.querySelector("#coolauxv-btn-toggle-provider-all");
+        const btnProviderAdd = popup.querySelector("#coolauxv-btn-provider-add");
+        const btnProviderBatch = popup.querySelector("#coolauxv-btn-provider-batch");
+        const btnProviderShare = popup.querySelector("#coolauxv-btn-provider-share");
+        const btnProviderBatchDelete = popup.querySelector("#coolauxv-btn-provider-batch-delete");
         const inputWidth = popup.querySelector("#coolauxv-cfg-width");
         const inputHeight = popup.querySelector("#coolauxv-cfg-height");
         const inputPromptTrans = popup.querySelector("#coolauxv-cfg-prompt-trans");
@@ -1787,11 +2683,10 @@
         const inputBlurGlass = popup.querySelector("#coolauxv-cfg-blur-glass");
         const inputPersistentBall = popup.querySelector("#coolauxv-cfg-persistent-ball");
         const inputDraggableBall = popup.querySelector("#coolauxv-cfg-draggable-ball");
-        const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
-        const providerRadioBtns = popup.querySelectorAll('input[name="coolauxv_provider_radio"]');
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
         const inputContinuousChat = popup.querySelector("#coolauxv-cfg-continuous-chat");
+        const inputMinimizeAnim = popup.querySelector("#coolauxv-cfg-minimize-anim");
         const chatBar = popup.querySelector("#coolauxv-chat-bar");
         const chatBody = popup.querySelector("#coolauxv-chat-body");
         const chatToggleBtn = popup.querySelector("#coolauxv-chat-toggle");
@@ -1800,11 +2695,14 @@
         const CONFIG_KEYS = [
             "coolauxv_default_provider",
             "coolauxv_model_provider",
+            PROVIDER_TEMPLATE_STORAGE_KEY,
             "coolauxv_zhipu_api_key",
             "coolauxv_openai_api_key",
+            "coolauxv_cnb_api_key",
             "coolauxv_zhipu_model_name",
             "coolauxv_zhipu_model_vision",
             "coolauxv_openai_model_name",
+            "coolauxv_cnb_model_name",
             "coolauxv_win_width",
             "coolauxv_win_height",
             "coolauxv_log_level",
@@ -1818,6 +2716,7 @@
             "coolauxv_append_chat",
             "coolauxv_use_new_screenshot",
             "coolauxv_enable_continuous_chat",
+            "coolauxv_enable_minimize_anim",
             "coolauxv_enable_blur_glass",
             "coolauxv_persistent_ball",
             "coolauxv_draggable_ball"
@@ -1825,8 +2724,37 @@
         const LEGACY_CONFIG_KEYS = [
             "coolauxv_api_key",
             "coolauxv_model_name",
-            "coolauxv_model_vision"
+            "coolauxv_model_vision",
+            "coolauxv_zhipu_api_key",
+            "coolauxv_openai_api_key",
+            "coolauxv_cnb_api_key",
+            "coolauxv_cnb_repo",
+            "coolauxv_zhipu_model_name",
+            "coolauxv_zhipu_model_vision",
+            "coolauxv_openai_model_name",
+            "coolauxv_cnb_model_name",
+            "coolauxv_enable_exit_anim"
         ];
+
+        const listAllStoredKeys = () => {
+            if (typeof GM_listValues === "function") {
+                const keys = GM_listValues();
+                return Array.isArray(keys) ? keys : [];
+            }
+            return [];
+        };
+
+        const clearAllStoredKeys = () => {
+            const keys = listAllStoredKeys();
+            if (keys.length) {
+                const uniqueKeys = Array.from(new Set(keys));
+                uniqueKeys.forEach((key) => GM_deleteValue(key));
+                return;
+            }
+            CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
+            LEGACY_CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
+            GM_deleteValue(PROVIDER_SECRET_STORAGE_KEY);
+        };
 
         const encodeBase64 = (text) => {
             try {
@@ -1873,34 +2801,23 @@
                     GM_deleteValue(key);
                 }
             });
-            if (data.coolauxv_api_key && !data.coolauxv_zhipu_api_key) {
-                GM_setValue("coolauxv_zhipu_api_key", data.coolauxv_api_key);
+            providerTemplatesCache = null;
+            migrateLegacyProviderSettings(loadProviderTemplates());
+            if (data && data.coolauxv_cnb_repo) {
+                const templates = getProviderTemplates();
+                const tpl = templates.find((item) => item.id === "cnb");
+                if (tpl) {
+                    tpl.customFields = normalizeCustomFields(tpl.customFields);
+                    if (!Object.prototype.hasOwnProperty.call(tpl.customFields, "repo")) {
+                        tpl.customFields.repo = data.coolauxv_cnb_repo;
+                        saveProviderTemplates(templates);
+                    }
+                }
             }
-            if (data.coolauxv_model_name && !data.coolauxv_zhipu_model_name) {
-                GM_setValue("coolauxv_zhipu_model_name", data.coolauxv_model_name);
-            }
-            if (data.coolauxv_model_vision && !data.coolauxv_zhipu_model_vision) {
-                GM_setValue("coolauxv_zhipu_model_vision", data.coolauxv_model_vision);
-            }
+            sanitizeMaskedCustomFields(getProviderTemplates());
             LEGACY_CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
         };
-
-        const migrateLegacyConfig = () => {
-            const legacyKey = GM_getValue("coolauxv_api_key");
-            if (legacyKey && !GM_getValue("coolauxv_zhipu_api_key")) {
-                GM_setValue("coolauxv_zhipu_api_key", legacyKey);
-            }
-            const legacyModel = GM_getValue("coolauxv_model_name");
-            if (legacyModel && !GM_getValue("coolauxv_zhipu_model_name")) {
-                GM_setValue("coolauxv_zhipu_model_name", legacyModel);
-            }
-            const legacyVision = GM_getValue("coolauxv_model_vision");
-            if (legacyVision && !GM_getValue("coolauxv_zhipu_model_vision")) {
-                GM_setValue("coolauxv_zhipu_model_vision", legacyVision);
-            }
-        };
-
-        migrateLegacyConfig();
+        sanitizeMaskedCustomFields(migrateLegacyProviderSettings(loadProviderTemplates()));
 
         radioBtns.forEach(radio => {
             radio.addEventListener('change', (e) => {
@@ -1918,36 +2835,1465 @@
                 GM_deleteValue("coolauxv_api_key");
             }
         };
+        const providerSectionStates = new Map();
+        let isProviderBatchMode = false;
+        const selectedProviderIds = new Set();
 
-        const applyModelProviderUI = (provider) => {
-            const isOpenai = provider === "openai";
-            if (zhipuModelSection) zhipuModelSection.style.display = isOpenai ? "none" : "block";
-            if (openaiModelSection) openaiModelSection.style.display = isOpenai ? "block" : "none";
-        };
+        const escapeAttr = (value) => String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/"/g, "&quot;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
 
-        const syncModelProvider = (provider) => {
-            if (inputModelProvider) {
-                inputModelProvider.value = provider;
-                GM_setValue("coolauxv_model_provider", provider);
-                applyModelProviderUI(provider);
+        const escapeText = (value) => String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+
+        const formatTemplateJson = (value) => {
+            try {
+                return JSON.stringify(value || {}, null, 2);
+            } catch (e) {
+                return "{}";
             }
         };
 
-        providerRadioBtns.forEach((radio) => {
-            radio.addEventListener("change", (e) => {
-                if (!e.target.checked) return;
-                const provider = e.target.value || DEFAULT_PROVIDER;
-                GM_setValue("coolauxv_default_provider", provider);
-                syncModelProvider(provider);
-                syncChatProvider(provider);
+        const parseTemplateJson = (text) => {
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                return null;
+            }
+        };
+
+        const defaultBodyTemplateForType = (type) => {
+            if (type === "openai-responses") {
+                return { model: "{{model}}", stream: true, input: "{{messages}}" };
+            }
+            return { model: "{{model}}", stream: true, messages: "{{messages}}" };
+        };
+
+        const isSectionExpanded = (section) => {
+            if (!section) return false;
+            if (section.dataset && section.dataset.expanding === "true") return true;
+            return section.style.display !== "none" && !section.classList.contains("coolauxv-collapsed");
+        };
+
+        const setSectionStateInstant = (section, expanded) => {
+            if (!section) return;
+            if (expanded) {
+                section.dataset.expanding = "";
+                section.style.display = "block";
+                section.classList.remove("coolauxv-collapsed");
+                section.style.maxHeight = "none";
+                section.style.opacity = "1";
+                section.style.transform = "translateY(0)";
+            } else {
+                section.dataset.expanding = "";
+                section.style.display = "none";
+                section.classList.add("coolauxv-collapsed");
+                section.style.maxHeight = "0px";
+                section.style.opacity = "0";
+                section.style.transform = "translateY(-4px)";
+            }
+        };
+
+        const setSectionAnimatedVisibility = (section, visible) => {
+            if (!section) return;
+            if (visible) {
+                if (isSectionExpanded(section)) return;
+                section.dataset.expanding = "true";
+                section.style.display = "block";
+                section.classList.add("coolauxv-collapsed");
+                section.style.maxHeight = "0px";
+                section.style.opacity = "0";
+                section.style.transform = "translateY(-4px)";
+                requestAnimationFrame(() => {
+                    const targetHeight = section.scrollHeight;
+                    section.style.maxHeight = `${targetHeight}px`;
+                    section.classList.remove("coolauxv-collapsed");
+                    section.style.opacity = "1";
+                    section.style.transform = "translateY(0)";
+                    const onEnd = (e) => {
+                        if (e.propertyName !== "max-height") return;
+                        if (!section.classList.contains("coolauxv-collapsed")) {
+                            section.style.maxHeight = "none";
+                        }
+                        section.dataset.expanding = "";
+                        section.removeEventListener("transitionend", onEnd);
+                    };
+                    section.addEventListener("transitionend", onEnd);
+                });
+                return;
+            }
+
+            if (section.style.display === "none") return;
+            section.dataset.expanding = "";
+            if (section.style.maxHeight === "none") {
+                section.style.maxHeight = `${section.scrollHeight}px`;
+            }
+            void section.offsetHeight;
+            section.classList.add("coolauxv-collapsed");
+            section.style.maxHeight = "0px";
+            section.style.opacity = "0";
+            section.style.transform = "translateY(-4px)";
+            const onEnd = (e) => {
+                if (e.propertyName !== "max-height") return;
+                if (section.classList.contains("coolauxv-collapsed")) {
+                    section.style.display = "none";
+                }
+                section.removeEventListener("transitionend", onEnd);
+            };
+            section.addEventListener("transitionend", onEnd);
+        };
+
+        const updateProviderToggleLabels = () => {
+            if (!providerSectionsContainer) return;
+            const sections = Array.from(providerSectionsContainer.querySelectorAll("[data-provider-section]"));
+            sections.forEach((section) => {
+                const providerId = section.dataset.providerSection;
+                const toggle = providerSectionsContainer.querySelector(`[data-provider-toggle="${providerId}"]`);
+                if (toggle) toggle.textContent = isSectionExpanded(section) ? "收起" : "展开";
             });
-        });
+            if (!btnToggleProviderAll) return;
+            if (!sections.length) return;
+            const allExpanded = sections.every((section) => isSectionExpanded(section));
+            btnToggleProviderAll.textContent = allExpanded ? "收起全部" : "展开全部";
+        };
+
+        const ensureProviderSectionStates = (templates, defaultProviderId) => {
+            templates.forEach((tpl) => {
+                if (!providerSectionStates.has(tpl.id)) {
+                    providerSectionStates.set(tpl.id, tpl.id === defaultProviderId);
+                }
+            });
+            Array.from(providerSectionStates.keys()).forEach((id) => {
+                if (!templates.some((tpl) => tpl.id === id)) {
+                    providerSectionStates.delete(id);
+                }
+            });
+        };
+
+        const applyProviderSectionStates = () => {
+            if (!providerSectionsContainer) return;
+            providerSectionsContainer.querySelectorAll("[data-provider-section]").forEach((section) => {
+                const providerId = section.dataset.providerSection;
+                const expanded = providerSectionStates.get(providerId);
+                setSectionStateInstant(section, !!expanded);
+            });
+            updateProviderToggleLabels();
+        };
+
+        const updateBatchModeUI = () => {
+            if (settingsRoot) {
+                settingsRoot.classList.toggle("coolauxv-batch-mode", isProviderBatchMode);
+            }
+            if (!providerSectionsContainer) return;
+            providerSectionsContainer.querySelectorAll(".coolauxv-provider-select").forEach((checkbox) => {
+                checkbox.checked = selectedProviderIds.has(checkbox.dataset.providerId);
+            });
+        };
+
+        const openProviderModal = (options = {}) => {
+            const mode = options.mode === "edit" ? "edit" : "add";
+            const templates = getProviderTemplates();
+            const existing = mode === "edit"
+                ? templates.find((tpl) => tpl.id === options.providerId)
+                : null;
+            const baseTemplate = existing ? cloneDeep(existing) : {
+                id: "",
+                label: "",
+                type: "chat-completions",
+                baseUrl: "",
+                apiKey: "",
+                apiKeyPlaceholder: "",
+                keyLink: "",
+                roles: { system: "system", user: "user", assistant: "assistant" },
+                headersTemplate: {
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer {{apiKey}}"
+                },
+                bodyTemplate: defaultBodyTemplateForType("chat-completions"),
+                stream: { parser: "chat-completions", deltaPath: "choices.0.delta.content", reasoningPath: "" },
+                supportsVision: false,
+                modelGroups: [{ id: "general", label: "通用模型", type: "text", models: [] }],
+                display: Object.assign({}, DEFAULT_DISPLAY_FIELDS),
+                customFields: {}
+            };
+            const displayState = Object.assign({}, DEFAULT_DISPLAY_FIELDS, baseTemplate.display || {});
+            let modelGroups = normalizeModelGroups(baseTemplate);
+            const customFieldsSeed = normalizeCustomFields(baseTemplate.customFields);
+            const customFieldMetaSeed = normalizeCustomFieldMeta(baseTemplate.customFieldMeta || baseTemplate.customFields, customFieldsSeed, baseTemplate.display || {});
+            if (baseTemplate.repo && !Object.prototype.hasOwnProperty.call(customFieldsSeed, "repo")) {
+                customFieldsSeed.repo = String(baseTemplate.repo || "");
+            }
+            if (baseTemplate.id) {
+                const secrets = getProviderSecretFields(baseTemplate.id);
+                Object.keys(customFieldsSeed).forEach((key) => {
+                    if (customFieldMetaSeed[key] && customFieldMetaSeed[key].masked) {
+                        if (Object.prototype.hasOwnProperty.call(secrets, key)) {
+                            customFieldsSeed[key] = secrets[key];
+                        }
+                    }
+                });
+            }
+            let customFieldList = Object.keys(customFieldsSeed).map((key) => ({
+                key: key,
+                value: customFieldsSeed[key],
+                display: customFieldMetaSeed[key] ? !!customFieldMetaSeed[key].display : true,
+                masked: customFieldMetaSeed[key] ? !!customFieldMetaSeed[key].masked : false
+            }));
+
+            const existingOverlay = document.getElementById("coolauxv-provider-modal-overlay");
+            if (existingOverlay && existingOverlay.parentNode) {
+                existingOverlay.parentNode.removeChild(existingOverlay);
+            }
+
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-provider-modal-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0, 0, 0, 0.5)",
+                zIndex: "2147483661",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backdropFilter: "blur(4px)",
+                opacity: "0",
+                transition: "opacity 0.2s"
+            });
+
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff",
+                width: "540px",
+                maxWidth: "92%",
+                maxHeight: "88vh",
+                display: "flex",
+                flexDirection: "column",
+                padding: "18px",
+                borderRadius: "12px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+                transform: "scale(0.96)",
+                transition: "transform 0.2s",
+                overflow: "hidden"
+            });
+
+            const titleText = mode === "edit" ? "⚙️ 高级选项" : "➕ 新增提供商";
+            const submitText = mode === "edit" ? "保存修改" : "保存";
+            const displayCheck = (key) => displayState[key] ? "checked" : "";
+            const idReadonly = mode === "edit" ? "readonly" : "";
+            const headersJson = formatTemplateJson(baseTemplate.headersTemplate);
+            const bodyJson = formatTemplateJson(baseTemplate.bodyTemplate);
+            const deltaPathVal = baseTemplate.stream && baseTemplate.stream.deltaPath ? baseTemplate.stream.deltaPath : "choices.0.delta.content";
+            const reasoningPathVal = baseTemplate.stream && baseTemplate.stream.reasoningPath ? baseTemplate.stream.reasoningPath : "";
+
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+                    <div style="font-size:18px; font-weight:800; color:#a516e8;">${titleText}</div>
+                    <button type="button" id="coolauxv-provider-modal-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
+                </div>
+                <div style="display:flex; gap:8px; margin-bottom:10px;">
+                    <button type="button" id="coolauxv-provider-mode-manual" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">手动填写</button>
+                    <button type="button" id="coolauxv-provider-mode-base64" class="coolauxv-action-btn" style="flex:1;">Base64 导入</button>
+                </div>
+                <div id="coolauxv-provider-form-body" style="flex:1; overflow-y:auto; padding-right:4px;">
+                    <div id="coolauxv-provider-form-manual" style="display:flex; flex-direction:column; gap:10px;">
+                        <div style="font-size:12px; font-weight:700; color:#666;">基础信息</div>
+                        <div class="coolauxv-sub-label">显示名称
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="label" ${displayCheck("label")}> 默认展示
+                            </label>
+                        </div>
+                        <input type="text" id="coolauxv-provider-form-label" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="例如：MyProvider" value="${escapeAttr(baseTemplate.label)}">
+
+                        <div class="coolauxv-sub-label">Provider ID (唯一)</div>
+                        <input type="text" id="coolauxv-provider-form-id" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="例如：my-provider" value="${escapeAttr(baseTemplate.id)}" ${idReadonly}>
+
+                        <div class="coolauxv-sub-label">Base URL (支持 {{自定义字段}})
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="baseUrl" ${displayCheck("baseUrl")}> 默认展示
+                            </label>
+                        </div>
+                        <input type="text" id="coolauxv-provider-form-base-url" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="https://api.example.com/v1/chat/completions" value="${escapeAttr(baseTemplate.baseUrl)}">
+
+                        <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">鉴权与链接</div>
+                        <div class="coolauxv-sub-label">API KEY (apiKey)
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="apiKey" ${displayCheck("apiKey")}> 默认展示
+                            </label>
+                        </div>
+                        <div style="font-size:11px; color:#888; margin-bottom:8px;">API KEY 请在主界面填写。</div>
+
+                        <div class="coolauxv-sub-label">API KEY Placeholder
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="apiKeyPlaceholder" ${displayCheck("apiKeyPlaceholder")}> 默认展示
+                            </label>
+                        </div>
+                        <input type="text" id="coolauxv-provider-form-api-key-placeholder" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认占位符" value="${escapeAttr(baseTemplate.apiKeyPlaceholder || "")}">
+
+                        <div class="coolauxv-sub-label">KEY 获取链接
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="keyLink" ${displayCheck("keyLink")}> 默认展示
+                            </label>
+                        </div>
+                        <input type="text" id="coolauxv-provider-form-key-link" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="https://..." value="${escapeAttr(baseTemplate.keyLink || "")}">
+
+                        <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">协议与角色</div>
+                        <div class="coolauxv-sub-label">协议类型
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="type" ${displayCheck("type")}> 默认展示
+                            </label>
+                        </div>
+                        <select id="coolauxv-provider-form-type" class="coolauxv-setting-input coolauxv-fixed-input">
+                            <option value="chat-completions" ${baseTemplate.type === "chat-completions" ? "selected" : ""}>Chat Completions</option>
+                            <option value="openai-responses" ${baseTemplate.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
+                        </select>
+
+                        <div class="coolauxv-sub-label">支持识图
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="supportsVision" ${displayCheck("supportsVision")}> 默认展示
+                            </label>
+                        </div>
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-provider-form-vision" ${baseTemplate.supportsVision ? "checked" : ""}> 允许识图
+                        </label>
+
+                        <div class="coolauxv-sub-label">角色名 (system / user / assistant)
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="roles" ${displayCheck("roles")}> 默认展示
+                            </label>
+                        </div>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <input type="text" id="coolauxv-provider-form-role-system" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="system" value="${escapeAttr(baseTemplate.roles.system)}">
+                            <input type="text" id="coolauxv-provider-form-role-user" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="user" value="${escapeAttr(baseTemplate.roles.user)}">
+                            <input type="text" id="coolauxv-provider-form-role-assistant" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="assistant" value="${escapeAttr(baseTemplate.roles.assistant)}">
+                        </div>
+
+                        <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">流式解析</div>
+                        <div class="coolauxv-sub-label">响应解析 (Delta / 推理路径)
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="streamDelta" ${displayCheck("streamDelta")}> Delta 默认展示
+                            </label>
+                            <label class="coolauxv-toggle-label" style="margin-left:6px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="streamReasoning" ${displayCheck("streamReasoning")}> 推理 默认展示
+                            </label>
+                        </div>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <input type="text" id="coolauxv-provider-form-delta-path" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="choices.0.delta.content" value="${escapeAttr(deltaPathVal)}">
+                            <input type="text" id="coolauxv-provider-form-reasoning-path" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="choices.0.delta.reasoning_content" value="${escapeAttr(reasoningPathVal)}">
+                        </div>
+
+                        <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">模板</div>
+                        <div class="coolauxv-sub-label">请求头模板 (JSON)
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="headersTemplate" ${displayCheck("headersTemplate")}> 默认展示
+                            </label>
+                        </div>
+                        <textarea id="coolauxv-provider-form-headers" class="coolauxv-setting-input coolauxv-resizable-input" rows="4">${escapeText(headersJson)}</textarea>
+
+                        <div class="coolauxv-sub-label">请求体模板 (JSON)
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="bodyTemplate" ${displayCheck("bodyTemplate")}> 默认展示
+                            </label>
+                        </div>
+                        <textarea id="coolauxv-provider-form-body-template" class="coolauxv-setting-input coolauxv-resizable-input" rows="4">${escapeText(bodyJson)}</textarea>
+
+                        <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">模型与自定义字段</div>
+                        <div class="coolauxv-sub-label">模型配置
+                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                <input type="checkbox" data-display-key="modelGroups" ${displayCheck("modelGroups")}> 默认展示
+                            </label>
+                        </div>
+                        <div id="coolauxv-provider-form-model-groups"></div>
+                        <button type="button" id="coolauxv-provider-add-group" class="coolauxv-action-btn" style="margin-top:6px;">➕ 添加分类</button>
+                        <div class="coolauxv-sub-label">自定义字段 (key => {{key}})</div>
+                        <div id="coolauxv-provider-form-custom-fields"></div>
+                        <button type="button" id="coolauxv-provider-add-custom-field" class="coolauxv-action-btn" style="margin-top:6px;">➕ 添加字段</button>
+                        <div style="font-size:11px; color:#888;">可在请求头/请求体/Base URL 中使用 {{key}}。</div>
+                    </div>
+
+                    <div id="coolauxv-provider-form-base64" style="display:none;">
+                        <div class="coolauxv-sub-label">Base64 文本</div>
+                        <textarea id="coolauxv-provider-form-base64-input" class="coolauxv-setting-input coolauxv-resizable-input" rows="8" placeholder="粘贴分享/导出的 Base64..."></textarea>
+                        <div style="font-size:11px; color:#888; margin-top:6px;">支持分享导出的文本、数组或单个提供商对象。</div>
+                    </div>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                    <button type="button" id="coolauxv-provider-modal-cancel" class="coolauxv-action-btn" style="flex:1;">取消</button>
+                    <button type="button" id="coolauxv-provider-modal-submit" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">${submitText}</button>
+                </div>
+            `;
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => {
+                overlay.style.opacity = "1";
+                box.style.transform = "scale(1)";
+            });
+
+            const closeModal = () => {
+                overlay.style.opacity = "0";
+                box.style.transform = "scale(0.96)";
+                setTimeout(() => {
+                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                }, 200);
+            };
+
+            const btnManual = box.querySelector("#coolauxv-provider-mode-manual");
+            const btnBase64 = box.querySelector("#coolauxv-provider-mode-base64");
+            const manualSection = box.querySelector("#coolauxv-provider-form-manual");
+            const base64Section = box.querySelector("#coolauxv-provider-form-base64");
+            const labelInput = box.querySelector("#coolauxv-provider-form-label");
+            const idInput = box.querySelector("#coolauxv-provider-form-id");
+            const typeInput = box.querySelector("#coolauxv-provider-form-type");
+            const headersInput = box.querySelector("#coolauxv-provider-form-headers");
+            const bodyInput = box.querySelector("#coolauxv-provider-form-body-template");
+            const deltaPathInput = box.querySelector("#coolauxv-provider-form-delta-path");
+            const reasoningPathInput = box.querySelector("#coolauxv-provider-form-reasoning-path");
+            const closeBtn = box.querySelector("#coolauxv-provider-modal-close");
+            const cancelBtn = box.querySelector("#coolauxv-provider-modal-cancel");
+            const submitBtn = box.querySelector("#coolauxv-provider-modal-submit");
+            const base64Input = box.querySelector("#coolauxv-provider-form-base64-input");
+            const modelGroupsContainer = box.querySelector("#coolauxv-provider-form-model-groups");
+            const addGroupBtn = box.querySelector("#coolauxv-provider-add-group");
+            const customFieldContainer = box.querySelector("#coolauxv-provider-form-custom-fields");
+            const addCustomFieldBtn = box.querySelector("#coolauxv-provider-add-custom-field");
+
+            let modeType = "manual";
+            let idTouched = false;
+
+            const setMode = (nextMode) => {
+                modeType = nextMode;
+                manualSection.style.display = modeType === "manual" ? "block" : "none";
+                base64Section.style.display = modeType === "base64" ? "block" : "none";
+                btnManual.classList.toggle("coolauxv-btn-primary", modeType === "manual");
+                btnBase64.classList.toggle("coolauxv-btn-primary", modeType === "base64");
+            };
+
+            const renderModelGroupsEditor = () => {
+                if (!modelGroupsContainer) return;
+                modelGroupsContainer.innerHTML = modelGroups.map((group, groupIndex) => {
+                    const modelsHtml = group.models.map((model, modelIndex) => `
+                        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
+                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" data-group-idx="${groupIndex}" data-model-idx="${modelIndex}" data-model-field="id" placeholder="模型名称" value="${escapeAttr(model.id || "")}">
+                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" data-group-idx="${groupIndex}" data-model-idx="${modelIndex}" data-model-field="class" placeholder="子类别" value="${escapeAttr(model.class || "")}">
+                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" data-group-idx="${groupIndex}" data-model-idx="${modelIndex}" data-model-field="tag" placeholder="Tag" value="${escapeAttr(model.tag || "")}">
+                            <button type="button" class="coolauxv-action-btn" data-action="remove-model" data-group-idx="${groupIndex}" data-model-idx="${modelIndex}" style="padding:4px 10px;">删除</button>
+                        </div>
+                    `).join("");
+
+                    return `
+                        <div style="border:1px solid #eee; border-radius:8px; padding:10px; margin-bottom:10px;">
+                            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                                <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" data-group-idx="${groupIndex}" data-group-field="label" placeholder="分类名称" value="${escapeAttr(group.label)}">
+                                <select class="coolauxv-setting-input coolauxv-fixed-input" data-group-idx="${groupIndex}" data-group-field="type">
+                                    <option value="text" ${group.type !== "vision" ? "selected" : ""}>通用模型</option>
+                                    <option value="vision" ${group.type === "vision" ? "selected" : ""}>视觉模型</option>
+                                </select>
+                                <button type="button" class="coolauxv-action-btn" data-action="remove-group" data-group-idx="${groupIndex}" style="padding:4px 10px;">删除分类</button>
+                            </div>
+                            ${modelsHtml || `<div style="font-size:12px; color:#999; margin-top:6px;">暂无模型，请添加。</div>`}
+                            <button type="button" class="coolauxv-action-btn" data-action="add-model" data-group-idx="${groupIndex}" style="margin-top:8px;">➕ 添加模型</button>
+                        </div>
+                    `;
+                }).join("");
+            };
+
+            const renderCustomFields = () => {
+                if (!customFieldContainer) return;
+                if (!customFieldList.length) {
+                    customFieldContainer.innerHTML = `<div style="font-size:12px; color:#999;">暂无自定义字段</div>`;
+                    return;
+                }
+                customFieldContainer.innerHTML = customFieldList.map((field, idx) => `
+                    <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:6px;" data-custom-index="${idx}">
+                        <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1; min-width:160px;" data-field="custom.key" placeholder="字段名 (key)" value="${escapeAttr(field.key || "")}">
+                        <input type="${field.masked ? "password" : "text"}" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1; min-width:160px;" data-field="custom.value" placeholder="字段值" value="${escapeAttr(field.value || "")}">
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" data-field="custom.display" ${field.display ? "checked" : ""}> 默认展示
+                        </label>
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" data-field="custom.masked" ${field.masked ? "checked" : ""}> 打码
+                        </label>
+                        <button type="button" class="coolauxv-action-btn" data-action="remove-custom" style="padding:4px 8px;">×</button>
+                    </div>
+                `).join("");
+            };
+
+            const ensureModelGroup = () => {
+                if (!modelGroups.length) {
+                    modelGroups = [{ id: "general", label: "通用模型", type: "text", models: [] }];
+                }
+            };
+
+            const buildModelGroupsPayload = () => {
+                ensureModelGroup();
+                return normalizeModelGroups({ modelGroups: modelGroups }).map((group, idx) => {
+                    const nextGroup = Object.assign({}, group);
+                    if (!nextGroup.id) {
+                        nextGroup.id = normalizeProviderId(`${nextGroup.label || "group"}-${idx + 1}`);
+                    }
+                    return nextGroup;
+                });
+            };
+
+            const buildCustomFieldsPayload = () => {
+                const output = {};
+                customFieldList.forEach((item) => {
+                    const key = normalizeTemplateKey(item.key);
+                    if (!key) return;
+                    output[key] = String(item.value !== undefined ? item.value : "");
+                });
+                return output;
+            };
+
+            const buildCustomFieldMetaPayload = () => {
+                const output = {};
+                customFieldList.forEach((item) => {
+                    const key = normalizeTemplateKey(item.key);
+                    if (!key) return;
+                    output[key] = {
+                        display: !!item.display,
+                        masked: !!item.masked
+                    };
+                });
+                return output;
+            };
+
+            const buildDisplayState = () => {
+                const next = Object.assign({}, displayState);
+                box.querySelectorAll("[data-display-key]").forEach((checkbox) => {
+                    const key = checkbox.dataset.displayKey;
+                    next[key] = !!checkbox.checked;
+                });
+                return next;
+            };
+
+            setMode("manual");
+            renderModelGroupsEditor();
+            renderCustomFields();
+
+            if (labelInput && idInput) {
+                labelInput.addEventListener("input", () => {
+                    if (idTouched || mode === "edit") return;
+                    const normalized = normalizeProviderId(labelInput.value);
+                    if (normalized) idInput.value = normalized;
+                });
+                idInput.addEventListener("input", () => {
+                    idTouched = true;
+                });
+            }
+
+            if (typeInput) {
+                typeInput.addEventListener("change", () => {
+                    if (bodyInput) {
+                        const nextType = typeInput.value === "openai-responses" ? "openai-responses" : "chat-completions";
+                        bodyInput.value = JSON.stringify(defaultBodyTemplateForType(nextType), null, 2);
+                    }
+                });
+            }
+
+            if (btnManual) btnManual.onclick = () => setMode("manual");
+            if (btnBase64) btnBase64.onclick = () => setMode("base64");
+            if (closeBtn) closeBtn.onclick = closeModal;
+            if (cancelBtn) cancelBtn.onclick = closeModal;
+            overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
+
+            if (modelGroupsContainer) {
+                modelGroupsContainer.addEventListener("click", (e) => {
+                    const target = e.target;
+                    if (!target || !(target instanceof HTMLElement)) return;
+                    const action = target.dataset.action;
+                    const groupIdx = parseInt(target.dataset.groupIdx || "", 10);
+                    if (Number.isNaN(groupIdx)) return;
+                    if (action === "add-model") {
+                        modelGroups[groupIdx].models.push({ id: "", class: "", tag: "" });
+                        renderModelGroupsEditor();
+                    }
+                    if (action === "remove-model") {
+                        const modelIdx = parseInt(target.dataset.modelIdx || "", 10);
+                        if (Number.isNaN(modelIdx)) return;
+                        modelGroups[groupIdx].models.splice(modelIdx, 1);
+                        renderModelGroupsEditor();
+                    }
+                    if (action === "remove-group") {
+                        modelGroups.splice(groupIdx, 1);
+                        renderModelGroupsEditor();
+                    }
+                });
+
+                modelGroupsContainer.addEventListener("input", (e) => {
+                    const target = e.target;
+                    if (!target || !(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return;
+                    const groupIdx = parseInt(target.dataset.groupIdx || "", 10);
+                    if (Number.isNaN(groupIdx)) return;
+                    if (target.dataset.groupField) {
+                        const field = target.dataset.groupField;
+                        modelGroups[groupIdx][field] = target.value;
+                        return;
+                    }
+                    const modelIdx = parseInt(target.dataset.modelIdx || "", 10);
+                    if (Number.isNaN(modelIdx)) return;
+                    const field = target.dataset.modelField;
+                    if (field) {
+                        modelGroups[groupIdx].models[modelIdx][field] = target.value;
+                    }
+                });
+            }
+
+            if (customFieldContainer) {
+                customFieldContainer.addEventListener("click", (e) => {
+                    const target = e.target;
+                    if (!target || !(target instanceof HTMLElement)) return;
+                    const action = target.dataset.action;
+                    if (action !== "remove-custom") return;
+                    const row = target.closest("[data-custom-index]");
+                    if (!row) return;
+                    const index = Number(row.dataset.customIndex);
+                    if (!Number.isFinite(index)) return;
+                    customFieldList.splice(index, 1);
+                    renderCustomFields();
+                });
+
+                customFieldContainer.addEventListener("input", (e) => {
+                    const target = e.target;
+                    if (!target || !(target instanceof HTMLInputElement)) return;
+                    const field = target.dataset.field;
+                    if (!field) return;
+                    const row = target.closest("[data-custom-index]");
+                    if (!row) return;
+                    const index = Number(row.dataset.customIndex);
+                    if (!Number.isFinite(index)) return;
+                    const item = customFieldList[index];
+                    if (!item) return;
+                    if (field === "custom.key") item.key = target.value;
+                    if (field === "custom.value") item.value = target.value;
+                    if (field === "custom.display") item.display = target.checked;
+                    if (field === "custom.masked") {
+                        item.masked = target.checked;
+                        renderCustomFields();
+                    }
+                });
+            }
+
+            if (addGroupBtn) {
+                addGroupBtn.onclick = () => {
+                    modelGroups.push({ id: "", label: "新分类", type: "text", models: [] });
+                    renderModelGroupsEditor();
+                };
+            }
+
+            if (addCustomFieldBtn) {
+                addCustomFieldBtn.onclick = () => {
+                    customFieldList.push({ key: "", value: "", display: true, masked: false });
+                    renderCustomFields();
+                };
+            }
+
+            if (submitBtn) {
+                submitBtn.onclick = () => {
+                    if (modeType === "base64") {
+                        const raw = (base64Input && base64Input.value || "").trim();
+                        if (!raw) {
+                            alert("请先粘贴 Base64 文本。");
+                            return;
+                        }
+                        let imported = null;
+                        try {
+                            const decoded = decodeBase64(raw);
+                            const payload = JSON.parse(decoded);
+                            if (payload && Array.isArray(payload.providers)) {
+                                imported = payload.providers;
+                            } else if (Array.isArray(payload)) {
+                                imported = payload;
+                            } else if (payload && typeof payload === "object") {
+                                imported = [payload];
+                            }
+                        } catch (e) {
+                            imported = null;
+                        }
+                        if (!imported) {
+                            alert("Base64 解析失败，请检查内容。");
+                            return;
+                        }
+                        const templates = getProviderTemplates().concat(imported);
+                        saveProviderTemplates(templates);
+                        sanitizeMaskedCustomFields(getProviderTemplates());
+                        renderProviderUI();
+                        closeModal();
+                        return;
+                    }
+
+                    const label = (labelInput && labelInput.value || "").trim();
+                    const idValue = (idInput && idInput.value || "").trim();
+                    const baseUrl = (box.querySelector("#coolauxv-provider-form-base-url") || {}).value || "";
+                    const apiKeyPlaceholder = (box.querySelector("#coolauxv-provider-form-api-key-placeholder") || {}).value || "";
+                    const keyLink = (box.querySelector("#coolauxv-provider-form-key-link") || {}).value || "";
+                    const type = typeInput && typeInput.value === "openai-responses" ? "openai-responses" : "chat-completions";
+                    const supportsVision = !!(box.querySelector("#coolauxv-provider-form-vision") || {}).checked;
+                    const roleSystem = (box.querySelector("#coolauxv-provider-form-role-system") || {}).value || "system";
+                    const roleUser = (box.querySelector("#coolauxv-provider-form-role-user") || {}).value || "user";
+                    const roleAssistant = (box.querySelector("#coolauxv-provider-form-role-assistant") || {}).value || "assistant";
+                    const deltaPath = (deltaPathInput && deltaPathInput.value || "").trim() || "choices.0.delta.content";
+                    const reasoningPath = (reasoningPathInput && reasoningPathInput.value || "").trim();
+                    const headersParsed = parseTemplateJson(headersInput ? headersInput.value.trim() : "");
+                    const bodyParsed = parseTemplateJson(bodyInput ? bodyInput.value.trim() : "");
+
+                    if (!headersParsed || !bodyParsed) {
+                        alert("JSON 解析失败，请检查请求头或请求体格式。");
+                        return;
+                    }
+
+                    const display = buildDisplayState();
+                    const groups = buildModelGroupsPayload();
+                    let customFields = buildCustomFieldsPayload();
+                    const customFieldMeta = buildCustomFieldMetaPayload();
+                    const apiKeyValue = existing ? existing.apiKey : "";
+                    const finalId = existing ? existing.id : normalizeProviderId(idValue || label || `provider-${Date.now().toString(36)}`);
+                    const finalLabel = label || finalId || "Provider";
+                    const prevMeta = existing ? getCustomFieldMetaMap(existing) : {};
+                    const prevSecrets = existing ? getProviderSecretFields(existing.id) : {};
+                    const nextSecrets = {};
+                    const nextCustomFields = {};
+                    Object.keys(customFields).forEach((key) => {
+                        const meta = customFieldMeta[key] || { display: true, masked: false };
+                        const wasMasked = prevMeta[key] ? !!prevMeta[key].masked : false;
+                        const source = wasMasked ? prevSecrets[key] : customFields[key];
+                        if (meta.masked) {
+                            if (source !== undefined && source !== null && String(source)) {
+                                nextSecrets[key] = String(source);
+                            }
+                            nextCustomFields[key] = "";
+                        } else {
+                            nextCustomFields[key] = source !== undefined && source !== null ? String(source) : "";
+                        }
+                    });
+                    setProviderSecretFields(finalId, nextSecrets);
+                    if (existing && existing.id && existing.id !== finalId) {
+                        clearProviderSecretFields(existing.id);
+                    }
+                    customFields = nextCustomFields;
+
+                    const template = ensureProviderTemplate({
+                        id: finalId,
+                        label: finalLabel,
+                        type: type,
+                        baseUrl: String(baseUrl || "").trim(),
+                        apiKey: apiKeyValue,
+                        apiKeyPlaceholder: String(apiKeyPlaceholder || "").trim(),
+                        keyLink: String(keyLink || "").trim(),
+                        roles: { system: roleSystem, user: roleUser, assistant: roleAssistant },
+                        headersTemplate: headersParsed,
+                        bodyTemplate: bodyParsed,
+                        stream: { parser: type, deltaPath: String(deltaPath || "").trim(), reasoningPath: String(reasoningPath || "").trim() },
+                        supportsVision: supportsVision,
+                        modelGroups: groups,
+                        display: display,
+                        customFields: customFields,
+                        customFieldMeta: customFieldMeta
+                    });
+
+                    if (!template) {
+                        alert("提供商信息无效，请检查必填项。");
+                        return;
+                    }
+
+                    const nextTemplates = existing
+                        ? templates.map((tpl) => tpl.id === existing.id ? template : tpl)
+                        : templates.concat(template);
+
+                    saveProviderTemplates(nextTemplates);
+                    renderProviderUI();
+                    closeModal();
+                };
+            }
+        };
+
+        const renderProviderRadioGroup = (templates, currentProviderId) => {
+            if (!providerRadioGroup) return;
+            providerRadioGroup.innerHTML = templates.map((provider) => {
+                const isChecked = provider.id === currentProviderId ? "checked" : "";
+                return `
+                    <label class="coolauxv-radio-label">
+                        <input type="radio" name="coolauxv_provider_radio" value="${provider.id}" ${isChecked}>
+                        <span class="coolauxv-radio-text">${escapeAttr(provider.label)}</span>
+                    </label>
+                `;
+            }).join("");
+        };
+
+        const renderProviderSections = (templates) => {
+            if (!providerSectionsContainer) return;
+            providerSectionsContainer.innerHTML = templates.map((provider) => {
+                const sectionId = `coolauxv-provider-section-${provider.id}`;
+                const keyInputId = `coolauxv-provider-key-${provider.id}`;
+                const typeLabel = provider.type === "openai-responses" ? "OpenAI Responses" : "Chat Completions";
+                const headersJson = formatTemplateJson(provider.headersTemplate);
+                const bodyJson = formatTemplateJson(provider.bodyTemplate);
+                const display = Object.assign({}, DEFAULT_DISPLAY_FIELDS, provider.display || {});
+                let fieldsHtml = "";
+
+                if (display.apiKey) {
+                    fieldsHtml += `
+                        <div class="coolauxv-sub-label">API KEY (apiKey)</div>
+                        <input type="password" id="${keyInputId}" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-clearable="true" data-provider-id="${provider.id}" data-provider-field="apiKey" placeholder="${escapeAttr(provider.apiKeyPlaceholder || "")}" value="${escapeAttr(provider.apiKey)}">
+                    `;
+                }
+
+                if (display.baseUrl) {
+                    fieldsHtml += `
+                        <div class="coolauxv-sub-label">Base URL (支持 {{自定义字段}})</div>
+                        <input type="text" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="baseUrl" data-rerender="true" value="${escapeAttr(provider.baseUrl)}">
+                    `;
+                }
+
+                if (display.label) {
+                    fieldsHtml += `
+                        <div class="coolauxv-sub-label">显示名称</div>
+                        <input type="text" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="label" value="${escapeAttr(provider.label)}">
+                    `;
+                }
+
+                if (display.apiKeyPlaceholder) {
+                    fieldsHtml += `
+                        <div class="coolauxv-sub-label">API KEY Placeholder</div>
+                        <input type="text" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="apiKeyPlaceholder" value="${escapeAttr(provider.apiKeyPlaceholder || "")}">
+                    `;
+                }
+
+                if (display.keyLink) {
+                    fieldsHtml += `
+                        <div class="coolauxv-sub-label">KEY 获取链接</div>
+                        <input type="text" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="keyLink" value="${escapeAttr(provider.keyLink || "")}">
+                    `;
+                }
+
+                const customKeys = Object.keys(provider.customFields || {});
+                if (customKeys.length) {
+                    const customMeta = getCustomFieldMetaMap(provider);
+                    const customValues = getTemplateCustomFields(provider);
+                    const visibleKeys = customKeys.filter((key) => (customMeta[key] ? customMeta[key].display : true));
+                    if (!visibleKeys.length) {
+                        fieldsHtml += `
+                            <div class="coolauxv-sub-label">自定义字段 (key => {{key}})</div>
+                            <div style="font-size:12px; color:#999;">暂无自定义字段，请使用高级选项添加。</div>
+                        `;
+                    } else {
+                        const hasMasked = visibleKeys.some((key) => customMeta[key] && customMeta[key].masked);
+                        const toggleText = hasMasked ? "👁️ 显示" : "";
+                        const toggleHtml = hasMasked
+                            ? `<span class="coolauxv-link-btn" data-action="toggle-custom-fields" data-provider-id="${provider.id}" style="margin-left:auto; cursor:pointer; user-select:none;">${toggleText}</span>`
+                            : "";
+                        fieldsHtml += `
+                            <div class="coolauxv-sub-label coolauxv-sub-label-inline">
+                                <span>自定义字段 (key => {{key}})</span>
+                                ${toggleHtml}
+                            </div>
+                        `;
+                        visibleKeys.forEach((key, idx) => {
+                            const value = customValues ? customValues[key] : "";
+                            const safeKey = normalizeProviderId(key) || `custom-${idx}`;
+                            const customInputId = `coolauxv-provider-custom-${provider.id}-${safeKey}-${idx}`;
+                            const isMasked = customMeta[key] ? !!customMeta[key].masked : false;
+                            const inputType = isMasked ? "password" : "text";
+                            fieldsHtml += `
+                                <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                                    <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1;" value="${escapeAttr(key)}" disabled>
+                                    <input type="${inputType}" id="${customInputId}" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" style="flex:1;" data-custom-mask="${isMasked ? "true" : "false"}" data-provider-id="${provider.id}" data-provider-field="customFields.${escapeAttr(key)}" value="${escapeAttr(value || "")}">
+                                </div>
+                            `;
+                        });
+                    }
+                }
+
+                if (display.roles) {
+                    fieldsHtml += `
+                        <div class="coolauxv-sub-label">角色名 (System / User / Assistant)</div>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="roles.system" placeholder="system" value="${escapeAttr(provider.roles.system)}">
+                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="roles.user" placeholder="user" value="${escapeAttr(provider.roles.user)}">
+                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="roles.assistant" placeholder="assistant" value="${escapeAttr(provider.roles.assistant)}">
+                        </div>
+                    `;
+                }
+
+                if (display.type || display.supportsVision) {
+                    fieldsHtml += `
+                        <div class="coolauxv-sub-label">协议类型</div>
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            ${display.type ? `
+                                <select class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="type" data-rerender="true">
+                                    <option value="chat-completions" ${provider.type === "chat-completions" ? "selected" : ""}>Chat Completions</option>
+                                    <option value="openai-responses" ${provider.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
+                                </select>
+                            ` : ""}
+                            ${display.supportsVision ? `
+                                <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                    <input type="checkbox" data-provider-id="${provider.id}" data-provider-field="supportsVision" ${provider.supportsVision ? "checked" : ""}>支持识图
+                                </label>
+                            ` : ""}
+                            <span style="font-size:11px; color:#888;">当前: ${typeLabel}</span>
+                        </div>
+                    `;
+                }
+
+                if (provider.type === "chat-completions" && (display.streamDelta || display.streamReasoning)) {
+                    fieldsHtml += `
+                        <div class="coolauxv-sub-label">响应解析 (Delta / 推理路径)</div>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            ${display.streamDelta ? `
+                                <input type="text" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="stream.deltaPath" placeholder="choices.0.delta.content" value="${escapeAttr(provider.stream.deltaPath)}">
+                            ` : ""}
+                            ${display.streamReasoning ? `
+                                <input type="text" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="stream.reasoningPath" placeholder="choices.0.delta.reasoning_content" value="${escapeAttr(provider.stream.reasoningPath || "")}">
+                            ` : ""}
+                        </div>
+                    `;
+                }
+
+                if (display.headersTemplate) {
+                    fieldsHtml += `
+                        <div class="coolauxv-sub-label">请求头模板 (JSON)</div>
+                        <textarea class="coolauxv-setting-input coolauxv-resizable-input coolauxv-provider-input coolauxv-provider-json" data-provider-id="${provider.id}" data-provider-field="headersTemplate">${escapeText(headersJson)}</textarea>
+                    `;
+                }
+
+                if (display.bodyTemplate) {
+                    fieldsHtml += `
+                        <div class="coolauxv-sub-label">请求体模板 (JSON)</div>
+                        <textarea class="coolauxv-setting-input coolauxv-resizable-input coolauxv-provider-input coolauxv-provider-json" data-provider-id="${provider.id}" data-provider-field="bodyTemplate">${escapeText(bodyJson)}</textarea>
+                    `;
+                }
+
+                if (!fieldsHtml.trim()) {
+                    fieldsHtml = `<div style="font-size:12px; color:#999;">暂无默认展示项，请点击高级选项配置。</div>`;
+                }
+                const fieldBlock = `<div style="display:flex; flex-direction:column; gap:8px;">${fieldsHtml}</div>`;
+                return `
+                    <div class="coolauxv-setting-group" data-provider-id="${provider.id}">
+                        <label class="coolauxv-setting-label">
+                            <span class="coolauxv-provider-checkbox">
+                                <input type="checkbox" class="coolauxv-provider-select" data-provider-id="${provider.id}">
+                            </span>
+                            <span class="coolauxv-provider-title">${escapeAttr(provider.label)}</span>
+                            <span class="coolauxv-provider-subtitle">提供商</span>
+                            <span class="coolauxv-link-btn" data-provider-toggle="${provider.id}" style="margin-left:auto; cursor:pointer; user-select:none;">收起</span>
+                            <span class="coolauxv-link-btn" data-action="edit-provider" data-provider-id="${provider.id}" style="cursor:pointer; user-select:none;">⚙️ 高级选项</span>
+                            ${display.apiKey ? `<span class="coolauxv-link-btn" data-action="toggle-key" data-target="${keyInputId}" style="cursor:pointer; user-select:none;">👁️ 显示</span>` : ""}
+                            <span class="coolauxv-link-btn" data-action="delete-provider" data-provider-id="${provider.id}" style="cursor:pointer; user-select:none;">🗑 删除</span>
+                            ${provider.keyLink ? `<a href="${provider.keyLink}" target="_blank" class="coolauxv-link-btn" title="获取 KEY">🔑 获取KEY</a>` : ""}
+                        </label>
+                        <div id="${sectionId}" class="coolauxv-collapse-section" data-provider-section="${provider.id}">
+                            ${fieldBlock}
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        };
+
+        const renderModelProviderSelect = (templates, fallbackProviderId) => {
+            if (!inputModelProvider) return "";
+            const selected = resolveProviderId(GM_getValue("coolauxv_model_provider", fallbackProviderId), templates);
+            inputModelProvider.innerHTML = templates.map((provider) => `<option value="${provider.id}">${escapeAttr(provider.label)}</option>`).join("");
+            inputModelProvider.value = selected;
+            if (selected !== GM_getValue("coolauxv_model_provider", "")) {
+                GM_setValue("coolauxv_model_provider", selected);
+            }
+            return selected;
+        };
+
+        const renderModelSections = (templates, selectedProviderId) => {
+            if (!modelSectionsContainer) return;
+            modelSectionsContainer.innerHTML = templates.map((provider) => {
+                const isVisible = provider.id === selectedProviderId;
+                const groups = Array.isArray(provider.modelGroups) ? provider.modelGroups : [];
+                const showModels = provider.display ? provider.display.modelGroups !== false : true;
+                const groupBlocks = showModels
+                    ? groups.map((group) => {
+                        const selectedModel = group.selectedModel || (group.models && group.models[0] ? (group.models[0].id || group.models[0].name || "") : "");
+                        const groupButtons = buildModelButtonsHTML(group, provider.id);
+                        const typeLabel = group.type === "vision" ? "视觉模型" : "通用模型";
+                        return `
+                            <div class="coolauxv-setting-group">
+                                <label class="coolauxv-setting-label">
+                                    ${escapeAttr(provider.label)} · ${escapeAttr(group.label)}
+                                    <span class="coolauxv-sub-label" style="margin:0 0 0 6px;">${typeLabel} · model</span>
+                                </label>
+                                <input type="text" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-clearable="true" data-provider-id="${provider.id}" data-group-id="${group.id}" data-group-field="selectedModel" placeholder="默认: ${escapeAttr(selectedModel)}" value="${escapeAttr(selectedModel)}">
+                                ${groupButtons}
+                            </div>
+                        `;
+                    }).join("")
+                    : `
+                        <div class="coolauxv-setting-group">
+                            <label class="coolauxv-setting-label">模型配置已隐藏</label>
+                            <div style="font-size:12px; color:#999;">可在高级选项中开启“默认展示”。</div>
+                        </div>
+                    `;
+
+                return `
+                    <div class="coolauxv-model-provider-section${isVisible ? " coolauxv-model-visible" : ""}" data-model-provider-section="${provider.id}">
+                        ${groupBlocks}
+                    </div>
+                `;
+            }).join("");
+        };
+
+        const setModelSectionAnimatedVisibility = (section, visible) => {
+            if (!section) return;
+            if (visible) {
+                if (section.classList.contains("coolauxv-model-visible")) return;
+                section.style.maxHeight = "0px";
+                section.classList.add("coolauxv-model-visible");
+                requestAnimationFrame(() => {
+                    const targetHeight = section.scrollHeight;
+                    section.style.maxHeight = `${targetHeight}px`;
+                    const onEnd = (e) => {
+                        if (e.propertyName !== "max-height") return;
+                        if (section.classList.contains("coolauxv-model-visible")) {
+                            section.style.maxHeight = "none";
+                        }
+                        section.removeEventListener("transitionend", onEnd);
+                    };
+                    section.addEventListener("transitionend", onEnd);
+                });
+                return;
+            }
+            if (!section.classList.contains("coolauxv-model-visible")) return;
+            if (section.style.maxHeight === "none") {
+                section.style.maxHeight = `${section.scrollHeight}px`;
+            }
+            void section.offsetHeight;
+            section.classList.remove("coolauxv-model-visible");
+            section.style.maxHeight = "0px";
+        };
+
+        const applyModelProviderUI = (providerId) => {
+            if (!modelSectionsContainer) return;
+            modelSectionsContainer.querySelectorAll("[data-model-provider-section]").forEach((section) => {
+                const sectionId = section.dataset.modelProviderSection;
+                setModelSectionAnimatedVisibility(section, sectionId === providerId);
+            });
+        };
+
+        const attachProviderClearButtons = () => {
+            if (!providerSectionsContainer) return;
+            providerSectionsContainer.querySelectorAll("[data-clearable=\"true\"]").forEach((input) => attachClearButton(input));
+            if (modelSectionsContainer) {
+                modelSectionsContainer.querySelectorAll("[data-clearable=\"true\"]").forEach((input) => attachClearButton(input));
+            }
+        };
+
+        const renderProviderUI = () => {
+            const templates = getProviderTemplates();
+            const defaultProviderId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), templates);
+            if (defaultProviderId !== GM_getValue("coolauxv_default_provider", "")) {
+                GM_setValue("coolauxv_default_provider", defaultProviderId);
+            }
+            ensureProviderSectionStates(templates, defaultProviderId);
+            renderProviderRadioGroup(templates, defaultProviderId);
+            renderProviderSections(templates);
+            const selectedModelProvider = renderModelProviderSelect(templates, defaultProviderId);
+            renderModelSections(templates, selectedModelProvider);
+            applyProviderSectionStates();
+            updateProviderToggleLabels();
+            updateBatchModeUI();
+            syncAllClearButtons();
+            attachProviderClearButtons();
+            if (GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS)) {
+                const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
+                modelBtns.forEach((btn) => btn.classList.add("coolauxv-blur-glass-style-btn"));
+            }
+        };
+
+        renderProviderUI();
+
+        if (providerRadioGroup) {
+            providerRadioGroup.addEventListener("change", (e) => {
+                const target = e.target;
+                if (!target || target.name !== "coolauxv_provider_radio") return;
+                if (!target.checked) return;
+                const templates = getProviderTemplates();
+                const providerId = resolveProviderId(target.value, templates);
+                GM_setValue("coolauxv_default_provider", providerId);
+                if (inputModelProvider) {
+                    inputModelProvider.value = providerId;
+                    GM_setValue("coolauxv_model_provider", providerId);
+                    applyModelProviderUI(providerId);
+                }
+                syncChatProvider(providerId);
+                const expandedCount = Array.from(providerSectionStates.values()).filter(Boolean).length;
+                providerSectionStates.forEach((_, id) => {
+                    if (id === providerId) providerSectionStates.set(id, true);
+                    else if (expandedCount <= 1) providerSectionStates.set(id, false);
+                });
+                if (providerSectionsContainer) {
+                    providerSectionsContainer.querySelectorAll("[data-provider-section]").forEach((section) => {
+                        const sectionId = section.dataset.providerSection;
+                        const targetOpen = providerSectionStates.get(sectionId);
+                        setSectionAnimatedVisibility(section, !!targetOpen);
+                    });
+                    updateProviderToggleLabels();
+                }
+            });
+        }
+
+        if (providerSectionsContainer) {
+            providerSectionsContainer.addEventListener("click", (e) => {
+                const target = e.target;
+                if (!target) return;
+                const action = target.dataset.action;
+                if (action === "toggle-key") {
+                    const inputId = target.dataset.target;
+                    const input = inputId ? popup.querySelector(`#${inputId}`) : null;
+                    if (!input) return;
+                    if (input.type === "password") {
+                        input.type = "text";
+                        target.innerText = "🔒 隐藏";
+                    } else {
+                        input.type = "password";
+                        target.innerText = "👁️ 显示";
+                    }
+                    return;
+                }
+                if (action === "toggle-custom-fields") {
+                    const providerId = target.dataset.providerId;
+                    if (!providerId) return;
+                    const inputs = providerSectionsContainer.querySelectorAll(`[data-provider-id="${providerId}"][data-custom-mask="true"]`);
+                    if (!inputs.length) return;
+                    const shouldShow = Array.from(inputs).some((input) => input.type === "password");
+                    inputs.forEach((input) => {
+                        input.type = shouldShow ? "text" : "password";
+                    });
+                    target.innerText = shouldShow ? "🔒 隐藏" : "👁️ 显示";
+                    return;
+                }
+                if (action === "edit-provider") {
+                    const providerId = target.dataset.providerId;
+                    if (!providerId) return;
+                    openProviderModal({ mode: "edit", providerId: providerId });
+                    return;
+                }
+                if (action === "delete-provider") {
+                    const providerId = target.dataset.providerId;
+                    if (!providerId) return;
+                    if (!confirm(`确定要删除提供商 ${providerId} 吗？`)) return;
+                    let templates = getProviderTemplates().filter((tpl) => tpl.id !== providerId);
+                    if (!templates.length) {
+                        templates = getDefaultProviderTemplates();
+                    }
+                    saveProviderTemplates(templates);
+                    clearProviderSecretFields(providerId);
+                    selectedProviderIds.delete(providerId);
+                    renderProviderUI();
+                    return;
+                }
+                const toggleId = target.dataset.providerToggle;
+                if (toggleId) {
+                    const section = providerSectionsContainer.querySelector(`[data-provider-section="${toggleId}"]`);
+                    if (!section) return;
+                    const shouldExpand = !isSectionExpanded(section);
+                    providerSectionStates.set(toggleId, shouldExpand);
+                    setSectionAnimatedVisibility(section, shouldExpand);
+                    updateProviderToggleLabels();
+                }
+            });
+
+            providerSectionsContainer.addEventListener("change", (e) => {
+                const target = e.target;
+                if (!target) return;
+                if (target.classList.contains("coolauxv-provider-select")) {
+                    const providerId = target.dataset.providerId;
+                    if (!providerId) return;
+                    if (target.checked) selectedProviderIds.add(providerId);
+                    else selectedProviderIds.delete(providerId);
+                    return;
+                }
+                const providerId = target.dataset.providerId;
+                const field = target.dataset.providerField;
+                if (!providerId || !field) return;
+                const templates = getProviderTemplates();
+                const tpl = templates.find((item) => item.id === providerId);
+                if (!tpl) return;
+
+                if (field === "type") {
+                    const previousType = tpl.type;
+                    const nextType = target.value === "openai-responses" ? "openai-responses" : "chat-completions";
+                    tpl.type = nextType;
+                    tpl.stream.parser = nextType;
+                    if (nextType === "chat-completions" && !tpl.stream.deltaPath) {
+                        tpl.stream.deltaPath = "choices.0.delta.content";
+                    }
+                    if (previousType !== nextType) {
+                        const defaultBody = defaultBodyTemplateForType(previousType);
+                        if (JSON.stringify(tpl.bodyTemplate || {}) === JSON.stringify(defaultBody)) {
+                            tpl.bodyTemplate = defaultBodyTemplateForType(nextType);
+                        }
+                    }
+                    saveProviderTemplates(templates);
+                    renderProviderUI();
+                    return;
+                }
+
+                if (target.classList.contains("coolauxv-provider-json")) {
+                    const parsed = parseTemplateJson(target.value.trim());
+                    if (!parsed) {
+                        alert("JSON 解析失败，请检查格式。");
+                        renderProviderUI();
+                        return;
+                    }
+                    if (field === "headersTemplate") tpl.headersTemplate = parsed;
+                    if (field === "bodyTemplate") tpl.bodyTemplate = parsed;
+                    saveProviderTemplates(templates);
+                    return;
+                }
+
+                if (field === "supportsVision") {
+                    tpl.supportsVision = target.checked;
+                    saveProviderTemplates(templates);
+                    renderProviderUI();
+                    return;
+                }
+
+                if (field === "label") {
+                    tpl.label = target.value.trim() || tpl.id;
+                    saveProviderTemplates(templates);
+                    renderProviderUI();
+                    return;
+                }
+
+                if (field === "baseUrl") {
+                    tpl.baseUrl = target.value.trim();
+                    saveProviderTemplates(templates);
+                    renderProviderUI();
+                    return;
+                }
+
+                if (field.startsWith("roles.")) {
+                    const roleKey = field.split(".")[1];
+                    tpl.roles[roleKey] = target.value.trim() || roleKey;
+                    saveProviderTemplates(templates);
+                    return;
+                }
+
+                if (field.startsWith("stream.")) {
+                    const streamKey = field.split(".")[1];
+                    tpl.stream[streamKey] = target.value.trim();
+                    saveProviderTemplates(templates);
+                    return;
+                }
+
+                if (field.startsWith("customFields.")) {
+                    const key = field.split(".").slice(1).join(".");
+                    const meta = getCustomFieldMetaMap(tpl);
+                    const isMasked = meta[key] ? !!meta[key].masked : false;
+                    if (isMasked) {
+                        updateProviderSecretField(tpl.id, key, target.value);
+                        tpl.customFields = normalizeCustomFields(tpl.customFields);
+                        if (!Object.prototype.hasOwnProperty.call(tpl.customFields, key)) {
+                            tpl.customFields[key] = "";
+                        } else if (tpl.customFields[key] !== "") {
+                            tpl.customFields[key] = "";
+                        }
+                        saveProviderTemplates(templates);
+                        return;
+                    }
+                    updateProviderSecretField(tpl.id, key, "");
+                    tpl.customFields = normalizeCustomFields(tpl.customFields);
+                    tpl.customFields[key] = target.value;
+                    saveProviderTemplates(templates);
+                    return;
+                }
+
+                tpl[field] = target.value;
+                saveProviderTemplates(templates);
+            });
+
+            providerSectionsContainer.addEventListener("input", (e) => {
+                const target = e.target;
+                if (!target || !target.dataset) return;
+                const providerId = target.dataset.providerId;
+                const field = target.dataset.providerField;
+                if (!providerId || !field) return;
+                if (target.classList.contains("coolauxv-provider-json")) return;
+                const templates = getProviderTemplates();
+                const tpl = templates.find((item) => item.id === providerId);
+                if (!tpl) return;
+                if (field === "label" || field === "baseUrl" || field === "type") return;
+                if (field === "supportsVision") return;
+                if (field.startsWith("roles.")) {
+                    const roleKey = field.split(".")[1];
+                    tpl.roles[roleKey] = target.value.trim();
+                    saveProviderTemplates(templates);
+                    return;
+                }
+                if (field.startsWith("stream.")) {
+                    const streamKey = field.split(".")[1];
+                    tpl.stream[streamKey] = target.value.trim();
+                    saveProviderTemplates(templates);
+                    return;
+                }
+                if (field.startsWith("customFields.")) {
+                    const key = field.split(".").slice(1).join(".");
+                    const meta = getCustomFieldMetaMap(tpl);
+                    const isMasked = meta[key] ? !!meta[key].masked : false;
+                    if (isMasked) {
+                        updateProviderSecretField(tpl.id, key, target.value);
+                        tpl.customFields = normalizeCustomFields(tpl.customFields);
+                        if (!Object.prototype.hasOwnProperty.call(tpl.customFields, key)) {
+                            tpl.customFields[key] = "";
+                        } else if (tpl.customFields[key] !== "") {
+                            tpl.customFields[key] = "";
+                        }
+                        saveProviderTemplates(templates);
+                        return;
+                    }
+                    updateProviderSecretField(tpl.id, key, "");
+                    tpl.customFields = normalizeCustomFields(tpl.customFields);
+                    tpl.customFields[key] = target.value;
+                    saveProviderTemplates(templates);
+                    return;
+                }
+                tpl[field] = target.value;
+                saveProviderTemplates(templates);
+            });
+        }
+
+        if (modelSectionsContainer) {
+            modelSectionsContainer.addEventListener("click", (e) => {
+                const btn = e.target.closest(".coolauxv-model-btn");
+                if (!btn) return;
+                const providerId = btn.dataset.providerId;
+                const groupId = btn.dataset.groupId;
+                const value = btn.dataset.val;
+                if (!providerId || !groupId || !value) return;
+                const templates = getProviderTemplates();
+                const tpl = templates.find((item) => item.id === providerId);
+                if (!tpl) return;
+                const group = tpl.modelGroups.find((item) => item.id === groupId);
+                if (!group) return;
+                group.selectedModel = value;
+                saveProviderTemplates(templates);
+                const input = modelSectionsContainer.querySelector(`[data-provider-id="${providerId}"][data-group-id="${groupId}"][data-group-field="selectedModel"]`);
+                if (input) {
+                    input.value = value;
+                    if (typeof input._coolauxvSyncClear === "function") input._coolauxvSyncClear();
+                }
+            });
+
+            modelSectionsContainer.addEventListener("input", (e) => {
+                const target = e.target;
+                if (!target || !target.dataset) return;
+                const providerId = target.dataset.providerId;
+                const groupId = target.dataset.groupId;
+                const field = target.dataset.groupField;
+                if (!providerId || !groupId || field !== "selectedModel") return;
+                const templates = getProviderTemplates();
+                const tpl = templates.find((item) => item.id === providerId);
+                if (!tpl) return;
+                const group = tpl.modelGroups.find((item) => item.id === groupId);
+                if (!group) return;
+                group.selectedModel = target.value.trim();
+                saveProviderTemplates(templates);
+            });
+        }
+
+        if (btnProviderAdd) {
+            btnProviderAdd.addEventListener("click", () => {
+                openProviderModal({ mode: "add" });
+            });
+        }
+
+        if (btnProviderBatch) {
+            btnProviderBatch.addEventListener("click", () => {
+                isProviderBatchMode = !isProviderBatchMode;
+                if (!isProviderBatchMode) {
+                    selectedProviderIds.clear();
+                }
+                updateBatchModeUI();
+            });
+        }
+
+        if (btnProviderShare) {
+            btnProviderShare.addEventListener("click", () => {
+                if (!selectedProviderIds.size) {
+                    alert("请先选择要分享的提供商。");
+                    return;
+                }
+                const templates = getProviderTemplates()
+                    .filter((tpl) => selectedProviderIds.has(tpl.id))
+                    .map((tpl) => {
+                        const clone = cloneDeep(tpl);
+                        clone.apiKey = "";
+                        if (clone.customFields) {
+                            const meta = getCustomFieldMetaMap(clone);
+                            Object.keys(clone.customFields).forEach((key) => {
+                                if (meta[key] && meta[key].masked) {
+                                    clone.customFields[key] = "";
+                                }
+                            });
+                        }
+                        return clone;
+                    });
+                const payload = encodeBase64(JSON.stringify({ version: PROVIDER_SHARE_VERSION, providers: templates }));
+                if (!payload) {
+                    alert("分享失败，请稍后重试。");
+                    return;
+                }
+                if (typeof GM_setClipboard !== "undefined") {
+                    GM_setClipboard(payload, "text");
+                    alert("已生成分享文本并复制到剪贴板。");
+                } else {
+                    prompt("分享文本已生成，请复制：", payload);
+                }
+            });
+        }
+
+        if (btnProviderBatchDelete) {
+            btnProviderBatchDelete.addEventListener("click", () => {
+                if (!selectedProviderIds.size) {
+                    alert("请先选择要删除的提供商。");
+                    return;
+                }
+                if (!confirm("确定要删除选中的提供商吗？")) return;
+                let templates = getProviderTemplates().filter((tpl) => !selectedProviderIds.has(tpl.id));
+                if (!templates.length) {
+                    templates = getDefaultProviderTemplates();
+                }
+                saveProviderTemplates(templates);
+                selectedProviderIds.forEach((providerId) => clearProviderSecretFields(providerId));
+                selectedProviderIds.clear();
+                renderProviderUI();
+            });
+        }
+
+        if (btnToggleProviderAll) {
+            btnToggleProviderAll.addEventListener("click", () => {
+                if (!providerSectionsContainer) return;
+                const sections = Array.from(providerSectionsContainer.querySelectorAll("[data-provider-section]"));
+                if (!sections.length) return;
+                const allExpanded = sections.every((section) => isSectionExpanded(section));
+                sections.forEach((section) => {
+                    const providerId = section.dataset.providerSection;
+                    const nextState = !allExpanded;
+                    providerSectionStates.set(providerId, nextState);
+                    setSectionAnimatedVisibility(section, nextState);
+                });
+                updateProviderToggleLabels();
+            });
+        }
 
         if (inputModelProvider) {
             inputModelProvider.addEventListener("change", (e) => {
-                const provider = e.target.value || DEFAULT_MODEL_PROVIDER;
-                GM_setValue("coolauxv_model_provider", provider);
-                applyModelProviderUI(provider);
+                const templates = getProviderTemplates();
+                const providerId = resolveProviderId(e.target.value || DEFAULT_MODEL_PROVIDER, templates);
+                GM_setValue("coolauxv_model_provider", providerId);
+                applyModelProviderUI(providerId);
             });
         }
 
@@ -2066,21 +4412,9 @@
         }
 
         const loadConfig = () => {
-            const defaultProvider = GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER);
-            const modelProvider = GM_getValue("coolauxv_model_provider", defaultProvider);
+            providerTemplatesCache = null;
+            renderProviderUI();
 
-            if (inputZhipuKey) {
-                inputZhipuKey.value = GM_getValue("coolauxv_zhipu_api_key", "") || GM_getValue("coolauxv_api_key", "");
-            }
-            if (inputOpenaiKey) {
-                inputOpenaiKey.value = GM_getValue("coolauxv_openai_api_key", "");
-            }
-            if (inputZhipuModel) {
-                inputZhipuModel.value = GM_getValue("coolauxv_zhipu_model_name", "") || GM_getValue("coolauxv_model_name", "");
-            }
-            if (inputOpenaiModel) {
-                inputOpenaiModel.value = GM_getValue("coolauxv_openai_model_name", "");
-            }
             if (inputWidth) inputWidth.value = GM_getValue("coolauxv_win_width", "");
             if (inputHeight) inputHeight.value = GM_getValue("coolauxv_win_height", "");
             if (inputPromptTrans) inputPromptTrans.value = GM_getValue("coolauxv_prompt_trans", "");
@@ -2091,7 +4425,7 @@
             if (inputAppendVision) inputAppendVision.checked = GM_getValue("coolauxv_append_vision", false);
             if (inputAppendChat) inputAppendChat.checked = GM_getValue("coolauxv_append_chat", false);
 
-            const currentLevel = GM_getValue("coolauxv_log_level", DEFAULT_LOG_LEVEL); // 这里的默认值要与常量一致
+            const currentLevel = GM_getValue("coolauxv_log_level", DEFAULT_LOG_LEVEL);
             const targetRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="${currentLevel}"]`);
             if (targetRadio) targetRadio.checked = true;
 
@@ -2106,25 +4440,15 @@
             }
             if (inputNewScreenshot) {
                 let val = GM_getValue("coolauxv_use_new_screenshot", DEFAULT_USE_NEW_SCREENSHOT);
-                // 兼容旧版配置 (true->v2, false->v1)
                 if (val === true) val = "v2";
                 if (val === false) val = "v1";
                 inputNewScreenshot.value = val;
             }
-            if (inputZhipuModelVision) {
-                inputZhipuModelVision.value = GM_getValue("coolauxv_zhipu_model_vision", "") || GM_getValue("coolauxv_model_vision", "");
-            }
+            if (inputMinimizeAnim) inputMinimizeAnim.checked = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
             if (inputPromptVision) inputPromptVision.value = GM_getValue("coolauxv_prompt_vision", "");
             if (inputContinuousChat) inputContinuousChat.checked = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
 
-            providerRadioBtns.forEach((radio) => {
-                radio.checked = radio.value === defaultProvider;
-            });
-
-            if (inputModelProvider) {
-                inputModelProvider.value = modelProvider;
-                applyModelProviderUI(modelProvider);
-            }
+            syncAllClearButtons();
         };
 
         const refreshConfigUI = () => {
@@ -2142,6 +4466,7 @@
                 if (val === false) val = "v1";
                 inputNewScreenshot.value = val;
             }
+            if (inputMinimizeAnim) inputMinimizeAnim.checked = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
             if (inputAppendTrans) inputAppendTrans.checked = GM_getValue("coolauxv_append_trans", false);
             if (inputAppendExplain) inputAppendExplain.checked = GM_getValue("coolauxv_append_explain", false);
             if (inputAppendVision) inputAppendVision.checked = GM_getValue("coolauxv_append_vision", false);
@@ -2153,8 +4478,39 @@
             }
         };
 
-        const exportConfig = () => {
+        const buildExportSnapshot = (includePrivacy) => {
             const snapshot = snapshotConfig();
+            const rawTemplates = snapshot[PROVIDER_TEMPLATE_STORAGE_KEY];
+            if (!Array.isArray(rawTemplates)) {
+                return snapshot;
+            }
+            const secrets = loadProviderSecretStore();
+            const templates = normalizeProviderTemplates(rawTemplates);
+            snapshot[PROVIDER_TEMPLATE_STORAGE_KEY] = templates.map((tpl) => {
+                const clone = cloneDeep(tpl);
+                if (!includePrivacy) {
+                    clone.apiKey = "";
+                }
+                const meta = getCustomFieldMetaMap(clone);
+                const keys = Object.keys(clone.customFields || {});
+                keys.forEach((key) => {
+                    if (meta[key] && meta[key].masked) {
+                        if (includePrivacy) {
+                            const secretVal = secrets[clone.id] && secrets[clone.id][key];
+                            clone.customFields[key] = secretVal !== undefined && secretVal !== null ? String(secretVal) : "";
+                        } else {
+                            clone.customFields[key] = "";
+                        }
+                    }
+                });
+                return clone;
+            });
+            return snapshot;
+        };
+
+        const exportConfig = () => {
+            const includePrivacy = confirm("导出配置是否包含隐私信息（如 API KEY、打码字段）？\n确定=包含，取消=不包含");
+            const snapshot = buildExportSnapshot(includePrivacy);
             const payload = encodeBase64(JSON.stringify(snapshot));
             if (!payload) {
                 alert("导出失败，请稍后重试。");
@@ -2162,10 +4518,18 @@
             }
             if (typeof GM_setClipboard !== "undefined") {
                 GM_setClipboard(payload, "text");
-            } else if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(payload).catch(() => { });
+                alert("配置已导出并复制到剪贴板。");
+                return;
             }
-            alert("配置已导出并复制到剪贴板。");
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(payload)
+                    .then(() => alert("配置已导出并复制到剪贴板。"))
+                    .catch(() => {
+                        prompt("配置已导出，请复制以下文本：", payload);
+                    });
+                return;
+            }
+            prompt("配置已导出，请复制以下文本：", payload);
         };
 
         const importConfig = () => {
@@ -2195,24 +4559,19 @@
 
         if (resetBtn) resetBtn.onclick = () => {
             if (confirm("确定要重置所有配置吗？\n所有自定义设置将恢复为默认值。")) {
-                CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
-                LEGACY_CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
+                clearAllStoredKeys();
                 GM_deleteValue("coolauxv_installed_version"); // 重置更新状态
+                saveProviderTemplates(getDefaultProviderTemplates());
                 refreshConfigUI();
                 alert("配置已重置。");
             }
         };
 
-        if (inputZhipuKey) inputZhipuKey.addEventListener("input", (e) => saveConfig("coolauxv_zhipu_api_key", e.target.value));
-        if (inputOpenaiKey) inputOpenaiKey.addEventListener("input", (e) => saveConfig("coolauxv_openai_api_key", e.target.value));
-        if (inputZhipuModel) inputZhipuModel.addEventListener("input", (e) => saveConfig("coolauxv_zhipu_model_name", e.target.value));
         if (inputWidth) inputWidth.addEventListener("input", (e) => saveConfig("coolauxv_win_width", e.target.value));
         if (inputHeight) inputHeight.addEventListener("input", (e) => saveConfig("coolauxv_win_height", e.target.value));
         if (inputPromptTrans) inputPromptTrans.addEventListener("input", (e) => saveConfig("coolauxv_prompt_trans", e.target.value));
         if (inputPromptExplain) inputPromptExplain.addEventListener("input", (e) => saveConfig("coolauxv_prompt_explain", e.target.value));
         if (inputPromptChat) inputPromptChat.addEventListener("input", (e) => saveConfig("coolauxv_prompt_chat", e.target.value));
-        if (inputZhipuModelVision) inputZhipuModelVision.addEventListener("input", (e) => saveConfig("coolauxv_zhipu_model_vision", e.target.value));
-        if (inputOpenaiModel) inputOpenaiModel.addEventListener("input", (e) => saveConfig("coolauxv_openai_model_name", e.target.value));
         if (inputPromptVision) inputPromptVision.addEventListener("input", (e) => saveConfig("coolauxv_prompt_vision", e.target.value));
         if (inputAppendTrans) inputAppendTrans.addEventListener("change", (e) => GM_setValue("coolauxv_append_trans", e.target.checked));
         if (inputAppendExplain) inputAppendExplain.addEventListener("change", (e) => GM_setValue("coolauxv_append_explain", e.target.checked));
@@ -2223,6 +4582,11 @@
                 const enabled = e.target.checked;
                 GM_setValue("coolauxv_enable_continuous_chat", enabled);
                 toggleContinuousChat(enabled);
+            });
+        }
+        if (inputMinimizeAnim) {
+            inputMinimizeAnim.addEventListener("change", (e) => {
+                GM_setValue("coolauxv_enable_minimize_anim", e.target.checked);
             });
         }
 
@@ -2303,55 +4667,98 @@
             });
         }
 
-        modelBtns.forEach(btn => {
-            btn.onclick = () => {
-                const val = btn.dataset.val;
-                const field = btn.dataset.field;
-                if (field === "coolauxv_zhipu_model_name" && inputZhipuModel) {
-                    inputZhipuModel.value = val;
-                    inputZhipuModel.dispatchEvent(new Event('input'));
-                } else if (field === "coolauxv_zhipu_model_vision" && inputZhipuModelVision) {
-                    inputZhipuModelVision.value = val;
-                    inputZhipuModelVision.dispatchEvent(new Event('input'));
-                } else if (field === "coolauxv_openai_model_name" && inputOpenaiModel) {
-                    inputOpenaiModel.value = val;
-                    inputOpenaiModel.dispatchEvent(new Event('input'));
-                }
-            };
-        });
         toggleBlurGlass(GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS));
         toggleContinuousChat(GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT));
         updateChatCollapseUI();
     }
 
-    const PROVIDER_LABELS = {
-        zhipu: "智谱",
-        openai: "OpenAI"
+    const getProviderTemplateSafe = (providerId) => {
+        const templates = getProviderTemplates();
+        const resolvedId = resolveProviderId(providerId, templates);
+        return templates.find((tpl) => tpl.id === resolvedId) || templates[0] || null;
     };
 
-    const PROVIDER_KEY_LINKS = {
-        zhipu: "https://bigmodel.cn/usercenter/proj-mgmt/apikeys",
-        openai: "https://platform.openai.com/api-keys"
+    const getProviderLabel = (providerId) => {
+        const tpl = getProviderTemplateSafe(providerId);
+        return tpl ? tpl.label : providerId;
     };
 
-    const resolveProvider = (provider) => {
-        return provider === "openai" ? "openai" : "zhipu";
+    const getProviderKeyLink = (providerId) => {
+        const tpl = getProviderTemplateSafe(providerId);
+        return tpl && tpl.keyLink ? tpl.keyLink : "";
     };
 
-    const getProviderLabel = (provider) => {
-        const key = resolveProvider(provider);
-        return PROVIDER_LABELS[key] || key;
+    const applyTemplateString = (value, context) => {
+        return String(value).replace(/{{\s*([a-zA-Z0-9_.-]+)\s*}}/g, (match, key) => {
+            if (!Object.prototype.hasOwnProperty.call(context, key)) return "";
+            const replacement = context[key];
+            return replacement === undefined || replacement === null ? "" : String(replacement);
+        });
     };
 
-    const getProviderKeyLink = (provider) => {
-        const key = resolveProvider(provider);
-        return PROVIDER_KEY_LINKS[key] || PROVIDER_KEY_LINKS.zhipu;
+    const applyTemplateValue = (value, context) => {
+        if (Array.isArray(value)) return value.map((item) => applyTemplateValue(item, context));
+        if (value && typeof value === "object") {
+            const output = {};
+            Object.keys(value).forEach((key) => {
+                output[key] = applyTemplateValue(value[key], context);
+            });
+            return output;
+        }
+        if (typeof value === "string") {
+            const exact = value.match(/^{{\s*([a-zA-Z0-9_.-]+)\s*}}$/);
+            if (exact && Object.prototype.hasOwnProperty.call(context, exact[1])) {
+                return context[exact[1]];
+            }
+            return applyTemplateString(value, context);
+        }
+        return value;
     };
 
-    const isMissingApiKey = (provider, apiKey) => {
-        if (!apiKey) return true;
-        if (provider === "openai") return apiKey === OPENAI_DEFAULT_API_KEY;
-        return apiKey === ZHIPU_DEFAULT_API_KEY;
+    const buildTemplateContext = (template, extra) => {
+        const custom = getTemplateCustomFields(template);
+        return Object.assign({}, custom, extra || {});
+    };
+
+    const extractTemplateKeys = (value) => {
+        const set = new Set();
+        const str = String(value || "");
+        str.replace(/{{\s*([a-zA-Z0-9_.-]+)\s*}}/g, (_, key) => {
+            set.add(key);
+            return "";
+        });
+        return Array.from(set);
+    };
+
+    const buildProviderUrl = (template) => {
+        if (!template || !template.baseUrl) return "";
+        const context = buildTemplateContext(template, { apiKey: template.apiKey || "" });
+        return applyTemplateString(template.baseUrl, context);
+    };
+
+    const buildProviderHeaders = (template, context) => {
+        if (!template) return { "Content-Type": "application/json" };
+        const headers = applyTemplateValue(template.headersTemplate || {}, buildTemplateContext(template, context || {}));
+        const cleaned = {};
+        Object.keys(headers || {}).forEach((key) => {
+            const value = headers[key];
+            if (value === undefined || value === null) return;
+            const str = String(value).trim();
+            if (!str) return;
+            cleaned[key] = str;
+        });
+        return cleaned;
+    };
+
+    const isMissingProviderConfig = (template) => {
+        if (!template || !template.baseUrl) return true;
+        const context = buildTemplateContext(template, { apiKey: template.apiKey || "" });
+        const missingKeys = extractTemplateKeys(template.baseUrl).filter((key) => {
+            if (!Object.prototype.hasOwnProperty.call(context, key)) return true;
+            return String(context[key] || "").trim() === "";
+        });
+        if (missingKeys.length) return true;
+        return false;
     };
 
     function getActiveConfig() {
@@ -2369,30 +4776,37 @@
             return custom;
         };
 
-        const provider = resolveProvider(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER));
-        const zhipuApiKey = GM_getValue("coolauxv_zhipu_api_key") || GM_getValue("coolauxv_api_key") || ZHIPU_DEFAULT_API_KEY;
-        const openaiApiKey = GM_getValue("coolauxv_openai_api_key") || OPENAI_DEFAULT_API_KEY;
-        const zhipuModelName = GM_getValue("coolauxv_zhipu_model_name") || GM_getValue("coolauxv_model_name") || ZHIPU_DEFAULT_MODEL_NAME;
-        const zhipuModelVision = GM_getValue("coolauxv_zhipu_model_vision") || GM_getValue("coolauxv_model_vision") || ZHIPU_DEFAULT_VISION_MODEL;
-        const openaiModelName = GM_getValue("coolauxv_openai_model_name") || OPENAI_DEFAULT_MODEL_NAME;
-        const isOpenai = provider === "openai";
+        const templates = getProviderTemplates();
+        const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), templates);
+        const provider = getProviderTemplateSafe(providerId);
+        const groups = provider && Array.isArray(provider.modelGroups) ? provider.modelGroups : [];
+        const textGroup = groups.find((group) => group.type !== "vision") || groups[0];
+        const visionGroup = groups.find((group) => group.type === "vision");
+        const resolveGroupModel = (group) => {
+            if (!group) return "";
+            if (group.selectedModel) return group.selectedModel;
+            const first = Array.isArray(group.models) && group.models.length ? group.models[0] : null;
+            return first ? (first.id || first.name || "") : "";
+        };
+        const modelName = resolveGroupModel(textGroup);
+        const modelVision = provider && provider.supportsVision
+            ? (resolveGroupModel(visionGroup) || modelName)
+            : modelName;
 
         return {
-            provider: provider,
-            apiKey: isOpenai ? openaiApiKey : zhipuApiKey,
-            modelName: isOpenai ? openaiModelName : zhipuModelName,
-
-            // 使用辅助函数生成最终提示词
+            provider: providerId,
+            template: provider,
+            apiKey: provider ? provider.apiKey : "",
+            modelName: modelName,
+            modelVision: modelVision,
             promptTrans: getFinalPrompt("coolauxv_prompt_trans", "coolauxv_append_trans", DEFAULT_PROMPT_TRANSLATE),
             promptExplain: getFinalPrompt("coolauxv_prompt_explain", "coolauxv_append_explain", DEFAULT_PROMPT_EXPLAIN),
-
-            modelVision: isOpenai ? openaiModelName : zhipuModelVision,
             promptVision: getFinalPrompt("coolauxv_prompt_vision", "coolauxv_append_vision", DEFAULT_PROMPT_VISION),
             promptContinuousChat: getFinalPrompt("coolauxv_prompt_chat", "coolauxv_append_chat", DEFAULT_PROMPT_CONTINUOUS_CHAT)
         };
     }
 
-    function buildZhipuMessageContent(text, imageBase64) {
+    function buildChatCompletionContent(text, imageBase64) {
         if (imageBase64) {
             return [
                 { type: "image_url", image_url: { url: imageBase64 } },
@@ -2402,7 +4816,7 @@
         return text || "";
     }
 
-    function buildOpenaiMessageContent(text, imageBase64) {
+    function buildOpenaiResponsesInputContent(text, imageBase64) {
         const content = [];
         if (imageBase64) {
             content.push({ type: "input_image", image_url: imageBase64 });
@@ -2413,106 +4827,60 @@
         return content;
     }
 
-    function buildOpenaiAssistantContent(text) {
+    function buildOpenaiResponsesAssistantContent(text) {
         if (!text) return [];
         return [{ type: "output_text", text: text }];
     }
 
-    function buildProviderMessage(provider, role, text, imageBase64) {
-        if (provider === "openai") {
-            const content = role === "assistant"
-                ? buildOpenaiAssistantContent(text)
-                : buildOpenaiMessageContent(text, imageBase64);
+    function buildProviderMessage(template, roleKey, text, imageBase64) {
+        if (!template) return null;
+        const role = (template.roles && template.roles[roleKey]) ? template.roles[roleKey] : roleKey;
+        if (template.type === "openai-responses") {
+            const content = roleKey === "assistant"
+                ? buildOpenaiResponsesAssistantContent(text)
+                : buildOpenaiResponsesInputContent(text, imageBase64);
             if (!content.length) return null;
             return { role: role, content: content };
         }
-        const content = buildZhipuMessageContent(text, imageBase64);
+        const content = buildChatCompletionContent(text, imageBase64);
         if (content === "") return null;
         return { role: role, content: content };
     }
 
-    function getProviderRequestUrl(provider) {
-        return provider === "openai" ? OPENAI_API_URL : ZHIPU_API_URL;
-    }
-
-    function getProviderHeaders(provider, apiKey) {
-        if (provider === "openai") {
-            return {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${apiKey}`,
-                "OpenAI-Client": "CoolAuxv"
-            };
-        }
-        return {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`
-        };
-    }
-
-    function buildZhipuTextPayload(model, systemPrompt, text) {
-        return {
+    function buildProviderPayload(template, model, messages) {
+        if (!template) return {};
+        const fallback = template.type === "openai-responses"
+            ? { model: "{{model}}", stream: true, input: "{{messages}}" }
+            : { model: "{{model}}", stream: true, messages: "{{messages}}" };
+        const bodyTemplate = template.bodyTemplate && typeof template.bodyTemplate === "object"
+            ? template.bodyTemplate
+            : fallback;
+        return applyTemplateValue(bodyTemplate, buildTemplateContext(template, {
             model: model,
+            messages: messages,
+            input: messages,
             stream: true,
-            messages: [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: text }
-            ]
-        };
+            apiKey: template.apiKey || ""
+        }));
     }
 
-    function buildOpenaiTextPayload(model, systemPrompt, text) {
-        const input = [
-            buildProviderMessage("openai", "system", systemPrompt, ""),
-            buildProviderMessage("openai", "user", text, "")
+    function buildTextPayload(template, model, systemPrompt, text) {
+        const messages = [
+            buildProviderMessage(template, "system", systemPrompt, ""),
+            buildProviderMessage(template, "user", text, "")
         ].filter(Boolean);
-        return {
-            model: model,
-            stream: true,
-            input: input
-        };
+        return buildProviderPayload(template, model, messages);
     }
 
-    function buildZhipuVisionPayload(model, textPrompt, imageBase64) {
-        return {
-            model: model,
-            messages: [
-                {
-                    role: "user",
-                    content: [
-                        { type: "image_url", image_url: { url: imageBase64 } },
-                        { type: "text", text: textPrompt }
-                    ]
-                }
-            ],
-            stream: true
-        };
-    }
-
-    function buildOpenaiVisionPayload(model, textPrompt, imageBase64) {
-        const input = [
-            buildProviderMessage("openai", "user", textPrompt, imageBase64)
+    function buildVisionPayload(template, model, textPrompt, imageBase64) {
+        const messages = [
+            buildProviderMessage(template, "user", textPrompt, imageBase64)
         ].filter(Boolean);
-        return {
-            model: model,
-            stream: true,
-            input: input
-        };
+        return buildProviderPayload(template, model, messages);
     }
 
-    function buildZhipuChatPayload(model, messages) {
-        return {
-            model: model,
-            stream: true,
-            messages: messages
-        };
-    }
-
-    function buildOpenaiChatPayload(model, messages) {
-        return {
-            model: model,
-            stream: true,
-            input: messages
-        };
+    function buildChatPayload(template, model, messages) {
+        return buildProviderPayload(template, model, messages);
     }
 
     function appendChatHistoryRecord(role, text, imageBase64) {
@@ -2524,18 +4892,19 @@
         });
     }
 
-    function buildChatMessagesForProvider(provider) {
+    function buildChatMessagesForProvider(providerId) {
+        const template = getProviderTemplateSafe(providerId);
         const messages = [];
         chatHistoryRecords.forEach((record) => {
-            const message = buildProviderMessage(provider, record.role, record.text, record.imageBase64);
+            const message = buildProviderMessage(template, record.role, record.text, record.imageBase64);
             if (message) messages.push(message);
         });
         return messages;
     }
 
-    function syncChatProvider(provider) {
+    function syncChatProvider(providerId) {
         if (!chatSessionStarted) return;
-        const targetProvider = resolveProvider(provider || DEFAULT_PROVIDER);
+        const targetProvider = resolveProviderId(providerId || DEFAULT_PROVIDER, getProviderTemplates());
         if (chatProvider === targetProvider && chatMessages.length) return;
         chatProvider = targetProvider;
         chatMessages = buildChatMessagesForProvider(targetProvider);
@@ -2586,6 +4955,7 @@
         chatImageCounter = 0;
         const config = getActiveConfig();
         const provider = config.provider;
+        const providerTemplate = config.template || getProviderTemplateSafe(provider);
         chatHistoryRecords = [];
         const baseChatLabel = formatChatModelLabel(provider, config.modelVision);
         chatAssistantLabel = baseChatLabel;
@@ -2597,6 +4967,9 @@
             }
             if (entry.assistantText) appendChatHistoryRecord("assistant", entry.assistantText, "");
 
+            const entryLabel = (entry && entry.provider && entry.model)
+                ? formatChatModelLabel(entry.provider, entry.model)
+                : baseChatLabel;
             let imageId = null;
             if (entry.imageBase64) {
                 imageId = `chat-img-${++chatImageCounter}`;
@@ -2606,7 +4979,7 @@
             const isFirst = chatDisplayBuffer.length === 0;
             chatDisplayBuffer += formatChatUserBlock(displayText, imageId, isFirst);
             if (entry.assistantText) {
-                chatDisplayBuffer += buildChatAssistantBlock(entry.assistantText, baseChatLabel);
+                chatDisplayBuffer += buildChatAssistantBlock(entry.assistantText, entryLabel);
             }
         });
 
@@ -2655,7 +5028,7 @@
             const config = getActiveConfig();
             const provider = config.provider;
             logAiResponse(provider, config.modelVision, "chat", chatAssistantBuffer);
-            const assistantMessage = buildProviderMessage(provider, "assistant", chatAssistantBuffer, "");
+            const assistantMessage = buildProviderMessage(config.template, "assistant", chatAssistantBuffer, "");
             if (assistantMessage) chatMessages.push(assistantMessage);
             appendChatHistoryRecord("assistant", chatAssistantBuffer, "");
             chatDisplayBuffer += chatPendingAssistantPrefix + chatAssistantBuffer;
@@ -2692,8 +5065,8 @@
             chatDisplayBuffer = assistantBlock.replace(/^\n+/, "");
         }
         if (recordAsAssistant) {
-            const provider = getActiveConfig().provider;
-            const assistantMessage = buildProviderMessage(provider, "assistant", recordContent, "");
+            const config = getActiveConfig();
+            const assistantMessage = buildProviderMessage(config.template, "assistant", recordContent, "");
             if (assistantMessage) chatMessages.push(assistantMessage);
             appendChatHistoryRecord("assistant", recordContent, "");
         }
@@ -2999,8 +5372,27 @@
         };
         reasoningWrapper.addEventListener("transitionend", onEnd);
     }
-    function minimizeWindow() { popup.style.display = "none"; floatBall.style.display = "block"; }
-    function closeWindow() {
+    const performMinimizeWindow = () => {
+        popup.style.display = "none";
+        const isPersistent = GM_getValue("coolauxv_persistent_ball", false);
+        floatBall.style.display = isPersistent ? "block" : "none";
+    };
+
+    function minimizeWindow() {
+        if (isPopupAnimating) return;
+        const isPersistent = GM_getValue("coolauxv_persistent_ball", false);
+        const enableMinAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+        if (isPersistent && enableMinAnim) {
+            floatBall.style.display = "block";
+            animatePopupToFloatBall(() => {
+                performMinimizeWindow();
+            });
+            return;
+        }
+        performMinimizeWindow();
+    }
+
+    const performCloseWindow = () => {
         popup.style.display = "none";
 
         // 1. 清空输入框文本
@@ -3030,9 +5422,25 @@
         } else {
             floatBall.style.display = "none";
         }
+    };
+
+    function closeWindow() {
+        if (isPopupAnimating) return;
+        performCloseWindow();
     }
 
-    function quitScript() { if (confirm("确定要退出吗？")) { popup.style.display = "none"; floatBall.style.display = "none"; cursorBtn.style.display = "none"; isQuitted = true; } }
+    const performQuit = () => {
+        popup.style.display = "none";
+        floatBall.style.display = "none";
+        cursorBtn.style.display = "none";
+        isQuitted = true;
+    };
+
+    function quitScript() {
+        if (!confirm("确定要退出吗？")) return;
+        if (isPopupAnimating) return;
+        performQuit();
+    }
 
     function bindEvents() {
         const minBtn = popup.querySelector("#coolauxv-min");
@@ -3100,7 +5508,7 @@
             });
         }
 
-        const checkActive = () => !isQuitted && !isWindowDragging && !isSplitterDragging;
+        const checkActive = () => !isQuitted && !isWindowDragging && !isSplitterDragging && !isPopupAnimating;
 
         const unifiedHandler = (e) => {
             if (!checkActive()) return;
@@ -3487,10 +5895,7 @@
     // 版本检测与日志弹窗逻辑 (使用通用弹窗)
     function checkUpdateAndShowChangelog() {
         const gmInfo = globalThis.GM_info;
-        if (!gmInfo || !gmInfo.script || !gmInfo.script.version) {
-            return;
-        }
-        const currentVer = gmInfo.script.version;
+        const currentVer = (gmInfo && gmInfo.script && gmInfo.script.version) ? gmInfo.script.version : SCRIPT_VERSION;
         const lastVer = GM_getValue("coolauxv_installed_version", "0.0");
 
         if (currentVer !== lastVer) {
@@ -3520,9 +5925,10 @@
         const resultDiv = popup.querySelector("#coolauxv-result");
         const config = getActiveConfig();
         const provider = config.provider;
+        const providerTemplate = config.template;
         streamMode = "single";
 
-        if (isMissingApiKey(provider, config.apiKey)) {
+        if (isMissingProviderConfig(providerTemplate)) {
             if (!shouldSuppressResultError()) {
                 showNoKeyError(popup.querySelector("#coolauxv-result"), provider);
             }
@@ -3551,25 +5957,25 @@
         if (abortController) abortController.abort();
         if (gmRequest && gmRequest.abort) gmRequest.abort();
 
-        const url = getProviderRequestUrl(provider);
+        const url = buildProviderUrl(providerTemplate);
         const systemPrompt = mode === "explain" ? config.promptExplain : config.promptTrans;
         const historyEntry = {
             systemPrompt: systemPrompt,
             userContentText: text,
             userDisplayText: text,
             imageBase64: "",
-            assistantText: ""
+            assistantText: "",
+            provider: provider,
+            model: config.modelName
         };
 
-        const payload = provider === "openai"
-            ? buildOpenaiTextPayload(config.modelName, systemPrompt, text)
-            : buildZhipuTextPayload(config.modelName, systemPrompt, text);
+        const payload = buildTextPayload(providerTemplate, config.modelName, systemPrompt, text);
 
         // 序列化并打印请求体 (JSON)
         const requestBody = JSON.stringify(payload);
         Logger.debug(`🚀 [${provider} Request Data]`, requestBody);
 
-        const headers = getProviderHeaders(provider, config.apiKey);
+        const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
 
         // 策略 A: Fetch
         try {
@@ -3614,10 +6020,10 @@
                 buffer += chunk;
                 const lines = buffer.split(/\r?\n/);
                 buffer = lines.pop();
-                for (const line of lines) processStreamLine(provider, line);
+                for (const line of lines) processStreamLine(providerTemplate, line);
             }
             if (buffer && buffer.trim()) {
-                processStreamLine(provider, buffer);
+                processStreamLine(providerTemplate, buffer);
             }
             stopRenderLoop();
             historyEntry.assistantText = streamTextBuffer;
@@ -3668,13 +6074,13 @@
                                 gmStreamBuffer += chunk;
                                 const lines = gmStreamBuffer.split(/\r?\n/);
                                 gmStreamBuffer = lines.pop();
-                                for (const line of lines) processStreamLine(provider, line);
+                                for (const line of lines) processStreamLine(providerTemplate, line);
                             }
                         } catch (e) {
                             Logger.error("Stream Read Error:", e);
                         } finally {
                             if (gmStreamBuffer && gmStreamBuffer.trim()) {
-                                processStreamLine(provider, gmStreamBuffer);
+                                processStreamLine(providerTemplate, gmStreamBuffer);
                             }
                             stopRenderLoop();
                             historyEntry.assistantText = streamTextBuffer;
@@ -3726,7 +6132,7 @@
                     }
                     if (fullText) {
                         const lines = fullText.split(/\r?\n/);
-                        for (const line of lines) processStreamLine(provider, line);
+                        for (const line of lines) processStreamLine(providerTemplate, line);
                         renderContent();
                         historyEntry.assistantText = streamTextBuffer;
                         logAiResponse(provider, config.modelName, mode, streamTextBuffer);
@@ -3856,13 +6262,26 @@
         return true;
     }
 
-    function processZhipuStreamLine(line) {
+    const getValueByPath = (obj, path) => {
+        if (!obj || !path) return undefined;
+        return path.split(".").reduce((acc, key) => {
+            if (acc === undefined || acc === null) return undefined;
+            if (!key) return acc;
+            if (/^\d+$/.test(key)) {
+                return acc[Number(key)];
+            }
+            return acc[key];
+        }, obj);
+    };
+
+    function processChatCompletionsStreamLine(template, line) {
         line = line.trim();
         if (!line) return;
+        const providerId = template ? template.id : "provider";
         if (!line.startsWith("data:")) {
             if (line.startsWith("{")) {
                 const apiErr = parseApiError(line);
-                if (apiErr && handleApiError("zhipu", apiErr)) return;
+                if (apiErr && handleApiError(providerId, apiErr)) return;
             }
             return;
         }
@@ -3871,37 +6290,35 @@
         try {
             const data = JSON.parse(jsonStr);
             const apiErr = parseApiError(data);
-            if (apiErr && handleApiError("zhipu", apiErr)) return;
-            const delta = data.choices[0]?.delta;
+            if (apiErr && handleApiError(providerId, apiErr)) return;
             const isChatMode = streamMode === "chat";
+            const reasoningPath = template && template.stream ? template.stream.reasoningPath : "";
+            const contentPath = template && template.stream && template.stream.deltaPath
+                ? template.stream.deltaPath
+                : "choices.0.delta.content";
+            const reasoningChunk = reasoningPath ? getValueByPath(data, reasoningPath) : "";
+            const contentChunk = getValueByPath(data, contentPath);
 
-            // --- 1. 处理推理内容 (自动展开逻辑) ---
-            if (delta?.reasoning_content) {
-                // 回调时机 A：检测到首个推理包
-                // 如果 hasReasoning 为 false，说明这是本轮对话第一次收到推理内容
+            if (reasoningChunk) {
                 if (!hasReasoning) {
                     hasReasoning = true;
-                    // 既然 API 返回了推理内容，说明这是推理模型，立即自动展开
                     Logger.info("检测到推理流，自动展开推理框");
                     setReasoningVisibility(true);
                 }
-                streamReasoningBuffer += delta.reasoning_content;
+                streamReasoningBuffer += reasoningChunk;
             }
 
-            // --- 2. 处理正式结果 (自动收起逻辑) ---
-            if (delta?.content) {
-                // 回调时机 B：检测到首个正文包
-                // 如果正文缓冲区长度为 0 (说明是正文的第一个字) 且之前有推理内容
+            if (contentChunk) {
                 const isFirstContentChunk = isChatMode ? chatAssistantBuffer.length === 0 : streamTextBuffer.length === 0;
                 if (isFirstContentChunk && hasReasoning) {
                     Logger.info("推理结束，正文开始，自动收起推理框");
                     setReasoningVisibility(false);
                 }
                 if (isChatMode) {
-                    chatAssistantBuffer += delta.content;
+                    chatAssistantBuffer += contentChunk;
                     updateChatStreamText();
                 } else {
-                    streamTextBuffer += delta.content;
+                    streamTextBuffer += contentChunk;
                 }
             }
         } catch (e) {
@@ -3933,14 +6350,15 @@
         return text;
     }
 
-    function processOpenaiStreamLine(line) {
+    function processOpenaiStreamLine(template, line) {
         line = line.trim();
         if (!line) return;
         if (streamErrorHandled) return;
+        const providerId = template ? template.id : "openai";
         if (!line.startsWith("data:")) {
             if (line.startsWith("{")) {
                 const apiErr = parseApiError(line);
-                if (apiErr && handleApiError("openai", apiErr)) return;
+                if (apiErr && handleApiError(providerId, apiErr)) return;
                 const fullText = extractOpenaiOutputText(line);
                 if (fullText) {
                     const isChatMode = streamMode === "chat";
@@ -3960,7 +6378,7 @@
         try {
             const data = JSON.parse(jsonStr);
             const apiErr = parseApiError(data);
-            if (apiErr && handleApiError("openai", apiErr)) return;
+            if (apiErr && handleApiError(providerId, apiErr)) return;
             if (data.type === "response.output_text.delta") {
                 const delta = data.delta || "";
                 if (!delta) return;
@@ -4001,12 +6419,13 @@
         }
     }
 
-    function processStreamLine(provider, line) {
-        if (provider === "openai") {
-            processOpenaiStreamLine(line);
+    function processStreamLine(template, line) {
+        const parser = template && template.stream ? template.stream.parser : "";
+        if (parser === "openai-responses") {
+            processOpenaiStreamLine(template, line);
             return;
         }
-        processZhipuStreamLine(line);
+        processChatCompletionsStreamLine(template, line);
     }
 
     // ========================================================================
@@ -4486,6 +6905,14 @@
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
         streamMode = "single";
 
+        const providerTemplate = config.template;
+        if (!providerTemplate || !providerTemplate.supportsVision) {
+            if (resultDiv) {
+                resultDiv.innerHTML = "<span style='color:#e65100; font-weight:bold;'>⚠️ 当前提供商未启用识图能力，请在设置中开启。</span>";
+            }
+            return;
+        }
+
         let textPrompt = "";
         const userText = input.value.trim();
         const imageBase64 = capturedImageBase64;
@@ -4517,10 +6944,12 @@
             userContentText: textPrompt,
             userDisplayText: userText,
             imageBase64: imageBase64,
-            assistantText: ""
+            assistantText: "",
+            provider: provider,
+            model: config.modelVision
         };
 
-        if (isMissingApiKey(provider, config.apiKey)) {
+        if (isMissingProviderConfig(providerTemplate)) {
             if (!shouldSuppressResultError()) {
                 showNoKeyError(resultDiv, provider);
             }
@@ -4538,7 +6967,8 @@
         resultDiv.innerHTML = loadingHTML;
         reasoningDiv.innerHTML = loadingHTML;
 
-        if (provider === "openai") {
+        const hasReasoningSupport = !!(providerTemplate && providerTemplate.stream && providerTemplate.stream.reasoningPath);
+        if (!hasReasoningSupport) {
             if (reasoningWrapper) reasoningWrapper.style.display = "none";
             const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle-container");
             if (reasoningToggle) reasoningToggle.style.display = "none";
@@ -4551,17 +6981,15 @@
             popup.querySelector("#coolauxv-separator").style.display = "flex";
         }
 
-        const url = getProviderRequestUrl(provider);
+        const url = buildProviderUrl(providerTemplate);
 
-        const payload = provider === "openai"
-            ? buildOpenaiVisionPayload(config.modelVision, textPrompt, imageBase64)
-            : buildZhipuVisionPayload(config.modelVision, textPrompt, imageBase64);
+        const payload = buildVisionPayload(providerTemplate, config.modelVision, textPrompt, imageBase64);
 
         // 打印 JSON 请求体
         const requestBody = JSON.stringify(payload);
         Logger.debug(`📸 [${provider} Vision Request]`, requestBody);
 
-        const headers = getProviderHeaders(provider, config.apiKey);
+        const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
 
         if (abortController) abortController.abort();
         if (gmRequest && gmRequest.abort) gmRequest.abort();
@@ -4592,14 +7020,14 @@
                                 buffer += chunk;
                                 const lines = buffer.split(/\r?\n/);
                                 buffer = lines.pop();
-                                for (const line of lines) processStreamLine(provider, line);
+                                for (const line of lines) processStreamLine(providerTemplate, line);
                             }
                         } catch (e) {
                             Logger.error("Stream Error", e);
                             resultDiv.innerHTML += `<br><span style='color:red'>流读取错误: ${e.message}</span>`;
                         } finally {
                             if (buffer && buffer.trim()) {
-                                processStreamLine(provider, buffer);
+                                processStreamLine(providerTemplate, buffer);
                             }
                             stopRenderLoop();
                             historyEntry.assistantText = streamTextBuffer;
@@ -4670,7 +7098,8 @@
 
         const config = getActiveConfig();
         const provider = config.provider;
-        if (isMissingApiKey(provider, config.apiKey)) {
+        const providerTemplate = config.template;
+        if (isMissingProviderConfig(providerTemplate)) {
             appendChatError(getNoKeyErrorHTML(provider), { allowHtml: true });
             return;
         }
@@ -4695,7 +7124,7 @@
 
         const messageText = userText || (hasImage ? config.promptVision : "");
         appendChatHistoryRecord("user", messageText, hasImage ? chatCapturedImageBase64 : "");
-        const userMessage = buildProviderMessage(provider, "user", messageText, hasImage ? chatCapturedImageBase64 : "");
+        const userMessage = buildProviderMessage(providerTemplate, "user", messageText, hasImage ? chatCapturedImageBase64 : "");
         if (userMessage) chatMessages.push(userMessage);
 
         chatInput.value = "";
@@ -4724,15 +7153,13 @@
 
         streamMode = "chat";
 
-        const url = getProviderRequestUrl(provider);
-        const payload = provider === "openai"
-            ? buildOpenaiChatPayload(config.modelVision, chatMessages)
-            : buildZhipuChatPayload(config.modelVision, chatMessages);
+        const url = buildProviderUrl(providerTemplate);
+        const payload = buildChatPayload(providerTemplate, config.modelVision, chatMessages);
 
         const requestBody = JSON.stringify(payload);
         Logger.debug(`💬 [${provider} Chat Request]`, requestBody);
 
-        const headers = getProviderHeaders(provider, config.apiKey);
+        const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
 
         gmRequest = GM_xmlhttpRequest({
             method: "POST",
@@ -4759,14 +7186,14 @@
                                 buffer += chunk;
                                 const lines = buffer.split(/\r?\n/);
                                 buffer = lines.pop();
-                                for (const line of lines) processStreamLine(provider, line);
+                                for (const line of lines) processStreamLine(providerTemplate, line);
                             }
                         } catch (e) {
                             Logger.error("Chat Stream Error", e);
                             streamErr = `流读取错误: ${e.message}`;
                         } finally {
                             if (buffer && buffer.trim()) {
-                                processStreamLine(provider, buffer);
+                                processStreamLine(providerTemplate, buffer);
                             }
                             stopRenderLoop();
                             finalizeChatResponse(actionToken);
@@ -4816,13 +7243,31 @@
     function getNoKeyErrorHTML(provider) {
         const label = getProviderLabel(provider);
         const link = getProviderKeyLink(provider);
+        const tpl = getProviderTemplateSafe(provider);
+        const missingUrl = !tpl || !String(tpl.baseUrl || "").trim();
+        const missingItems = [];
+        if (missingUrl) {
+            missingItems.push("Base URL");
+        } else {
+            const context = buildTemplateContext(tpl, { apiKey: tpl.apiKey || "" });
+            const unresolved = extractTemplateKeys(tpl.baseUrl || "").filter((key) => {
+                if (!Object.prototype.hasOwnProperty.call(context, key)) return true;
+                return String(context[key] || "").trim() === "";
+            });
+            if (unresolved.length) {
+                missingItems.push(`自定义字段 ${unresolved.join(", ")}`);
+            }
+        }
+        const missingLabel = missingItems.length ? missingItems.join(" 与 ") : "配置";
+        const needsApiKey = tpl && JSON.stringify(tpl.headersTemplate || {}).includes("{{apiKey}}");
+        const showKeyLink = needsApiKey && tpl && !String(tpl.apiKey || "").trim();
         return `
-            <div style="color:#e65100; font-weight:bold; padding:10px;">⚠️ 请配置 API KEY</div>
+            <div style="color:#e65100; font-weight:bold; padding:10px;">⚠️ 请配置 ${missingLabel}</div>
             <div style="font-size:13px; color:#555; padding:0 10px;">
-            您尚未配置 API Key，无法使用翻译功能。<br><br>
+            您尚未配置必要参数，无法使用该提供商。<br><br>
             1. 点击顶部 <span style="background:#f0f0f0; border-radius:4px; padding:0 4px;">⚙️ 设置</span> 图标。<br>
-            2. 点击 <a href="${link}" target="_blank" style="color:#3b82f6;">获取 KEY</a> 去 ${label} 平台申请。<br>
-            3. 将申请到的 Key 填入设置框并保存。
+            ${link && showKeyLink ? `2. 点击 <a href="${link}" target="_blank" style="color:#3b82f6;">获取 KEY</a> 去 ${label} 平台申请。<br>` : ""}
+            3. 将参数填入设置框并保存。
             </div>
         `;
     }
@@ -4834,6 +7279,7 @@
     function getInvalidKeyErrorHTML(provider) {
         const label = getProviderLabel(provider);
         const link = getProviderKeyLink(provider);
+        const linkHtml = link ? `<a href="${link}" target="_blank" style="color:#3b82f6;">获取 KEY</a>` : "获取 KEY";
         return `
             <div style="color:#d32f2f; font-weight:bold; padding:10px;">🚫 API KEY 无效</div>
             <div style="font-size:13px; color:#555; padding:0 10px;">
@@ -4842,7 +7288,7 @@
             1. Key 已过期或被撤销。<br>
             2. 复制时多复制了空格。<br>
             3. 账户余额不足。<br><br>
-            请检查设置或重新 <a href="${link}" target="_blank" style="color:#3b82f6;">获取 KEY</a>（${label}）。
+            请检查设置或重新 ${linkHtml}（${label}）。
             </div>
         `;
     }
