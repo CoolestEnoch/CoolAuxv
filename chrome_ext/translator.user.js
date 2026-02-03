@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v14.0
-// @description  使用不同提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
+// @version      v14.1
+// @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
 // @match        https://mozilla.github.io/pdf.js/web/viewer.html*
@@ -28,6 +28,7 @@
 // @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js
 // @updateURL    https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.meta.js
 // ==/UserScript==
+
 
 
 (function () {
@@ -64,9 +65,20 @@
 
     const DEFAULT_PROMPT_TRANSLATE = "你是一个翻译引擎。将用户输入直接翻译成中文。如果输入是中文则译为英文。不要输出任何多余的解释。";
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
-    const SCRIPT_VERSION = "v14.0";
+    const SCRIPT_VERSION = "v14.1";
 
     const LATEST_CHANGELOG = `
+        v14.1 更新日志
+        ## 🔧 提供商管理增强
+        *   提供商ID现在支持编辑，便于自定义和管理
+        *   优化提供商分享链接，长度更短更简洁
+        ## 🛠️ 稳定性改进
+        *   修复Chromium扩展版中，部分提供商的流式响应不工作问题
+        *   修复手动配置提供商时，模型设置不显示的问题
+        ## 📱 跨平台优化
+        *   增强流式响应兼容性，适配更多自定义提供商
+        *   确保各平台下提供商配置功能一致性
+        ---
         v14.0 更新日志
         ## 🏗️ 模块化提供商系统
         *   新增模块化AI提供商系统，支持通过模板自定义添加任意AI服务
