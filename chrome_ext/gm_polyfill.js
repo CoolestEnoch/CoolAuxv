@@ -5,6 +5,54 @@
   globalThis.__coolauxv_gm_polyfill = true;
 
   globalThis.unsafeWindow = window;
+  const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3, none: 4 };
+  let currentLogLevel = "none";
+
+  const shouldLog = (level) => {
+    const currentVal = LOG_LEVELS[currentLogLevel] ?? LOG_LEVELS.none;
+    const targetVal = LOG_LEVELS[level] ?? LOG_LEVELS.debug;
+    return targetVal >= currentVal;
+  };
+
+  const log = (level, ...args) => {
+    if (!shouldLog(level)) {
+      return;
+    }
+    const fn = console[level] || console.log;
+    fn("[CoolAuxv]", ...args);
+  };
+
+  const syncLogLevel = () => {
+    if (!globalThis.chrome || !chrome.storage || !chrome.storage.local) {
+      return;
+    }
+    chrome.storage.local.get(["coolauxv_log_level"], (items) => {
+      if (chrome.runtime && chrome.runtime.lastError) {
+        return;
+      }
+      const level = items && items.coolauxv_log_level;
+      if (level && LOG_LEVELS[level] !== undefined) {
+        currentLogLevel = level;
+      } else {
+        currentLogLevel = "none";
+      }
+    });
+  };
+
+  if (globalThis.chrome && chrome.storage && chrome.storage.local) {
+    syncLogLevel();
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local") return;
+      if (changes.coolauxv_log_level) {
+        const nextVal = changes.coolauxv_log_level.newValue;
+        if (nextVal && LOG_LEVELS[nextVal] !== undefined) {
+          currentLogLevel = nextVal;
+        } else {
+          currentLogLevel = "none";
+        }
+      }
+    });
+  }
 
   const BRIDGE_SOURCE_EXT = "coolauxv-extension";
   const BRIDGE_SOURCE_US = "coolauxv-userscript";
@@ -378,7 +426,7 @@
     return lines.join("\\r\\n");
   };
 
-  const GM_xmlhttpRequest = (options) => {
+  const GM_xmlhttpRequestWithFetch = (options) => {
     const opts = options || {};
     const controller = new AbortController();
     let timeoutId = null;
@@ -495,6 +543,257 @@
         controller.abort();
       }
     };
+  };
+
+  const GM_xmlhttpRequestViaBackground = (options) => {
+    const opts = options || {};
+    const responseType = opts.responseType || "";
+    const port = chrome.runtime.connect({ name: "coolauxv-gm-xhr" });
+    let completed = false;
+    let timeoutId = null;
+    let responseBase = null;
+    let streamController = null;
+    let streamQueue = [];
+    let streamClosed = false;
+    let stream = null;
+    let responseText = "";
+    const decoder = responseType === "stream" && typeof TextDecoder !== "undefined"
+      ? new TextDecoder("utf-8")
+      : null;
+    const encoder = responseType === "stream" && typeof TextEncoder !== "undefined"
+      ? new TextEncoder()
+      : null;
+    let chunkCount = 0;
+    let chunkBytes = 0;
+
+    const cleanup = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (port) {
+        try {
+          port.disconnect();
+        } catch (e) {
+          // ignore
+        }
+      }
+    };
+
+    const fail = (err) => {
+      if (completed) {
+        return;
+      }
+      completed = true;
+      cleanup();
+      if (opts.onerror) {
+        opts.onerror(err);
+      }
+    };
+
+    const ensureStream = () => {
+      if (stream) {
+        return stream;
+      }
+      stream = new ReadableStream({
+        start(controller) {
+          streamController = controller;
+          if (streamQueue.length) {
+            streamQueue.forEach((chunk) => controller.enqueue(chunk));
+            streamQueue = [];
+          }
+          if (streamClosed) {
+            controller.close();
+          }
+        },
+        cancel() {
+          if (port) {
+            try {
+              port.postMessage({ type: "abort" });
+            } catch (e) {
+              // ignore
+            }
+          }
+        }
+      });
+      return stream;
+    };
+
+    if (opts.timeout) {
+      timeoutId = setTimeout(() => {
+        if (completed) {
+          return;
+        }
+        completed = true;
+        if (port) {
+          try {
+            port.postMessage({ type: "abort" });
+          } catch (e) {
+            // ignore
+          }
+        }
+        cleanup();
+        if (opts.ontimeout) {
+          opts.ontimeout({ status: 0, statusText: "timeout" });
+        }
+      }, opts.timeout);
+    }
+
+    port.onMessage.addListener((msg) => {
+      if (!msg || completed) {
+        return;
+      }
+      if (msg.type === "start") {
+        responseBase = {
+          status: msg.status || 0,
+          statusText: msg.statusText || "",
+          responseHeaders: msg.responseHeaders || "",
+          finalUrl: msg.finalUrl || opts.url || ""
+        };
+        if (responseType === "stream") {
+          const res = {
+            ...responseBase,
+            response: ensureStream()
+          };
+          if (opts.onloadstart) {
+            opts.onloadstart(res);
+          }
+        }
+        return;
+      }
+
+      if (msg.type === "chunk" && responseType === "stream") {
+        let chunk = null;
+        if (typeof msg.chunkText === "string") {
+          if (msg.chunkText) {
+            responseText += msg.chunkText;
+            chunk = encoder ? encoder.encode(msg.chunkText) : new TextEncoder().encode(msg.chunkText);
+          }
+        } else if (msg.chunk) {
+          chunk = new Uint8Array(msg.chunk);
+          if (decoder) {
+            responseText += decoder.decode(chunk, { stream: true });
+          }
+        }
+        if (chunk) {
+          chunkCount += 1;
+          chunkBytes += chunk.length;
+          log("debug", "GM chunk", chunk.length);
+          if (streamController) {
+            streamController.enqueue(chunk);
+          } else {
+            streamQueue.push(chunk);
+          }
+        }
+        return;
+      }
+
+      if (msg.type === "end" && responseType === "stream") {
+        streamClosed = true;
+        if (streamController) {
+          streamController.close();
+        }
+        if (decoder) {
+          responseText += decoder.decode();
+        }
+        log("debug", "GM stream end", { chunkCount, chunkBytes, responseTextLength: responseText.length });
+        if (opts.onload) {
+          const res = {
+            ...(responseBase || { status: 0, statusText: "" }),
+            response: stream || ensureStream(),
+            responseText: responseText
+          };
+          opts.onload(res);
+        }
+        completed = true;
+        cleanup();
+        return;
+      }
+
+      if (msg.type === "load") {
+        const base = {
+          status: msg.status || 0,
+          statusText: msg.statusText || "",
+          responseHeaders: msg.responseHeaders || "",
+          finalUrl: msg.finalUrl || opts.url || ""
+        };
+        let data = msg.data;
+        if (msg.responseType === "blob") {
+          data = new Blob([msg.data || new ArrayBuffer(0)], { type: msg.blobType || "" });
+        }
+        const res = {
+          ...base,
+          response: data,
+          responseText: typeof data === "string" ? data : ""
+        };
+        if (opts.onloadstart) {
+          opts.onloadstart(res);
+        }
+        if (opts.onload) {
+          opts.onload(res);
+        }
+        completed = true;
+        cleanup();
+        return;
+      }
+
+      if (msg.type === "error") {
+        const err = new Error(msg.message || "GM_xmlhttpRequest error");
+        if (msg.name) {
+          err.name = msg.name;
+        }
+        fail(err);
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      if (completed) {
+        return;
+      }
+      fail(new Error("GM_xmlhttpRequest disconnected"));
+    });
+
+    try {
+      port.postMessage({
+        type: "request",
+        url: opts.url,
+        method: opts.method || "GET",
+        headers: opts.headers || {},
+        data: opts.data,
+        responseType: responseType
+      });
+    } catch (err) {
+      fail(err);
+    }
+
+    return {
+      abort: () => {
+        if (completed) {
+          return;
+        }
+        completed = true;
+        if (port) {
+          try {
+            port.postMessage({ type: "abort" });
+          } catch (e) {
+            // ignore
+          }
+        }
+        cleanup();
+      }
+    };
+  };
+
+  const GM_xmlhttpRequest = (options) => {
+    const opts = options || {};
+    if (!globalThis.chrome || !chrome.runtime || !chrome.runtime.connect) {
+      return GM_xmlhttpRequestWithFetch(opts);
+    }
+    try {
+      return GM_xmlhttpRequestViaBackground(opts);
+    } catch (err) {
+      return GM_xmlhttpRequestWithFetch(opts);
+    }
   };
 
   globalThis.GM_addStyle = GM_addStyle;

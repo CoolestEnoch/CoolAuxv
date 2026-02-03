@@ -23,6 +23,7 @@
 // @connect      open.bigmodel.cn
 // @connect      api.openai.com
 // @connect      api.cnb.cool
+// @connect      *
 // @license      GPL-3.0
 // @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js
 // @updateURL    https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.meta.js
