@@ -131,6 +131,22 @@
     const cloneDeep = (obj) => JSON.parse(JSON.stringify(obj));
 
     const normalizeProviderId = (id) => String(id || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+    const normalizeProviderType = (type) => type === "openai-responses" ? "openai-responses" : "chat-completions";
+    const getDefaultBodyTemplateByType = (type) => {
+        const normalized = normalizeProviderType(type);
+        if (normalized === "openai-responses") {
+            return { model: "{{model}}", stream: true, input: "{{messages}}" };
+        }
+        return { model: "{{model}}", stream: true, messages: "{{messages}}" };
+    };
+    const getDefaultStreamTemplateByType = (type) => {
+        const normalized = normalizeProviderType(type);
+        return {
+            parser: normalized,
+            deltaPath: normalized === "openai-responses" ? "" : "choices.0.delta.content",
+            reasoningPath: ""
+        };
+    };
 
     const decodeBase64Utf8 = (base64) => {
         try {
@@ -299,6 +315,7 @@
 
     const ensureProviderTemplate = (tpl) => {
         if (!tpl || typeof tpl !== "object") return null;
+        const isEmptyPlainObject = (value) => value && typeof value === "object" && !Array.isArray(value) && !Object.keys(value).length;
         let headersTemplate = tpl.headersTemplate;
         if (typeof headersTemplate === "string") {
             try { headersTemplate = JSON.parse(headersTemplate); } catch (e) { headersTemplate = null; }
@@ -307,6 +324,8 @@
         if (typeof bodyTemplate === "string") {
             try { bodyTemplate = JSON.parse(bodyTemplate); } catch (e) { bodyTemplate = null; }
         }
+        if (isEmptyPlainObject(headersTemplate)) headersTemplate = null;
+        if (isEmptyPlainObject(bodyTemplate)) bodyTemplate = null;
 
         const modelGroups = normalizeModelGroups(tpl);
         const customFields = normalizeCustomFields(tpl.customFields);
@@ -315,14 +334,17 @@
         if (tpl.repo && !Object.prototype.hasOwnProperty.call(customFields, "repo")) {
             customFields.repo = String(tpl.repo || "");
         }
-        const supportsVision = tpl.supportsVision !== undefined
+        const normalizedType = normalizeProviderType(tpl.type);
+        const hasSupportsVision = tpl.supportsVision !== undefined && tpl.supportsVision !== null && tpl.supportsVision !== "";
+        const supportsVision = hasSupportsVision
             ? !!tpl.supportsVision
             : modelGroups.some((group) => group.type === "vision");
+        const defaultStream = getDefaultStreamTemplateByType(normalizedType);
 
         const normalized = {
             id: normalizeProviderId(tpl.id),
             label: String(tpl.label || tpl.id || "Provider"),
-            type: tpl.type === "openai-responses" ? "openai-responses" : "chat-completions",
+            type: normalizedType,
             baseUrl: String(tpl.baseUrl || ""),
             apiKey: String(tpl.apiKey || ""),
             apiKeyPlaceholder: String(tpl.apiKeyPlaceholder || ""),
@@ -333,12 +355,14 @@
                 assistant: (tpl.roles && tpl.roles.assistant) ? String(tpl.roles.assistant) : "assistant"
             },
             headersTemplate: headersTemplate && typeof headersTemplate === "object" ? headersTemplate : { "Content-Type": "application/json" },
-            bodyTemplate: bodyTemplate && typeof bodyTemplate === "object" ? bodyTemplate : { model: "{{model}}", stream: true, messages: "{{messages}}" },
+            bodyTemplate: bodyTemplate && typeof bodyTemplate === "object" ? bodyTemplate : getDefaultBodyTemplateByType(normalizedType),
             stream: tpl.stream && typeof tpl.stream === "object" ? {
-                parser: tpl.stream.parser === "openai-responses" ? "openai-responses" : "chat-completions",
-                deltaPath: String(tpl.stream.deltaPath || "choices.0.delta.content"),
-                reasoningPath: String(tpl.stream.reasoningPath || "")
-            } : { parser: "chat-completions", deltaPath: "choices.0.delta.content", reasoningPath: "" },
+                parser: tpl.stream.parser === "openai-responses"
+                    ? "openai-responses"
+                    : (tpl.stream.parser === "chat-completions" ? "chat-completions" : normalizedType),
+                deltaPath: tpl.stream.deltaPath !== undefined ? String(tpl.stream.deltaPath) : defaultStream.deltaPath,
+                reasoningPath: tpl.stream.reasoningPath !== undefined ? String(tpl.stream.reasoningPath) : defaultStream.reasoningPath
+            } : defaultStream,
             supportsVision: supportsVision,
             modelGroups: modelGroups,
             display: display,
@@ -2782,6 +2806,239 @@
             return decodeURIComponent(escape(raw));
         };
 
+        const isPlainObject = (value) => value && typeof value === "object" && !Array.isArray(value);
+        const isEmptyValue = (value) => {
+            if (value === null || value === undefined) return true;
+            if (typeof value === "string") return value.trim() === "";
+            if (Array.isArray(value)) return value.length === 0;
+            if (isPlainObject(value)) return Object.keys(value).length === 0;
+            return false;
+        };
+        const SHARE_PRESERVE_KEYS = new Set(["customFields", "customFieldMeta"]);
+        const pruneEmptyValues = (value, preserveKeys = SHARE_PRESERVE_KEYS) => {
+            if (Array.isArray(value)) {
+                return value.map((item) => pruneEmptyValues(item, preserveKeys)).filter((item) => !isEmptyValue(item));
+            }
+            if (isPlainObject(value)) {
+                const result = {};
+                Object.keys(value).forEach((key) => {
+                    const raw = value[key];
+                    if (preserveKeys && preserveKeys.has(key)) {
+                        if (!isEmptyValue(raw)) {
+                            result[key] = raw;
+                        }
+                        return;
+                    }
+                    const next = pruneEmptyValues(raw, preserveKeys);
+                    if (!isEmptyValue(next)) {
+                        result[key] = next;
+                    }
+                });
+                return result;
+            }
+            return value;
+        };
+        const isDeepEqual = (a, b) => {
+            if (a === b) return true;
+            if (typeof a !== typeof b) return false;
+            if (Array.isArray(a)) {
+                if (!Array.isArray(b) || a.length !== b.length) return false;
+                for (let i = 0; i < a.length; i += 1) {
+                    if (!isDeepEqual(a[i], b[i])) return false;
+                }
+                return true;
+            }
+            if (isPlainObject(a)) {
+                if (!isPlainObject(b)) return false;
+                const keysA = Object.keys(a);
+                const keysB = Object.keys(b);
+                if (keysA.length !== keysB.length) return false;
+                for (let i = 0; i < keysA.length; i += 1) {
+                    const key = keysA[i];
+                    if (!Object.prototype.hasOwnProperty.call(b, key)) return false;
+                    if (!isDeepEqual(a[key], b[key])) return false;
+                }
+                return true;
+            }
+            return false;
+        };
+        const deepMerge = (base, override) => {
+            if (!isPlainObject(base) || !isPlainObject(override)) return override;
+            const output = Object.assign({}, base);
+            Object.keys(override).forEach((key) => {
+                const nextVal = override[key];
+                if (isPlainObject(nextVal) && isPlainObject(output[key])) {
+                    output[key] = deepMerge(output[key], nextVal);
+                } else {
+                    output[key] = nextVal;
+                }
+            });
+            return output;
+        };
+        let defaultProviderTemplateMapCache = null;
+        const getDefaultProviderTemplateMap = () => {
+            if (defaultProviderTemplateMapCache) return defaultProviderTemplateMapCache;
+            const map = {};
+            getDefaultProviderTemplates().forEach((tpl) => {
+                map[tpl.id] = tpl;
+            });
+            defaultProviderTemplateMapCache = map;
+            return map;
+        };
+        const mergeProviderDefaults = (raw) => {
+            if (!raw || typeof raw !== "object") return raw;
+            const providerId = normalizeProviderId(raw.id || "");
+            if (!providerId) return raw;
+            const defaults = getDefaultProviderTemplateMap();
+            const base = defaults[providerId];
+            if (!base) return raw;
+            return deepMerge(cloneDeep(base), raw);
+        };
+        const compactProviderTemplate = (tpl) => {
+            if (!tpl || typeof tpl !== "object") return tpl;
+            const clone = cloneDeep(tpl);
+            const defaults = getDefaultProviderTemplateMap();
+            const defaultTpl = clone.id ? defaults[clone.id] : null;
+            const normalizedType = normalizeProviderType(clone.type);
+
+            if (defaultTpl) {
+                Object.keys(clone).forEach((key) => {
+                    if (key === "id") return;
+                    if (isDeepEqual(clone[key], defaultTpl[key])) {
+                        delete clone[key];
+                    }
+                });
+            }
+
+            if (clone.type === "chat-completions") delete clone.type;
+            if (clone.label && clone.id && clone.label === clone.id) delete clone.label;
+
+            const defaultRoles = { system: "system", user: "user", assistant: "assistant" };
+            if (clone.roles && isDeepEqual(clone.roles, defaultRoles)) delete clone.roles;
+
+            const defaultHeaders = { "Content-Type": "application/json" };
+            if (clone.headersTemplate && isDeepEqual(clone.headersTemplate, defaultHeaders)) delete clone.headersTemplate;
+
+            const defaultBody = getDefaultBodyTemplateByType(normalizedType);
+            if (clone.bodyTemplate && isDeepEqual(clone.bodyTemplate, defaultBody)) delete clone.bodyTemplate;
+
+            const defaultStream = getDefaultStreamTemplateByType(normalizedType);
+            if (clone.stream && isDeepEqual(clone.stream, defaultStream)) delete clone.stream;
+
+            if (clone.supportsContinuousChat === true) delete clone.supportsContinuousChat;
+            if (clone.supportsVision !== undefined) {
+                const defaultSupportsVision = Array.isArray(clone.modelGroups)
+                    && clone.modelGroups.some((group) => (group.type || "text") === "vision");
+                if (clone.supportsVision === defaultSupportsVision) delete clone.supportsVision;
+            }
+
+            if (clone.display && isPlainObject(clone.display)) {
+                const nextDisplay = {};
+                Object.keys(clone.display).forEach((key) => {
+                    if (clone.display[key] !== DEFAULT_DISPLAY_FIELDS[key]) {
+                        nextDisplay[key] = clone.display[key];
+                    }
+                });
+                if (Object.keys(nextDisplay).length) clone.display = nextDisplay;
+                else delete clone.display;
+            }
+
+            if (Array.isArray(clone.modelGroups)) {
+                clone.modelGroups = clone.modelGroups.map((group) => {
+                    const nextGroup = Object.assign({}, group);
+                    if (nextGroup.type === "text") delete nextGroup.type;
+                    if (Array.isArray(nextGroup.models)) {
+                        nextGroup.models = nextGroup.models.map((model) => {
+                            const id = String(model.id || model.name || "").trim();
+                            if (!id) return null;
+                            const nextModel = { id: id };
+                            const modelClass = String(model.class || "").trim();
+                            const modelTag = String(model.tag || "").trim();
+                            if (modelClass) nextModel.class = modelClass;
+                            if (modelTag) nextModel.tag = modelTag;
+                            return nextModel;
+                        }).filter(Boolean);
+                    }
+                    if (nextGroup.selectedModel) {
+                        const first = nextGroup.models && nextGroup.models.length ? nextGroup.models[0].id : "";
+                        if (!first || nextGroup.selectedModel === first) {
+                            delete nextGroup.selectedModel;
+                        }
+                    }
+                    return nextGroup;
+                });
+            }
+
+            if (clone.customFieldMeta && isPlainObject(clone.customFieldMeta)) {
+                const displayDefaults = {
+                    display: !(clone.display && clone.display.customFields === false),
+                    masked: !!(clone.display && clone.display.customFieldsMask)
+                };
+                const nextMeta = {};
+                Object.keys(clone.customFieldMeta).forEach((key) => {
+                    const meta = clone.customFieldMeta[key] || {};
+                    const displayVal = meta.display !== undefined ? !!meta.display : displayDefaults.display;
+                    const maskedVal = meta.masked !== undefined ? !!meta.masked : displayDefaults.masked;
+                    if (displayVal !== displayDefaults.display || maskedVal !== displayDefaults.masked) {
+                        nextMeta[key] = { display: displayVal, masked: maskedVal };
+                    }
+                });
+                if (Object.keys(nextMeta).length) clone.customFieldMeta = nextMeta;
+                else delete clone.customFieldMeta;
+            }
+
+            return pruneEmptyValues(clone);
+        };
+        const compactConfigSnapshot = (snapshot) => {
+            const next = Object.assign({}, snapshot);
+            const defaults = {
+                coolauxv_default_provider: DEFAULT_PROVIDER,
+                coolauxv_model_provider: DEFAULT_MODEL_PROVIDER,
+                coolauxv_win_width: DEFAULT_WIN_WIDTH,
+                coolauxv_win_height: DEFAULT_WIN_HEIGHT,
+                coolauxv_log_level: DEFAULT_LOG_LEVEL,
+                coolauxv_use_new_screenshot: DEFAULT_USE_NEW_SCREENSHOT,
+                coolauxv_enable_continuous_chat: DEFAULT_ENABLE_CONTINUOUS_CHAT,
+                coolauxv_enable_minimize_anim: DEFAULT_ENABLE_MINIMIZE_ANIM,
+                coolauxv_enable_blur_glass: DEFAULT_ENABLE_BLUR_GLASS,
+                coolauxv_persistent_ball: false,
+                coolauxv_draggable_ball: false,
+                coolauxv_append_trans: false,
+                coolauxv_append_explain: false,
+                coolauxv_append_vision: false,
+                coolauxv_append_chat: false
+            };
+            Object.keys(defaults).forEach((key) => {
+                if (Object.prototype.hasOwnProperty.call(next, key) && isDeepEqual(next[key], defaults[key])) {
+                    delete next[key];
+                }
+            });
+            const pruneDefaultPrompt = (key, defaultValue, appendKey) => {
+                if (!Object.prototype.hasOwnProperty.call(next, key)) return;
+                const val = String(next[key] || "");
+                const isAppend = appendKey ? !!next[appendKey] : false;
+                if (!val.trim()) {
+                    delete next[key];
+                    if (appendKey) delete next[appendKey];
+                    return;
+                }
+                if (!isAppend && val === defaultValue) {
+                    delete next[key];
+                }
+            };
+            pruneDefaultPrompt("coolauxv_prompt_trans", DEFAULT_PROMPT_TRANSLATE, "coolauxv_append_trans");
+            pruneDefaultPrompt("coolauxv_prompt_explain", DEFAULT_PROMPT_EXPLAIN, "coolauxv_append_explain");
+            pruneDefaultPrompt("coolauxv_prompt_vision", DEFAULT_PROMPT_VISION, "coolauxv_append_vision");
+            pruneDefaultPrompt("coolauxv_prompt_chat", DEFAULT_PROMPT_CONTINUOUS_CHAT, "coolauxv_append_chat");
+            if (Object.prototype.hasOwnProperty.call(next, "coolauxv_use_new_screenshot")) {
+                const val = next.coolauxv_use_new_screenshot;
+                if (val === "v1" || val === false) {
+                    delete next.coolauxv_use_new_screenshot;
+                }
+            }
+            return next;
+        };
+
         const snapshotConfig = () => {
             const data = {};
             CONFIG_KEYS.forEach((key) => {
@@ -2794,22 +3051,32 @@
         };
 
         const applyConfigSnapshot = (data) => {
+            const payload = data && typeof data === "object" ? Object.assign({}, data) : {};
+            if (Array.isArray(payload[PROVIDER_TEMPLATE_STORAGE_KEY])) {
+                payload[PROVIDER_TEMPLATE_STORAGE_KEY] = payload[PROVIDER_TEMPLATE_STORAGE_KEY]
+                    .map((tpl) => mergeProviderDefaults(tpl));
+            }
             CONFIG_KEYS.forEach((key) => {
-                if (Object.prototype.hasOwnProperty.call(data, key)) {
-                    GM_setValue(key, data[key]);
+                if (Object.prototype.hasOwnProperty.call(payload, key)) {
+                    const value = payload[key];
+                    if (isEmptyValue(value)) {
+                        GM_deleteValue(key);
+                    } else {
+                        GM_setValue(key, value);
+                    }
                 } else {
                     GM_deleteValue(key);
                 }
             });
             providerTemplatesCache = null;
             migrateLegacyProviderSettings(loadProviderTemplates());
-            if (data && data.coolauxv_cnb_repo) {
+            if (payload && payload.coolauxv_cnb_repo) {
                 const templates = getProviderTemplates();
                 const tpl = templates.find((item) => item.id === "cnb");
                 if (tpl) {
                     tpl.customFields = normalizeCustomFields(tpl.customFields);
                     if (!Object.prototype.hasOwnProperty.call(tpl.customFields, "repo")) {
-                        tpl.customFields.repo = data.coolauxv_cnb_repo;
+                        tpl.customFields.repo = payload.coolauxv_cnb_repo;
                         saveProviderTemplates(templates);
                     }
                 }
@@ -3521,7 +3788,9 @@
                             alert("Base64 解析失败，请检查内容。");
                             return;
                         }
-                        const templates = getProviderTemplates().concat(imported);
+                        const merged = imported.map((item) => mergeProviderDefaults(item));
+                        const cleaned = pruneEmptyValues(merged);
+                        const templates = getProviderTemplates().concat(cleaned);
                         saveProviderTemplates(templates);
                         sanitizeMaskedCustomFields(getProviderTemplates());
                         renderProviderUI();
@@ -4238,9 +4507,10 @@
                                 }
                             });
                         }
-                        return clone;
+                        return compactProviderTemplate(clone);
                     });
-                const payload = encodeBase64(JSON.stringify({ version: PROVIDER_SHARE_VERSION, providers: templates }));
+                const sharePayload = pruneEmptyValues({ version: PROVIDER_SHARE_VERSION, providers: templates });
+                const payload = encodeBase64(JSON.stringify(sharePayload));
                 if (!payload) {
                     alert("分享失败，请稍后重试。");
                     return;
@@ -4511,7 +4781,12 @@
         const exportConfig = () => {
             const includePrivacy = confirm("导出配置是否包含隐私信息（如 API KEY、打码字段）？\n确定=包含，取消=不包含");
             const snapshot = buildExportSnapshot(includePrivacy);
-            const payload = encodeBase64(JSON.stringify(snapshot));
+            if (Array.isArray(snapshot[PROVIDER_TEMPLATE_STORAGE_KEY])) {
+                snapshot[PROVIDER_TEMPLATE_STORAGE_KEY] = snapshot[PROVIDER_TEMPLATE_STORAGE_KEY]
+                    .map((tpl) => compactProviderTemplate(tpl));
+            }
+            const compacted = pruneEmptyValues(compactConfigSnapshot(snapshot));
+            const payload = encodeBase64(JSON.stringify(compacted));
             if (!payload) {
                 alert("导出失败，请稍后重试。");
                 return;
@@ -4549,7 +4824,8 @@
                 alert("配置内容无效，请确认 Base64 内容正确。");
                 return;
             }
-            applyConfigSnapshot(parsed);
+            const cleaned = pruneEmptyValues(parsed);
+            applyConfigSnapshot(cleaned);
             refreshConfigUI();
             alert("配置已恢复。");
         };
