@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v14.1
+// @version      v14.2
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -61,13 +61,22 @@
     const DEFAULT_USE_NEW_SCREENSHOT = "v1"; // 默认使用老逻辑截图
     const DEFAULT_ENABLE_MINIMIZE_ANIM = false; // 默认关闭收起动画
     const POPUP_ANIM_EASING = "cubic-bezier(0.2, 0, 0, 1)";
+    const POPUP_ANIM_EASE_IN = "cubic-bezier(0.4, 0, 1, 1)";
+    const POPUP_ANIM_EASE_OUT = "cubic-bezier(0, 0, 0.2, 1)";
+    const DEFAULT_ANIM_SPEED = 1;
 
 
     const DEFAULT_PROMPT_TRANSLATE = "你是一个翻译引擎。将用户输入直接翻译成中文。如果输入是中文则译为英文。不要输出任何多余的解释。";
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
-    const SCRIPT_VERSION = "v14.1";
 
     const LATEST_CHANGELOG = `
+        v14.2 更新日志
+        ## ✨ 界面动画
+        *   添加了进入、退出动画。
+        *   添加了动画总开关和速度管理器。
+        ## 🛠️ Bug修复
+        *   修复了切换模型提供商时模型选择界面变成空白的问题。
+        ---
         v14.1 更新日志
         ## 🔧 提供商管理增强
         *   提供商ID现在支持编辑，便于自定义和管理
@@ -1990,6 +1999,13 @@
         if (floatBall) floatBall.style.pointerEvents = animating ? "none" : "auto";
     };
 
+    const getAnimSpeedFactor = () => {
+        const raw = GM_getValue("coolauxv_anim_speed", DEFAULT_ANIM_SPEED);
+        const val = Number.parseFloat(raw);
+        if (!Number.isFinite(val) || val <= 0) return DEFAULT_ANIM_SPEED;
+        return Math.max(0.3, Math.min(3, val));
+    };
+
     const resetPopupAnimStyles = (baseTransform) => {
         if (!popup) return;
         popup.style.transition = "";
@@ -2032,9 +2048,14 @@
         const dx = (ballRect.left + ballRect.width / 2) - (popupRect.left + popupRect.width / 2);
         const dy = (ballRect.top + ballRect.height / 2) - (popupRect.top + popupRect.height / 2);
         const targetTransform = combineTransform(baseTransform, `translate3d(${dx}px, ${dy}px, 0) scale(${scale})`);
+        const speed = getAnimSpeedFactor();
+        const durTransform = Math.round(320 / speed);
+        const durOpacity = Math.round(220 / speed);
+        const durRadius = Math.round(250 / speed);
+        const durFilter = Math.round(250 / speed);
 
         setPopupAnimating(true);
-        popup.style.transition = `transform 0.32s ${POPUP_ANIM_EASING}, opacity 0.22s ${POPUP_ANIM_EASING}, border-radius 0.25s ${POPUP_ANIM_EASING}, filter 0.25s ${POPUP_ANIM_EASING}`;
+        popup.style.transition = `transform ${durTransform}ms ${POPUP_ANIM_EASING}, opacity ${durOpacity}ms ${POPUP_ANIM_EASING}, border-radius ${durRadius}ms ${POPUP_ANIM_EASING}, filter ${durFilter}ms ${POPUP_ANIM_EASING}`;
         popup.style.transformOrigin = "center center";
         popup.style.opacity = "0.2";
         popup.style.borderRadius = "999px";
@@ -2057,7 +2078,7 @@
             finish();
         };
         popup.addEventListener("transitionend", onEnd);
-        setTimeout(finish, 420);
+        setTimeout(finish, Math.max(durTransform, durOpacity, durRadius, durFilter) + 120);
     };
 
     const animatePopupFromFloatBall = (onDone) => {
@@ -2079,6 +2100,11 @@
         const dx = (ballRect.left + ballRect.width / 2) - (popupRect.left + popupRect.width / 2);
         const dy = (ballRect.top + ballRect.height / 2) - (popupRect.top + popupRect.height / 2);
         const startTransform = combineTransform(baseTransform, `translate3d(${dx}px, ${dy}px, 0) scale(${scale})`);
+        const speed = getAnimSpeedFactor();
+        const durTransform = Math.round(320 / speed);
+        const durOpacity = Math.round(220 / speed);
+        const durRadius = Math.round(250 / speed);
+        const durFilter = Math.round(250 / speed);
 
         setPopupAnimating(true);
         popup.style.transition = "none";
@@ -2091,7 +2117,7 @@
 
         void popup.offsetHeight;
 
-        popup.style.transition = `transform 0.32s ${POPUP_ANIM_EASING}, opacity 0.22s ${POPUP_ANIM_EASING}, border-radius 0.25s ${POPUP_ANIM_EASING}, filter 0.25s ${POPUP_ANIM_EASING}`;
+        popup.style.transition = `transform ${durTransform}ms ${POPUP_ANIM_EASING}, opacity ${durOpacity}ms ${POPUP_ANIM_EASING}, border-radius ${durRadius}ms ${POPUP_ANIM_EASING}, filter ${durFilter}ms ${POPUP_ANIM_EASING}`;
         popup.style.transform = baseTransform || "";
         popup.style.opacity = "1";
         popup.style.borderRadius = "12px";
@@ -2113,7 +2139,124 @@
             finish();
         };
         popup.addEventListener("transitionend", onEnd);
-        setTimeout(finish, 420);
+        setTimeout(finish, Math.max(durTransform, durOpacity, durRadius, durFilter) + 120);
+    };
+
+    const animatePopupFromBottom = (onDone) => {
+        if (!popup || isPopupAnimating) return;
+        const baseTransform = "translate(-50%, -50%)";
+        setPopupBaseTransform(baseTransform);
+        const speed = getAnimSpeedFactor();
+        const durTransform = Math.round(380 / speed);
+        const durOpacity = Math.round(280 / speed);
+
+        setPopupAnimating(true);
+        popup.style.display = "flex";
+        popup.style.visibility = "hidden";
+        popup.style.left = "50%";
+        popup.style.top = "50%";
+        popup.style.transform = baseTransform;
+        const popupRect = popup.getBoundingClientRect();
+        const dy = Math.max(0, window.innerHeight - popupRect.top + popupRect.height + 40);
+        const startTransform = combineTransform(baseTransform, `translate3d(0, ${dy}px, 0)`);
+
+        popup.style.transition = "none";
+        popup.style.transformOrigin = "center center";
+        popup.style.opacity = "0";
+        popup.style.transform = startTransform;
+        popup.style.visibility = "visible";
+
+        void popup.offsetHeight;
+
+        popup.style.transition = `transform ${durTransform}ms ${POPUP_ANIM_EASE_OUT}, opacity ${durOpacity}ms ${POPUP_ANIM_EASE_OUT}`;
+        popup.style.transform = baseTransform;
+        popup.style.opacity = "1";
+
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            popup.style.visibility = "";
+            resetPopupAnimStyles(baseTransform);
+            setPopupAnimating(false);
+            if (typeof onDone === "function") onDone();
+        };
+        const onEnd = (e) => {
+            if (e.target !== popup || e.propertyName !== "transform") return;
+            popup.removeEventListener("transitionend", onEnd);
+            finish();
+        };
+        popup.addEventListener("transitionend", onEnd);
+        setTimeout(finish, Math.max(durTransform, durOpacity) + 140);
+    };
+
+    const animatePopupSlideOutDown = (onDone) => {
+        if (!popup || isPopupAnimating) return;
+        const baseTransform = "";
+        setPopupBaseTransform(baseTransform);
+        const speed = getAnimSpeedFactor();
+        const durTransform = Math.round(360 / speed);
+        const durOpacity = Math.round(200 / speed);
+
+        const popupRect = popup.getBoundingClientRect();
+        const dy = Math.max(0, window.innerHeight - popupRect.top + popupRect.height + 40);
+        const targetTransform = `translate3d(0, ${dy}px, 0)`;
+
+        setPopupAnimating(true);
+        popup.style.transition = `transform ${durTransform}ms ${POPUP_ANIM_EASE_IN}, opacity ${durOpacity}ms ${POPUP_ANIM_EASE_IN}`;
+        popup.style.transformOrigin = "center center";
+        popup.style.opacity = "0";
+        popup.style.transform = targetTransform;
+
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            popup.style.display = "none";
+            resetPopupAnimStyles(baseTransform);
+            setPopupAnimating(false);
+            if (typeof onDone === "function") onDone();
+        };
+        const onEnd = (e) => {
+            if (e.target !== popup || e.propertyName !== "transform") return;
+            popup.removeEventListener("transitionend", onEnd);
+            finish();
+        };
+        popup.addEventListener("transitionend", onEnd);
+        setTimeout(finish, Math.max(durTransform, durOpacity) + 80);
+    };
+
+    const animatePopupScaleOut = (onDone) => {
+        if (!popup || isPopupAnimating) return;
+        const baseTransform = getPopupBaseTransform();
+        setPopupBaseTransform(baseTransform);
+        const targetTransform = combineTransform(baseTransform, "scale(0.05)");
+        const speed = getAnimSpeedFactor();
+        const durTransform = Math.round(260 / speed);
+        const durOpacity = Math.round(200 / speed);
+
+        setPopupAnimating(true);
+        popup.style.transition = `transform ${durTransform}ms ${POPUP_ANIM_EASE_IN}, opacity ${durOpacity}ms ${POPUP_ANIM_EASE_IN}`;
+        popup.style.transformOrigin = "center center";
+        popup.style.opacity = "0";
+        popup.style.transform = targetTransform;
+
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            popup.style.display = "none";
+            resetPopupAnimStyles(baseTransform);
+            setPopupAnimating(false);
+            if (typeof onDone === "function") onDone();
+        };
+        const onEnd = (e) => {
+            if (e.target !== popup || e.propertyName !== "transform") return;
+            popup.removeEventListener("transitionend", onEnd);
+            finish();
+        };
+        popup.addEventListener("transitionend", onEnd);
+        setTimeout(finish, Math.max(durTransform, durOpacity) + 80);
     };
 
     let abortController = null;
@@ -2179,9 +2322,15 @@
                 if (popup.style.display !== "flex") {
                     floatBall.style.display = "none";
                     resetPopupState();
-                    popup.style.display = "flex";
-
-                    checkUpdateAndShowChangelog();
+                    const enableMinAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+                    if (enableMinAnim) {
+                        animatePopupFromBottom(() => {
+                            checkUpdateAndShowChangelog();
+                        });
+                    } else {
+                        popup.style.display = "flex";
+                        checkUpdateAndShowChangelog();
+                    }
                 }
 
                 setViewImmediate("main");
@@ -2521,6 +2670,13 @@
                         <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
                             <input type="checkbox" id="coolauxv-cfg-draggable-ball"> 悬浮球可拖动
                         </label>
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-cfg-minimize-anim"> 界面动画
+                        </label>
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            动画速度
+                            <input type="number" id="coolauxv-cfg-anim-speed" min="0.3" max="3" step="0.1" style="width:70px; margin-left:6px;">
+                        </label>
                     </div>
                 </div>
 
@@ -2550,11 +2706,7 @@
                         <span style="font-size:11px; color:#999;">使用视觉模型</span>
                     </div>
 
-                    <div style="display:flex; align-items:center; gap:12px; margin-top:10px; flex-wrap:wrap;">
-                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                            <input type="checkbox" id="coolauxv-cfg-minimize-anim"> 收起动画 (缩放到悬浮球)
-                        </label>
-                    </div>
+                    <div style="display:flex; align-items:center; gap:12px; margin-top:10px; flex-wrap:wrap;"></div>
                 </div>
 
 
@@ -2670,15 +2822,24 @@
                 if (isViewSwitching) return;
                 const showSettings = activeView !== "settings";
                 const edge = getRandomViewEdge();
+                const enableAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
                 if (showSettings) {
                     loadConfig(); // 进入设置时重新加载配置，确保显示最新值
-                    animateViewSwap(mainView, settingsView, edge, () => {
-                        activeView = "settings";
-                    });
+                    if (enableAnim) {
+                        animateViewSwap(mainView, settingsView, edge, () => {
+                            activeView = "settings";
+                        });
+                    } else {
+                        setViewImmediate("settings");
+                    }
                 } else {
-                    animateViewSwap(settingsView, mainView, edge, () => {
-                        activeView = "main";
-                    });
+                    if (enableAnim) {
+                        animateViewSwap(settingsView, mainView, edge, () => {
+                            activeView = "main";
+                        });
+                    } else {
+                        setViewImmediate("main");
+                    }
                 }
             };
         }
@@ -2766,6 +2927,7 @@
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
         const inputContinuousChat = popup.querySelector("#coolauxv-cfg-continuous-chat");
         const inputMinimizeAnim = popup.querySelector("#coolauxv-cfg-minimize-anim");
+        const inputAnimSpeed = popup.querySelector("#coolauxv-cfg-anim-speed");
         const chatBar = popup.querySelector("#coolauxv-chat-bar");
         const chatBody = popup.querySelector("#coolauxv-chat-body");
         const chatToggleBtn = popup.querySelector("#coolauxv-chat-toggle");
@@ -2796,6 +2958,7 @@
             "coolauxv_use_new_screenshot",
             "coolauxv_enable_continuous_chat",
             "coolauxv_enable_minimize_anim",
+            "coolauxv_anim_speed",
             "coolauxv_enable_blur_glass",
             "coolauxv_persistent_ball",
             "coolauxv_draggable_ball"
@@ -3055,6 +3218,7 @@
                 coolauxv_use_new_screenshot: DEFAULT_USE_NEW_SCREENSHOT,
                 coolauxv_enable_continuous_chat: DEFAULT_ENABLE_CONTINUOUS_CHAT,
                 coolauxv_enable_minimize_anim: DEFAULT_ENABLE_MINIMIZE_ANIM,
+                coolauxv_anim_speed: DEFAULT_ANIM_SPEED,
                 coolauxv_enable_blur_glass: DEFAULT_ENABLE_BLUR_GLASS,
                 coolauxv_persistent_ball: false,
                 coolauxv_draggable_ball: false,
@@ -4222,11 +4386,20 @@
         const setModelSectionAnimatedVisibility = (section, visible) => {
             if (!section) return;
             if (visible) {
-                if (section.classList.contains("coolauxv-model-visible")) return;
+                if (section.classList.contains("coolauxv-model-visible") && section.style.display !== "none") return;
+                section.style.display = "block";
                 section.style.maxHeight = "0px";
+                section.style.opacity = "0";
+                section.style.transform = "translateY(-4px)";
                 section.classList.add("coolauxv-model-visible");
                 requestAnimationFrame(() => {
                     const targetHeight = section.scrollHeight;
+                    section.style.opacity = "1";
+                    section.style.transform = "translateY(0)";
+                    if (targetHeight <= 0) {
+                        section.style.maxHeight = "none";
+                        return;
+                    }
                     section.style.maxHeight = `${targetHeight}px`;
                     const onEnd = (e) => {
                         if (e.propertyName !== "max-height") return;
@@ -4246,13 +4419,46 @@
             void section.offsetHeight;
             section.classList.remove("coolauxv-model-visible");
             section.style.maxHeight = "0px";
+            section.style.opacity = "0";
+            section.style.transform = "translateY(-4px)";
+            const onEnd = (e) => {
+                if (e.propertyName !== "max-height") return;
+                if (!section.classList.contains("coolauxv-model-visible")) {
+                    section.style.display = "none";
+                }
+                section.removeEventListener("transitionend", onEnd);
+            };
+            section.addEventListener("transitionend", onEnd);
         };
 
-        const applyModelProviderUI = (providerId) => {
+        const setModelSectionStateInstant = (section, visible) => {
+            if (!section) return;
+            if (visible) {
+                section.style.display = "block";
+                section.classList.add("coolauxv-model-visible");
+                section.style.maxHeight = "none";
+                section.style.opacity = "1";
+                section.style.transform = "translateY(0)";
+                section.style.pointerEvents = "auto";
+                return;
+            }
+            section.classList.remove("coolauxv-model-visible");
+            section.style.maxHeight = "0px";
+            section.style.opacity = "0";
+            section.style.transform = "translateY(-4px)";
+            section.style.pointerEvents = "none";
+            section.style.display = "none";
+        };
+
+        const applyModelProviderUI = (providerId, instant = false) => {
             if (!modelSectionsContainer) return;
             modelSectionsContainer.querySelectorAll("[data-model-provider-section]").forEach((section) => {
                 const sectionId = section.dataset.modelProviderSection;
-                setModelSectionAnimatedVisibility(section, sectionId === providerId);
+                if (instant) {
+                    setModelSectionStateInstant(section, sectionId === providerId);
+                } else {
+                    setModelSectionAnimatedVisibility(section, sectionId === providerId);
+                }
             });
         };
 
@@ -4285,6 +4491,7 @@
             renderProviderSections(templates);
             const selectedModelProvider = renderModelProviderSelect(templates, defaultProviderId);
             renderModelSections(templates, selectedModelProvider);
+            applyModelProviderUI(selectedModelProvider, true);
             applyProviderSectionStates();
             updateProviderToggleLabels();
             updateBatchModeUI();
@@ -4831,6 +5038,10 @@
                 inputNewScreenshot.value = val;
             }
             if (inputMinimizeAnim) inputMinimizeAnim.checked = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+            if (inputAnimSpeed) {
+                const raw = GM_getValue("coolauxv_anim_speed", DEFAULT_ANIM_SPEED);
+                inputAnimSpeed.value = raw ? String(raw) : String(DEFAULT_ANIM_SPEED);
+            }
             if (inputPromptVision) inputPromptVision.value = GM_getValue("coolauxv_prompt_vision", "");
             if (inputContinuousChat) inputContinuousChat.checked = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
 
@@ -4853,6 +5064,10 @@
                 inputNewScreenshot.value = val;
             }
             if (inputMinimizeAnim) inputMinimizeAnim.checked = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+            if (inputAnimSpeed) {
+                const raw = GM_getValue("coolauxv_anim_speed", DEFAULT_ANIM_SPEED);
+                inputAnimSpeed.value = raw ? String(raw) : String(DEFAULT_ANIM_SPEED);
+            }
             if (inputAppendTrans) inputAppendTrans.checked = GM_getValue("coolauxv_append_trans", false);
             if (inputAppendExplain) inputAppendExplain.checked = GM_getValue("coolauxv_append_explain", false);
             if (inputAppendVision) inputAppendVision.checked = GM_getValue("coolauxv_append_vision", false);
@@ -4979,6 +5194,23 @@
         if (inputMinimizeAnim) {
             inputMinimizeAnim.addEventListener("change", (e) => {
                 GM_setValue("coolauxv_enable_minimize_anim", e.target.checked);
+            });
+        }
+        if (inputAnimSpeed) {
+            inputAnimSpeed.addEventListener("change", () => {
+                const val = Number.parseFloat(inputAnimSpeed.value);
+                if (!Number.isFinite(val) || val <= 0) {
+                    inputAnimSpeed.value = String(DEFAULT_ANIM_SPEED);
+                    GM_deleteValue("coolauxv_anim_speed");
+                    return;
+                }
+                const clamped = Math.max(0.3, Math.min(3, val));
+                inputAnimSpeed.value = String(clamped);
+                if (clamped === DEFAULT_ANIM_SPEED) {
+                    GM_deleteValue("coolauxv_anim_speed");
+                } else {
+                    GM_setValue("coolauxv_anim_speed", clamped);
+                }
             });
         }
 
@@ -5864,6 +6096,13 @@
 
     function closeWindow() {
         if (isPopupAnimating) return;
+        const enableMinAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+        if (enableMinAnim) {
+            animatePopupSlideOutDown(() => {
+                performCloseWindow();
+            });
+            return;
+        }
         performCloseWindow();
     }
 
@@ -5877,6 +6116,13 @@
     function quitScript() {
         if (!confirm("确定要退出吗？")) return;
         if (isPopupAnimating) return;
+        const enableMinAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+        if (enableMinAnim) {
+            animatePopupScaleOut(() => {
+                performQuit();
+            });
+            return;
+        }
         performQuit();
     }
 
@@ -6340,16 +6586,48 @@
         overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
     }
 
-    // 版本检测与日志弹窗逻辑 (使用通用弹窗)
-    function checkUpdateAndShowChangelog() {
-        const gmInfo = globalThis.GM_info;
-        const currentVer = (gmInfo && gmInfo.script && gmInfo.script.version) ? gmInfo.script.version : SCRIPT_VERSION;
-        const lastVer = GM_getValue("coolauxv_installed_version", "0.0");
+    const parseScriptVersionFromText = (text) => {
+        if (!text) return "";
+        const match = text.match(/@version\s+([^\s]+)/);
+        return match ? match[1] : "";
+    };
 
-        if (currentVer !== lastVer) {
-            showModal(`🎉 更新日志 ${currentVer}`, LATEST_CHANGELOG);
-            GM_setValue("coolauxv_installed_version", currentVer);
+    let cachedScriptVersion = "";
+    let cachedScriptVersionPromise = null;
+    const loadScriptVersionFromExtension = () => {
+        if (cachedScriptVersion) return Promise.resolve(cachedScriptVersion);
+        if (cachedScriptVersionPromise) return cachedScriptVersionPromise;
+        if (!globalThis.chrome || !chrome.runtime || !chrome.runtime.getURL) {
+            return Promise.resolve("");
         }
+        const url = chrome.runtime.getURL("translator.user.js");
+        cachedScriptVersionPromise = fetch(url)
+            .then((res) => res.text())
+            .then((text) => {
+                const version = parseScriptVersionFromText(text);
+                if (version) cachedScriptVersion = version;
+                return version;
+            })
+            .catch(() => "");
+        return cachedScriptVersionPromise;
+    };
+
+    const getScriptVersion = async () => {
+        const gmInfo = globalThis.GM_info;
+        if (gmInfo && gmInfo.script && gmInfo.script.version) {
+            return gmInfo.script.version;
+        }
+        return await loadScriptVersionFromExtension();
+    };
+
+    // 版本检测与日志弹窗逻辑 (使用通用弹窗)
+    async function checkUpdateAndShowChangelog() {
+        const lastVer = GM_getValue("coolauxv_installed_version", "0.0");
+        const currentVerRaw = await getScriptVersion();
+        const currentVer = currentVerRaw || lastVer;
+        if (!currentVer || currentVer === lastVer) return;
+        showModal(`🎉 更新日志 ${currentVer}`, LATEST_CHANGELOG);
+        GM_setValue("coolauxv_installed_version", currentVer);
     }
 
     // ========================================================================
