@@ -17,7 +17,7 @@
         "vendor/html2canvas.min.js",
         "vendor/katex.min.js",
         "vendor/auto-render.min.js",
-        "translator.user.js"
+        "coolauxv.user.js"
       ],
       "run_at": "document_idle",
       "match_origin_as_fallback": true

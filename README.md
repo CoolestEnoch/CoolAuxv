@@ -5,11 +5,11 @@
 **已支持 Chromium 类浏览器扩展版（Load unpacked 安装），已支持OpenAI接口**
 
 [![GitHub Source](https://img.shields.io/badge/GitHub-Source-black?logo=github)](https://github.com/CoolestEnoch/CoolAuxv)
-[![Install TamperMonkey](https://img.shields.io/badge/Install-TamperMonkey-green)](https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js)
+[![Install TamperMonkey](https://img.shields.io/badge/Install-TamperMonkey-green)](https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 
-# [👉👉👉 立即安装 / INSTALL 👈👈👈](https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js)
+# [👉👉👉 立即安装 / INSTALL 👈👈👈](https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js)
 
 ## 📖 简介
 
@@ -85,7 +85,7 @@
 1.  **安装（油猴版）**：
     *   PC 端：Chromium 类浏览器安装 Tampermonkey 扩展。
     *   Android 端：Firefox 安装 Tampermonkey 扩展。
-    *   点击 **[这里](https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js)** 安装脚本。
+    *   点击 **[这里](https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js)** 安装脚本。
 2.  **安装（Chromium 类浏览器扩展版）**：
     *   下载或克隆本仓库代码。
     *   打开扩展管理页并启用开发者模式。

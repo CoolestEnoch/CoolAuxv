@@ -25,6 +25,6 @@
 // @connect      api.cnb.cool
 // @connect      *
 // @license      GPL-3.0
-// @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js
-// @updateURL    https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.meta.js
+// @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js
+// @updateURL    https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.meta.js
 // ==/UserScript==

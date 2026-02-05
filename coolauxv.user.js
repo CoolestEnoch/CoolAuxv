@@ -25,8 +25,8 @@
 // @connect      api.cnb.cool
 // @connect      *
 // @license      GPL-3.0
-// @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.user.js
-// @updateURL    https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/translator.meta.js
+// @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js
+// @updateURL    https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.meta.js
 // ==/UserScript==
 
 
@@ -2443,19 +2443,27 @@
 
     const animatePopupSlideOutDown = (onDone) => {
         if (!popup || isPopupAnimating) return;
-        const baseTransform = getPopupBaseTransform();
+        const popupRect = popup.getBoundingClientRect();
+        const baseTransform = "translate3d(0, 0, 0)";
         setPopupBaseTransform(baseTransform);
         const speed = getAnimSpeedFactor();
         const durTransform = Math.round(360 / speed);
         const durOpacity = Math.round(200 / speed);
 
-        const popupRect = popup.getBoundingClientRect();
         const dy = Math.max(0, window.innerHeight - popupRect.top + popupRect.height + 40);
-        const targetTransform = combineTransform(baseTransform, `translate3d(0, ${dy}px, 0)`);
+        const targetTransform = `translate3d(0, ${dy}px, 0)`;
 
         setPopupAnimating(true);
-        popup.style.transition = `transform ${durTransform}ms ${POPUP_ANIM_EASE_IN}, opacity ${durOpacity}ms ${POPUP_ANIM_EASE_IN}`;
+        popup.style.transition = "none";
         popup.style.transformOrigin = "center center";
+        popup.style.left = `${popupRect.left}px`;
+        popup.style.top = `${popupRect.top}px`;
+        popup.style.transform = baseTransform;
+        popup.style.opacity = "1";
+
+        void popup.offsetHeight;
+
+        popup.style.transition = `transform ${durTransform}ms ${POPUP_ANIM_EASE_IN}, opacity ${durOpacity}ms ${POPUP_ANIM_EASE_IN}`;
         popup.style.opacity = "0";
         popup.style.transform = targetTransform;
 
@@ -2832,6 +2840,7 @@
                         <svg height="16" width="16" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
                         CoolAuxv (GitHub)
                     </a>
+                    <a href="https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js" target="_blank" class="coolauxv-github-btn" title="检查更新">检查更新</a>
                     <a href="https://github.com/CoolestEnoch/CoolAuxv/commits/main" target="_blank" class="coolauxv-github-btn" title="查看历史版本更新日志">更新日志</a>
                 </h3>
 
@@ -3594,6 +3603,12 @@
                 }
             });
         });
+        const noneLogRadio = Array.from(radioBtns).find((radio) => radio.value === "none");
+        if (noneLogRadio) {
+            noneLogRadio.addEventListener("click", () => {
+                showModal("提示", "反馈bug需启用详细日志");
+            });
+        }
 
         const saveConfig = (key, value) => {
             const val = value.trim();
@@ -3799,6 +3814,16 @@
             if (baseTemplate.repo && !Object.prototype.hasOwnProperty.call(customFieldsSeed, "repo")) {
                 customFieldsSeed.repo = String(baseTemplate.repo || "");
             }
+            if (baseTemplate.id) {
+                const secrets = getProviderSecretFields(baseTemplate.id);
+                Object.keys(customFieldsSeed).forEach((key) => {
+                    if (customFieldMetaSeed[key] && customFieldMetaSeed[key].masked) {
+                        if (Object.prototype.hasOwnProperty.call(secrets, key)) {
+                            customFieldsSeed[key] = secrets[key];
+                        }
+                    }
+                });
+            }
             let customFieldList = Object.keys(customFieldsSeed).map((key) => ({
                 key: key,
                 value: customFieldsSeed[key],
@@ -3992,7 +4017,7 @@
                         <div class="coolauxv-sub-label coolauxv-sub-label-inline">自定义字段 (key => {{key}})</div>
                         <div id="coolauxv-provider-form-custom-fields"></div>
                         <button type="button" id="coolauxv-provider-add-custom-field" class="coolauxv-action-btn" style="margin-top:6px;">➕ 添加字段</button>
-                        <div style="font-size:11px; color:#888;">可在请求头/请求体/Base URL 中使用 {{key}}，字段值请在提供商列表中填写。</div>
+                        <div style="font-size:11px; color:#888;">可在请求头/请求体/Base URL 中使用 {{key}}。未打码字段可在此处填写，打码字段请在提供商列表中填写。</div>
                     </div>
 
                     <div id="coolauxv-provider-form-base64" style="display:none;">
@@ -4159,6 +4184,7 @@
                 customFieldContainer.innerHTML = customFieldList.map((field, idx) => `
                     <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:6px;" data-custom-index="${idx}">
                         <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1; min-width:160px;" data-field="custom.key" placeholder="字段名 (key)" value="${escapeAttr(field.key || "")}">
+                        <input type="${field.masked ? "password" : "text"}" class="coolauxv-setting-input coolauxv-fixed-input ${field.masked ? "coolauxv-read-only" : ""}" style="flex:1; min-width:160px;" data-field="custom.value" placeholder="${field.masked ? "已打码" : "字段值"}" value="${escapeAttr(field.value || "")}" ${field.masked ? "disabled" : ""}>
                         <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
                             <input type="checkbox" data-field="custom.display" ${field.display ? "checked" : ""}> 默认展示
                         </label>
@@ -4276,8 +4302,12 @@
                     const item = customFieldList[index];
                     if (!item) return;
                     if (field === "custom.key") item.key = target.value;
+                    if (field === "custom.value") item.value = target.value;
                     if (field === "custom.display") item.display = target.checked;
-                    if (field === "custom.masked") item.masked = target.checked;
+                    if (field === "custom.masked") {
+                        item.masked = target.checked;
+                        renderCustomFields();
+                    }
                 });
             }
 
@@ -4429,7 +4459,11 @@
                     Object.keys(customFields).forEach((key) => {
                         const meta = customFieldMeta[key] || { display: true, masked: false };
                         const wasMasked = prevMeta[key] ? !!prevMeta[key].masked : false;
-                        const source = wasMasked ? prevSecrets[key] : customFields[key];
+                        const inputValue = customFields[key];
+                        const hasInputValue = inputValue !== undefined && inputValue !== null && String(inputValue) !== "";
+                        const source = meta.masked
+                            ? (hasInputValue ? inputValue : (wasMasked ? prevSecrets[key] : inputValue))
+                            : inputValue;
                         if (meta.masked) {
                             if (source !== undefined && source !== null && String(source)) {
                                 nextSecrets[key] = String(source);
@@ -5975,11 +6009,8 @@
         return [{ type: "output_text", text: text }];
     }
 
-    function buildChatPartsContent(text, imageBase64) {
+    function buildChatPartsContent(text) {
         const parts = [];
-        if (imageBase64) {
-            parts.push({ type: "image_url", image_url: { url: imageBase64 } });
-        }
         if (text) {
             parts.push({ type: "text", text: text });
         }
@@ -5997,7 +6028,7 @@
             return { role: role, content: content };
         }
         if (template.type === "chat-parts") {
-            const parts = buildChatPartsContent(text, imageBase64);
+            const parts = buildChatPartsContent(text);
             if (!parts.length) return null;
             return { role: role, parts: parts, id: generateMessageId() };
         }
@@ -7263,6 +7294,7 @@
                     let apiErr = null;
                     try {
                         const errJson = await response.json();
+                        logAiRawResponse(provider, config.modelName, mode, errJson);
                         apiErr = parseApiError(errJson);
                     } catch (e) { }
                     if (!shouldSuppressResultError()) {
@@ -7273,6 +7305,11 @@
                     autoExpandChatIfEnabled(actionToken);
                     return;
                 }
+                let rawText = "";
+                try {
+                    rawText = await response.text();
+                } catch (e) { }
+                logAiRawResponse(provider, config.modelName, mode, rawText);
                 if (response.status === 401 || response.status === 403) throw new Error("AUTH_INVALID");
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -7368,6 +7405,7 @@
 
                     if (res.status === 429) {
                         const resultDiv = popup.querySelector("#coolauxv-result");
+                        logAiRawResponse(provider, config.modelName, mode, res.responseText);
                         const apiErr = parseApiError(res.responseText);
                         if (resultDiv && !shouldSuppressResultError()) {
                             resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
@@ -7379,6 +7417,7 @@
                     }
 
                     const fullText = res.responseText || (typeof res.response === 'string' ? res.response : "");
+                    logAiRawResponse(provider, config.modelName, mode, fullText);
 
                     if (res.status === 401 || res.status === 403) {
                         if (!shouldSuppressResultError()) {
@@ -7586,6 +7625,33 @@
         const label = [provider, model, mode].filter(Boolean).join("/");
         const prefix = label ? `AI Response (${label})` : "AI Response";
         Logger.info(prefix, output);
+    }
+
+    function formatRawLogPayload(raw) {
+        if (raw === undefined || raw === null) return "";
+        if (typeof raw === "string") return raw;
+        try {
+            return JSON.stringify(raw);
+        } catch (e) {
+            return String(raw);
+        }
+    }
+
+    function logAiRawResponse(provider, model, mode, raw) {
+        const output = formatRawLogPayload(raw);
+        if (!output.trim()) return;
+        const label = [provider, model, mode].filter(Boolean).join("/");
+        const prefix = label ? `AI Raw Response (${label})` : "AI Raw Response";
+        Logger.debug(prefix, output);
+    }
+
+    function logAiRawStreamLine(template, line) {
+        const output = formatRawLogPayload(line);
+        if (!output.trim()) return;
+        const providerId = template && template.id ? template.id : "provider";
+        const label = [providerId, streamMode].filter(Boolean).join("/");
+        const prefix = label ? `AI Raw Stream (${label})` : "AI Raw Stream";
+        Logger.debug(prefix, output);
     }
 
     function handleApiError(provider, err) {
@@ -7905,6 +7971,7 @@
     }
 
     function processStreamLine(template, line) {
+        logAiRawStreamLine(template, line);
         const parser = template && template.stream ? template.stream.parser : "";
         if (parser === "openai-responses") {
             processOpenaiStreamLine(template, line);
@@ -8528,6 +8595,7 @@
                 }
             },
             onload: (res) => {
+                logAiRawResponse(provider, config.modelVision, mode, res.responseText);
                 if (res.status === 429) {
                     stopRenderLoop();
                     if (!shouldSuppressResultError()) {
@@ -8665,6 +8733,7 @@
                     let apiErr = null;
                     try {
                         const errJson = await response.json();
+                        logAiRawResponse(provider, config.modelVision, "chat", errJson);
                         apiErr = parseApiError(errJson);
                     } catch (e) { }
                     const html = (apiErr && isQuotaError(apiErr))
@@ -8674,6 +8743,11 @@
                     return;
                 }
                 if (response.status === 401 || response.status === 403) {
+                    let rawText = "";
+                    try {
+                        rawText = await response.text();
+                    } catch (e) { }
+                    logAiRawResponse(provider, config.modelVision, "chat", rawText);
                     appendChatError(getInvalidKeyErrorHTML(provider), { allowHtml: true });
                     return;
                 }
@@ -8681,6 +8755,7 @@
                 try {
                     rawText = await response.text();
                 } catch (e) { }
+                logAiRawResponse(provider, config.modelVision, "chat", rawText);
                 const apiErr = parseApiError(rawText);
                 const err = apiErr || { type: "http_error", message: `HTTP ${response.status}`, raw: rawText, rawText: rawText };
                 appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
@@ -8767,6 +8842,7 @@
                 if (chatStreamActive) {
                     if (streamErrorHandled) return;
                     if (res.status === 200) return;
+                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
                     const apiErr = parseApiError(res.responseText);
                     const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
                     streamErrorHandled = true;
@@ -8776,6 +8852,7 @@
                 if (res.status === 429) {
                     stopRenderLoop();
                     finalizeChatResponse(actionToken);
+                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
                     const apiErr = parseApiError(res.responseText);
                     const html = (apiErr && isQuotaError(apiErr))
                         ? getQuotaErrorHTML(provider, apiErr.message)
@@ -8786,12 +8863,14 @@
                 if (res.status === 401 || res.status === 403) {
                     stopRenderLoop();
                     finalizeChatResponse(actionToken);
+                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
                     appendChatError(getInvalidKeyErrorHTML(provider), { allowHtml: true });
                     return;
                 }
                 if (res.status !== 200) {
                     stopRenderLoop();
                     finalizeChatResponse(actionToken);
+                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
                     const apiErr = parseApiError(res.responseText);
                     const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
                     appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });

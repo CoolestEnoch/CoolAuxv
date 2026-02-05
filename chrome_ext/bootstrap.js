@@ -290,7 +290,7 @@
     await loadScript("vendor/html2canvas.min.js");
     await loadScript("vendor/katex.min.js");
     await loadScript("vendor/auto-render.min.js");
-    await loadScript("translator.user.js");
+    await loadScript("coolauxv.user.js");
   };
 
   bootstrap().catch((err) => {
