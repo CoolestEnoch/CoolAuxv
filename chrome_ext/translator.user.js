@@ -153,11 +153,24 @@
     const cloneDeep = (obj) => JSON.parse(JSON.stringify(obj));
 
     const normalizeProviderId = (id) => String(id || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-");
-    const normalizeProviderType = (type) => type === "openai-responses" ? "openai-responses" : "chat-completions";
+    const generateRequestId = () => {
+        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    };
+    const generateMessageId = () => {
+        return `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    };
+    const normalizeProviderType = (type) => {
+        if (type === "openai-responses") return "openai-responses";
+        if (type === "chat-parts") return "chat-parts";
+        return "chat-completions";
+    };
     const getDefaultBodyTemplateByType = (type) => {
         const normalized = normalizeProviderType(type);
         if (normalized === "openai-responses") {
             return { model: "{{model}}", stream: true, input: "{{messages}}" };
+        }
+        if (normalized === "chat-parts") {
+            return { model: "{{model}}", id: "{{requestId}}", messages: "{{messages}}", trigger: "{{trigger}}" };
         }
         return { model: "{{model}}", stream: true, messages: "{{messages}}" };
     };
@@ -165,7 +178,7 @@
         const normalized = normalizeProviderType(type);
         return {
             parser: normalized,
-            deltaPath: normalized === "openai-responses" ? "" : "choices.0.delta.content",
+            deltaPath: normalized === "openai-responses" || normalized === "chat-parts" ? "" : "choices.0.delta.content",
             reasoningPath: ""
         };
     };
@@ -381,7 +394,9 @@
             stream: tpl.stream && typeof tpl.stream === "object" ? {
                 parser: tpl.stream.parser === "openai-responses"
                     ? "openai-responses"
-                    : (tpl.stream.parser === "chat-completions" ? "chat-completions" : normalizedType),
+                    : (tpl.stream.parser === "chat-parts"
+                        ? "chat-parts"
+                        : (tpl.stream.parser === "chat-completions" ? "chat-completions" : normalizedType)),
                 deltaPath: tpl.stream.deltaPath !== undefined ? String(tpl.stream.deltaPath) : defaultStream.deltaPath,
                 reasoningPath: tpl.stream.reasoningPath !== undefined ? String(tpl.stream.reasoningPath) : defaultStream.reasoningPath
             } : defaultStream,
@@ -2192,7 +2207,7 @@
 
     const animatePopupSlideOutDown = (onDone) => {
         if (!popup || isPopupAnimating) return;
-        const baseTransform = "";
+        const baseTransform = getPopupBaseTransform();
         setPopupBaseTransform(baseTransform);
         const speed = getAnimSpeedFactor();
         const durTransform = Math.round(360 / speed);
@@ -2200,7 +2215,7 @@
 
         const popupRect = popup.getBoundingClientRect();
         const dy = Math.max(0, window.innerHeight - popupRect.top + popupRect.height + 40);
-        const targetTransform = `translate3d(0, ${dy}px, 0)`;
+        const targetTransform = combineTransform(baseTransform, `translate3d(0, ${dy}px, 0)`);
 
         setPopupAnimating(true);
         popup.style.transition = `transform ${durTransform}ms ${POPUP_ANIM_EASE_IN}, opacity ${durOpacity}ms ${POPUP_ANIM_EASE_IN}`;
@@ -2268,6 +2283,8 @@
     let streamErrorHandled = false;
     let openaiStreamHasDelta = false;
     let openaiStreamHasFull = false;
+    let chatPartsStreamHasDelta = false;
+    let chatPartsStreamHasFull = false;
 
     let historyRecords = [];
     let chatMessages = [];
@@ -2276,6 +2293,7 @@
     let chatSystemPrompt = "";
     let chatDisplayBuffer = "";
     let chatSessionStarted = false;
+    let chatSessionId = "";
     let chatCapturedImageBase64 = "";
     let chatImageStore = {};
     let chatImageCounter = 0;
@@ -3356,6 +3374,9 @@
             if (type === "openai-responses") {
                 return { model: "{{model}}", stream: true, input: "{{messages}}" };
             }
+            if (type === "chat-parts") {
+                return { model: "{{model}}", id: "{{requestId}}", messages: "{{messages}}", trigger: "{{trigger}}" };
+            }
             return { model: "{{model}}", stream: true, messages: "{{messages}}" };
         };
 
@@ -3638,6 +3659,7 @@
                         </div>
                         <select id="coolauxv-provider-form-type" class="coolauxv-setting-input coolauxv-fixed-input">
                             <option value="chat-completions" ${baseTemplate.type === "chat-completions" ? "selected" : ""}>Chat Completions</option>
+                            <option value="chat-parts" ${baseTemplate.type === "chat-parts" ? "selected" : ""}>Chat Parts</option>
                             <option value="openai-responses" ${baseTemplate.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                         </select>
 
@@ -3661,18 +3683,23 @@
                             <input type="text" id="coolauxv-provider-form-role-assistant" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="assistant" value="${escapeAttr(baseTemplate.roles.assistant)}">
                         </div>
 
-                        <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">流式解析</div>
-                        <div class="coolauxv-sub-label">响应解析 (Delta / 推理路径)
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
-                                <input type="checkbox" data-display-key="streamDelta" ${displayCheck("streamDelta")}> Delta 默认展示
-                            </label>
-                            <label class="coolauxv-toggle-label" style="margin-left:6px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
-                                <input type="checkbox" data-display-key="streamReasoning" ${displayCheck("streamReasoning")}> 推理 默认展示
-                            </label>
-                        </div>
-                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                            <input type="text" id="coolauxv-provider-form-delta-path" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="choices.0.delta.content" value="${escapeAttr(deltaPathVal)}">
-                            <input type="text" id="coolauxv-provider-form-reasoning-path" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="choices.0.delta.reasoning_content" value="${escapeAttr(reasoningPathVal)}">
+                        <div id="coolauxv-provider-stream-section">
+                            <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">流式解析</div>
+                            <div class="coolauxv-sub-label">响应解析 (Delta / 推理路径)
+                                <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                    <input type="checkbox" data-display-key="streamDelta" ${displayCheck("streamDelta")}> Delta 默认展示
+                                </label>
+                                <label class="coolauxv-toggle-label" style="margin-left:6px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                    <input type="checkbox" data-display-key="streamReasoning" ${displayCheck("streamReasoning")}> 推理 默认展示
+                                </label>
+                            </div>
+                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                                <input type="text" id="coolauxv-provider-form-delta-path" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="choices.0.delta.content" value="${escapeAttr(deltaPathVal)}">
+                                <input type="text" id="coolauxv-provider-form-reasoning-path" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="choices.0.delta.reasoning_content" value="${escapeAttr(reasoningPathVal)}">
+                            </div>
+                            <div id="coolauxv-provider-stream-tip" style="display:none; font-size:11px; color:#999; margin-top:4px;">
+                                Chat Parts 不需要配置 Delta/推理路径
+                            </div>
                         </div>
 
                         <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">模板</div>
@@ -3743,6 +3770,8 @@
             const bodyInput = box.querySelector("#coolauxv-provider-form-body-template");
             const deltaPathInput = box.querySelector("#coolauxv-provider-form-delta-path");
             const reasoningPathInput = box.querySelector("#coolauxv-provider-form-reasoning-path");
+            const streamSection = box.querySelector("#coolauxv-provider-stream-section");
+            const streamTip = box.querySelector("#coolauxv-provider-stream-tip");
             const closeBtn = box.querySelector("#coolauxv-provider-modal-close");
             const cancelBtn = box.querySelector("#coolauxv-provider-modal-cancel");
             const submitBtn = box.querySelector("#coolauxv-provider-modal-submit");
@@ -3780,6 +3809,21 @@
                 btnManual.classList.toggle("coolauxv-btn-primary", modeType === "manual");
                 btnBase64.classList.toggle("coolauxv-btn-primary", modeType === "base64");
                 updateProviderIdState();
+            };
+
+            const setStreamSectionDisabled = (disabled) => {
+                if (!streamSection) return;
+                streamSection.style.opacity = disabled ? "0.5" : "1";
+                streamSection.style.pointerEvents = disabled ? "none" : "auto";
+                streamSection.querySelectorAll("input, textarea, select").forEach((el) => {
+                    el.disabled = disabled;
+                });
+                if (streamTip) streamTip.style.display = disabled ? "block" : "none";
+            };
+
+            const refreshStreamSection = () => {
+                const isChatParts = !!(typeInput && typeInput.value === "chat-parts");
+                setStreamSectionDisabled(isChatParts);
             };
 
             const renderModelGroupsEditor = () => {
@@ -3884,6 +3928,7 @@
             setMode("manual");
             renderModelGroupsEditor();
             renderCustomFields();
+            refreshStreamSection();
 
             if (labelInput && idInput) {
                 labelInput.addEventListener("input", () => {
@@ -3903,9 +3948,12 @@
             if (typeInput) {
                 typeInput.addEventListener("change", () => {
                     if (bodyInput) {
-                        const nextType = typeInput.value === "openai-responses" ? "openai-responses" : "chat-completions";
+                        const nextType = typeInput.value === "openai-responses"
+                            ? "openai-responses"
+                            : (typeInput.value === "chat-parts" ? "chat-parts" : "chat-completions");
                         bodyInput.value = JSON.stringify(defaultBodyTemplateForType(nextType), null, 2);
                     }
+                    refreshStreamSection();
                 });
             }
 
@@ -4054,7 +4102,9 @@
                     const baseUrl = (box.querySelector("#coolauxv-provider-form-base-url") || {}).value || "";
                     const apiKeyPlaceholder = (box.querySelector("#coolauxv-provider-form-api-key-placeholder") || {}).value || "";
                     const keyLink = (box.querySelector("#coolauxv-provider-form-key-link") || {}).value || "";
-                    const type = typeInput && typeInput.value === "openai-responses" ? "openai-responses" : "chat-completions";
+                    const type = typeInput && typeInput.value === "openai-responses"
+                        ? "openai-responses"
+                        : (typeInput && typeInput.value === "chat-parts" ? "chat-parts" : "chat-completions");
                     const supportsVision = !!(box.querySelector("#coolauxv-provider-form-vision") || {}).checked;
                     const roleSystem = (box.querySelector("#coolauxv-provider-form-role-system") || {}).value || "system";
                     const roleUser = (box.querySelector("#coolauxv-provider-form-role-user") || {}).value || "user";
@@ -4171,7 +4221,9 @@
             providerSectionsContainer.innerHTML = templates.map((provider) => {
                 const sectionId = `coolauxv-provider-section-${provider.id}`;
                 const keyInputId = `coolauxv-provider-key-${provider.id}`;
-                const typeLabel = provider.type === "openai-responses" ? "OpenAI Responses" : "Chat Completions";
+                const typeLabel = provider.type === "openai-responses"
+                    ? "OpenAI Responses"
+                    : (provider.type === "chat-parts" ? "Chat Parts" : "Chat Completions");
                 const headersJson = formatTemplateJson(provider.headersTemplate);
                 const bodyJson = formatTemplateJson(provider.bodyTemplate);
                 const display = Object.assign({}, DEFAULT_DISPLAY_FIELDS, provider.display || {});
@@ -4268,6 +4320,7 @@
                             ${display.type ? `
                                 <select class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="type" data-rerender="true">
                                     <option value="chat-completions" ${provider.type === "chat-completions" ? "selected" : ""}>Chat Completions</option>
+                                    <option value="chat-parts" ${provider.type === "chat-parts" ? "selected" : ""}>Chat Parts</option>
                                     <option value="openai-responses" ${provider.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                                 </select>
                             ` : ""}
@@ -4497,6 +4550,7 @@
             updateBatchModeUI();
             syncAllClearButtons();
             attachProviderClearButtons();
+            updateVisionButtons(defaultProviderId);
             if (GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS)) {
                 const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
                 modelBtns.forEach((btn) => btn.classList.add("coolauxv-blur-glass-style-btn"));
@@ -4519,6 +4573,7 @@
                     applyModelProviderUI(providerId);
                 }
                 syncChatProvider(providerId);
+                updateVisionButtons(providerId);
                 const expandedCount = Array.from(providerSectionStates.values()).filter(Boolean).length;
                 providerSectionStates.forEach((_, id) => {
                     if (id === providerId) providerSectionStates.set(id, true);
@@ -4615,7 +4670,9 @@
 
                 if (field === "type") {
                     const previousType = tpl.type;
-                    const nextType = target.value === "openai-responses" ? "openai-responses" : "chat-completions";
+                    const nextType = target.value === "openai-responses"
+                        ? "openai-responses"
+                        : (target.value === "chat-parts" ? "chat-parts" : "chat-completions");
                     tpl.type = nextType;
                     tpl.stream.parser = nextType;
                     if (nextType === "chat-completions" && !tpl.stream.deltaPath) {
@@ -5456,6 +5513,17 @@
         return [{ type: "output_text", text: text }];
     }
 
+    function buildChatPartsContent(text, imageBase64) {
+        const parts = [];
+        if (imageBase64) {
+            parts.push({ type: "image_url", image_url: { url: imageBase64 } });
+        }
+        if (text) {
+            parts.push({ type: "text", text: text });
+        }
+        return parts;
+    }
+
     function buildProviderMessage(template, roleKey, text, imageBase64) {
         if (!template) return null;
         const role = (template.roles && template.roles[roleKey]) ? template.roles[roleKey] : roleKey;
@@ -5466,6 +5534,11 @@
             if (!content.length) return null;
             return { role: role, content: content };
         }
+        if (template.type === "chat-parts") {
+            const parts = buildChatPartsContent(text, imageBase64);
+            if (!parts.length) return null;
+            return { role: role, parts: parts, id: generateMessageId() };
+        }
         const content = buildChatCompletionContent(text, imageBase64);
         if (content === "") return null;
         return { role: role, content: content };
@@ -5475,16 +5548,25 @@
         if (!template) return {};
         const fallback = template.type === "openai-responses"
             ? { model: "{{model}}", stream: true, input: "{{messages}}" }
-            : { model: "{{model}}", stream: true, messages: "{{messages}}" };
+            : (template.type === "chat-parts"
+                ? { model: "{{model}}", id: "{{requestId}}", messages: "{{messages}}", trigger: "{{trigger}}" }
+                : { model: "{{model}}", stream: true, messages: "{{messages}}" });
         const bodyTemplate = template.bodyTemplate && typeof template.bodyTemplate === "object"
             ? template.bodyTemplate
             : fallback;
+        const customFields = getTemplateCustomFields(template);
+        const trigger = Object.prototype.hasOwnProperty.call(customFields, "trigger")
+            ? customFields.trigger
+            : "submit-message";
         return applyTemplateValue(bodyTemplate, buildTemplateContext(template, {
             model: model,
             messages: messages,
             input: messages,
             stream: true,
-            apiKey: template.apiKey || ""
+            apiKey: template.apiKey || "",
+            requestId: generateRequestId(),
+            trigger: trigger,
+            sessionId: chatSessionId || ""
         }));
     }
 
@@ -5519,6 +5601,22 @@
     function buildChatMessagesForProvider(providerId) {
         const template = getProviderTemplateSafe(providerId);
         const messages = [];
+        if (template && template.type === "chat-parts") {
+            const systemTexts = [];
+            chatHistoryRecords.forEach((record) => {
+                if (record.role === "system") {
+                    if (record.text) systemTexts.push(record.text);
+                    return;
+                }
+                const message = buildProviderMessage(template, record.role, record.text, record.imageBase64);
+                if (message) messages.push(message);
+            });
+            if (systemTexts.length) {
+                const systemMessage = buildProviderMessage(template, "system", systemTexts.join("\n\n"), "");
+                if (systemMessage) messages.unshift(systemMessage);
+            }
+            return messages;
+        }
         chatHistoryRecords.forEach((record) => {
             const message = buildProviderMessage(template, record.role, record.text, record.imageBase64);
             if (message) messages.push(message);
@@ -5573,6 +5671,7 @@
     function startChatSessionIfNeeded() {
         if (chatSessionStarted) return;
         chatSessionStarted = true;
+        chatSessionId = generateRequestId();
         chatMessages = [];
         chatDisplayBuffer = "";
         chatImageStore = {};
@@ -5704,6 +5803,7 @@
         chatHistoryRecords = [];
         chatDisplayBuffer = "";
         chatSessionStarted = false;
+        chatSessionId = "";
         chatImageStore = {};
         chatImageCounter = 0;
         chatAssistantBuffer = "";
@@ -5721,6 +5821,7 @@
         chatHistoryRecords = [];
         chatDisplayBuffer = "";
         chatSessionStarted = false;
+        chatSessionId = "";
         chatImageStore = {};
         chatImageCounter = 0;
         chatAssistantBuffer = "";
@@ -5926,6 +6027,28 @@
             element.removeEventListener("transitionend", onEnd);
         };
         element.addEventListener("transitionend", onEnd);
+    }
+
+    function updateVisionButtons(providerId) {
+        if (!popup) return;
+        const template = providerId ? getProviderTemplateSafe(providerId) : getActiveConfig().template;
+        const supportsVision = !!(template && template.supportsVision);
+        const btnShotMain = popup.querySelector("#coolauxv-btn-screenshot");
+        const btnShotChat = popup.querySelector("#coolauxv-btn-screenshot-chat");
+        const btnPreview = popup.querySelector("#coolauxv-btn-preview");
+        const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
+        const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
+
+        if (btnShotMain) btnShotMain.style.display = supportsVision ? "" : "none";
+        if (btnShotChat) btnShotChat.style.display = supportsVision ? "" : "none";
+
+        if (!supportsVision) {
+            capturedImageBase64 = "";
+            if (btnPreview) btnPreview.style.display = "none";
+            chatCapturedImageBase64 = "";
+            setAnimatedVisibility(btnChatPreview, false);
+            setAnimatedVisibility(btnChatClear, false);
+        }
     }
 
     function setCollapseAnimatedVisibility(section, visible) {
@@ -7000,6 +7123,8 @@
         streamErrorHandled = false;
         openaiStreamHasDelta = false;
         openaiStreamHasFull = false;
+        chatPartsStreamHasDelta = false;
+        chatPartsStreamHasFull = false;
     }
 
     function abortActiveStream() {
@@ -7290,6 +7415,52 @@
         return text;
     }
 
+    function extractChatPartsTextFromMessage(message) {
+        if (!message || typeof message !== "object") return "";
+        if (Array.isArray(message.parts)) {
+            let text = "";
+            message.parts.forEach((part) => {
+                if (!part || typeof part !== "object") return;
+                if (typeof part.text === "string" && (part.type === "text" || part.type === "output_text" || !part.type)) {
+                    text += part.text;
+                }
+            });
+            return text;
+        }
+        if (typeof message.content === "string") return message.content;
+        return "";
+    }
+
+    function extractChatPartsOutputText(payload) {
+        let data = payload;
+        if (typeof payload === "string") {
+            try {
+                data = JSON.parse(payload);
+            } catch (e) {
+                return "";
+            }
+        }
+        if (!data || typeof data !== "object") return "";
+        if (data.message) {
+            return extractChatPartsTextFromMessage(data.message);
+        }
+        if (Array.isArray(data.messages)) {
+            for (let i = data.messages.length - 1; i >= 0; i--) {
+                const msg = data.messages[i];
+                if (!msg || typeof msg !== "object") continue;
+                if (!msg.role || msg.role === "assistant") {
+                    const text = extractChatPartsTextFromMessage(msg);
+                    if (text) return text;
+                }
+            }
+            for (let i = data.messages.length - 1; i >= 0; i--) {
+                const text = extractChatPartsTextFromMessage(data.messages[i]);
+                if (text) return text;
+            }
+        }
+        return "";
+    }
+
     function extractNonStreamResult(template, payload) {
         if (payload === null || payload === undefined) return null;
         let data = payload;
@@ -7309,6 +7480,10 @@
         const parser = template && template.stream ? template.stream.parser : "";
         if (parser === "openai-responses") {
             const text = extractOpenaiOutputText(data);
+            if (text) return { text };
+        }
+        if (parser === "chat-parts") {
+            const text = extractChatPartsOutputText(data);
             if (text) return { text };
         }
 
@@ -7341,6 +7516,67 @@
         if (!text && typeof data.text === "string") text = data.text;
 
         return text ? { text } : null;
+    }
+
+    function processChatPartsStreamLine(template, line) {
+        line = line.trim();
+        if (!line) return;
+        if (streamErrorHandled) return;
+        const providerId = template ? template.id : "provider";
+        let jsonStr = "";
+        if (line.startsWith("data:")) {
+            jsonStr = line.slice(5).trim();
+        } else if (line.startsWith("{")) {
+            jsonStr = line;
+        } else {
+            return;
+        }
+        if (!jsonStr || jsonStr === "[DONE]") return;
+        try {
+            const data = JSON.parse(jsonStr);
+            const apiErr = parseApiError(data);
+            if (apiErr && handleApiError(providerId, apiErr)) return;
+            const isChatMode = streamMode === "chat";
+            if (data && typeof data === "object" && data.type === "text-delta" && typeof data.delta === "string") {
+                if (data.delta) {
+                    chatPartsStreamHasDelta = true;
+                    if (isChatMode) {
+                        chatAssistantBuffer += data.delta;
+                        updateChatStreamText();
+                    } else {
+                        streamTextBuffer += data.delta;
+                    }
+                }
+                return;
+            }
+            if (data && typeof data === "object" && data.type === "text" && typeof data.text === "string") {
+                if (chatPartsStreamHasDelta || chatPartsStreamHasFull) return;
+                const text = data.text;
+                if (text) {
+                    if (isChatMode) {
+                        chatAssistantBuffer += text;
+                        updateChatStreamText();
+                    } else {
+                        streamTextBuffer += text;
+                    }
+                    chatPartsStreamHasFull = true;
+                }
+                return;
+            }
+            if (chatPartsStreamHasDelta || chatPartsStreamHasFull) return;
+            const fullText = extractChatPartsOutputText(data);
+            if (fullText) {
+                if (isChatMode) {
+                    chatAssistantBuffer += fullText;
+                    updateChatStreamText();
+                } else {
+                    streamTextBuffer += fullText;
+                }
+                chatPartsStreamHasFull = true;
+            }
+        } catch (e) {
+            Logger.debug("Chat Parts JSON Parse Error (Ignore)", line);
+        }
     }
 
     function processOpenaiStreamLine(template, line) {
@@ -7416,6 +7652,10 @@
         const parser = template && template.stream ? template.stream.parser : "";
         if (parser === "openai-responses") {
             processOpenaiStreamLine(template, line);
+            return;
+        }
+        if (parser === "chat-parts") {
+            processChatPartsStreamLine(template, line);
             return;
         }
         processChatCompletionsStreamLine(template, line);
