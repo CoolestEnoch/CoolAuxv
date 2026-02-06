@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v14.3
+// @version      v14.4
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -197,6 +197,20 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v14.4 更新日志
+        ## 🪟 窗口管理优化
+        *   修复悬浮球常驻逻辑：缩小按钮始终缩小到悬浮球，不受常驻设置影响
+        *   关闭按钮现在会清空所有内容区域，恢复界面初始状态
+        *   悬浮球常驻设置仅影响关闭按钮行为，不影响缩小功能
+        ## 🔘 顶部区域折叠控制
+        *   新增内容区域展开/收起按钮（位于“原文”复选框左侧）
+        *   顶部区域展开状态不再持久化保存，每次重新开始
+        *   开始连续对话时，自动收起顶部区域保持界面简洁
+        ## 🔄 界面交互优化
+        *   优化翻译模式与连续对话模式的切换体验
+        *   改进窗口状态管理，提供更清晰的视觉反馈
+        *   增强用户在对话过程中对工作区的控制能力
+        ---
         v14.3 更新日志
         ## 💬 Chat Parts 格式支持
         *   新增 Chat Parts 格式，支持更结构化的对话组织
@@ -1580,6 +1594,37 @@
     #coolauxv-chat-toggle:hover {
         background: #e0efff;
     }
+    #coolauxv-top-collapse-btn {
+        cursor: pointer;
+        font-size: 12px;
+        color: #3b82f6;
+        background: transparent;
+        border: none;
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
+    #coolauxv-top-collapse-btn:hover {
+        background: #e0efff;
+    }
+    #coolauxv-main-top-section {
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        max-height: none;
+        opacity: 1;
+        transform: translateY(0);
+        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+        will-change: max-height, opacity, transform;
+        flex-shrink: 0;
+    }
+    #coolauxv-main-top-section.coolauxv-top-collapsed {
+        max-height: 0;
+        opacity: 0;
+        transform: translateY(-4px);
+        pointer-events: none;
+    }
     #coolauxv-chat-body {
         display: flex;
         flex-direction: column;
@@ -2559,7 +2604,9 @@
     let chatPendingAssistantPrefix = "";
     let chatAssistantLabel = "";
     let isChatCollapsed = true;
+    let isTopSectionCollapsed = false;
     let updateChatCollapseUI = () => { };
+    let updateTopSectionCollapseUI = () => { };
 
     let lastRenderedText = "";
     let lastRenderedReasoning = "";
@@ -2772,6 +2819,7 @@
 
                 <span id="coolauxv-settings-btn" class="coolauxv-ctrl-btn" title="设置" style="font-size:16px;">⚙️</span>
 
+                <button type="button" id="coolauxv-top-collapse-btn" data-no-drag="true" title="展开/收起顶部区域">收起</button>
                 <label class="coolauxv-toggle-label" title="显示原文" style="margin-left:8px;">
                     <input type="checkbox" id="coolauxv-raw-toggle" ${DEFAULT_SHOW_RAW ? "checked" : ""}>原文
                 </label>
@@ -2791,6 +2839,7 @@
             <div id="coolauxv-main-view">
                 <div style="padding:15px; flex:1; display:flex; flex-direction:column; overflow:hidden;">
 
+                  <div id="coolauxv-main-top-section">
                   <div style="position:relative; width:100%; margin-bottom:10px; flex-shrink:0;">
                       <textarea id="coolauxv-input" placeholder="输入内容..." style="width:100%; height:70px; border:1px solid #ddd; border-radius:8px; padding:8px 24px 8px 8px; box-sizing:border-box; font-size:14px; resize:none; font-family:inherit;"></textarea>
                       <div style="position:absolute; right:2px; top:0; bottom:0; display:flex; flex-direction:column; justify-content:center; gap:4px;">
@@ -2811,6 +2860,7 @@
 
                       <!-- 预览按钮：默认风格 -->
                       <button id="coolauxv-btn-preview" class="coolauxv-action-btn" style="display:none; flex:0.3; font-size:14px;" title="预览截图">🔍</button>
+                  </div>
                   </div>
 
                   <div id="coolauxv-content-container">
@@ -3237,6 +3287,8 @@
         const chatBody = popup.querySelector("#coolauxv-chat-body");
         const chatToggleBtn = popup.querySelector("#coolauxv-chat-toggle");
         const chatInput = popup.querySelector("#coolauxv-chat-input");
+        const topSection = popup.querySelector("#coolauxv-main-top-section");
+        const topSectionToggleBtn = popup.querySelector("#coolauxv-top-collapse-btn");
 
         const CONFIG_KEYS = [
             "coolauxv_default_provider",
@@ -5317,6 +5369,59 @@
             chatBody.style.maxHeight = `${chatBody.scrollHeight}px`;
         };
 
+        const finalizeTopSectionExpand = () => {
+            if (!topSection || isTopSectionCollapsed) return;
+            topSection.style.maxHeight = "none";
+            topSection.style.overflow = "visible";
+        };
+
+        const syncTopSectionHeight = () => {
+            if (!topSection || isTopSectionCollapsed) return;
+            if (topSection.style.maxHeight === "none") return;
+            topSection.style.maxHeight = `${topSection.scrollHeight}px`;
+        };
+
+        updateTopSectionCollapseUI = () => {
+            if (!topSection || !topSectionToggleBtn) return;
+
+            topSectionToggleBtn.textContent = isTopSectionCollapsed ? "展开" : "收起";
+            topSection.classList.toggle("coolauxv-top-collapsed", isTopSectionCollapsed);
+            if (isTopSectionCollapsed) {
+                topSection.style.overflow = "hidden";
+                if (topSection.style.maxHeight === "none") {
+                    topSection.style.maxHeight = `${topSection.scrollHeight}px`;
+                    void topSection.offsetHeight;
+                }
+                topSection.style.maxHeight = "0px";
+            } else {
+                const isFlexible = topSection.style.maxHeight === "none";
+                if (isFlexible) {
+                    topSection.style.overflow = "visible";
+                } else {
+                    topSection.style.overflow = "hidden";
+                    syncTopSectionHeight();
+                    let expandTimeoutId = 0;
+                    const onExpandEnd = (e) => {
+                        if (e.propertyName !== "max-height") return;
+                        cleanupExpand();
+                        finalizeTopSectionExpand();
+                    };
+                    const cleanupExpand = () => {
+                        if (expandTimeoutId) {
+                            clearTimeout(expandTimeoutId);
+                            expandTimeoutId = 0;
+                        }
+                        topSection.removeEventListener("transitionend", onExpandEnd);
+                    };
+                    topSection.addEventListener("transitionend", onExpandEnd);
+                    expandTimeoutId = window.setTimeout(() => {
+                        cleanupExpand();
+                        finalizeTopSectionExpand();
+                    }, 320);
+                }
+            }
+        };
+
         updateChatCollapseUI = () => {
             if (!chatBody || !chatToggleBtn || !chatBar) return;
             const resultDiv = popup.querySelector("#coolauxv-result");
@@ -5395,15 +5500,26 @@
             };
         }
 
+        if (topSectionToggleBtn) {
+            topSectionToggleBtn.onclick = () => {
+                isTopSectionCollapsed = !isTopSectionCollapsed;
+                updateTopSectionCollapseUI();
+            };
+        }
+
         if (chatInput && chatBody) {
             if (typeof ResizeObserver !== "undefined") {
                 const chatInputObserver = new ResizeObserver(() => {
                     syncChatBodyHeight();
+                    syncTopSectionHeight();
                 });
                 chatInputObserver.observe(chatInput);
             } else {
                 const onChatInputResize = () => {
-                    requestAnimationFrame(() => syncChatBodyHeight());
+                    requestAnimationFrame(() => {
+                        syncChatBodyHeight();
+                        syncTopSectionHeight();
+                    });
                 };
                 chatInput.addEventListener("input", onChatInputResize);
                 chatInput.addEventListener("mouseup", onChatInputResize);
@@ -5799,6 +5915,7 @@
         toggleBlurGlass(GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS));
         toggleContinuousChat();
         updateChatCollapseUI();
+        updateTopSectionCollapseUI();
     }
 
     const getProviderTemplateSafe = (providerId) => {
@@ -6240,6 +6357,15 @@
         updateChatCollapseUI();
     }
 
+    function collapseTopSectionIfExpanded() {
+        if (!popup) return;
+        const topSection = popup.querySelector("#coolauxv-main-top-section");
+        if (!topSection) return;
+        if (isTopSectionCollapsed) return;
+        isTopSectionCollapsed = true;
+        updateTopSectionCollapseUI();
+    }
+
     function autoExpandChatIfEnabled(actionToken) {
         if (!popup) return;
         if (typeof actionToken === "number" && actionToken !== activeActionToken) return;
@@ -6666,16 +6792,14 @@
     }
     const performMinimizeWindow = () => {
         popup.style.display = "none";
-        const isPersistent = GM_getValue("coolauxv_persistent_ball", false);
-        floatBall.style.display = isPersistent ? "block" : "none";
+        floatBall.style.display = "block";
     };
 
     function minimizeWindow() {
         if (isPopupAnimating) return;
-        const isPersistent = GM_getValue("coolauxv_persistent_ball", false);
         const enableMinAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
-        if (isPersistent && enableMinAnim) {
-            floatBall.style.display = "block";
+        floatBall.style.display = "block";
+        if (enableMinAnim) {
             animatePopupToFloatBall(() => {
                 performMinimizeWindow();
             });
@@ -6704,6 +6828,18 @@
         setAnimatedVisibility(btnChatPreview, false);
         const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
         setAnimatedVisibility(btnChatClear, false);
+
+        // 4. 清空输出区
+        const resultDiv = popup.querySelector("#coolauxv-result");
+        if (resultDiv) resultDiv.innerHTML = "";
+        const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
+        if (reasoningDiv) reasoningDiv.innerHTML = "";
+
+        // 5. 收起连续对话，展开顶部区域
+        isChatCollapsed = true;
+        updateChatCollapseUI();
+        isTopSectionCollapsed = false;
+        updateTopSectionCollapseUI();
 
         clearConversationState();
 
@@ -7009,8 +7145,8 @@
             if (popup.style.transform) { const rect = popup.getBoundingClientRect(); popup.style.transform = "none"; popup.style.left = rect.left + "px"; popup.style.top = rect.top + "px"; }
             dragStartX = clientX - popup.offsetLeft; dragStartY = clientY - popup.offsetTop;
         };
-        header.addEventListener("mousedown", (e) => { if (!e.target.closest('.coolauxv-ctrl-btn') && !e.target.closest('label')) startDrag(e.clientX, e.clientY); });
-        header.addEventListener("touchstart", (e) => { if (!e.target.closest('.coolauxv-ctrl-btn') && !e.target.closest('label')) { e.preventDefault(); startDrag(e.touches[0].clientX, e.touches[0].clientY); } });
+        header.addEventListener("mousedown", (e) => { if (!e.target.closest('.coolauxv-ctrl-btn') && !e.target.closest('label') && !e.target.closest('[data-no-drag=\"true\"]')) startDrag(e.clientX, e.clientY); });
+        header.addEventListener("touchstart", (e) => { if (!e.target.closest('.coolauxv-ctrl-btn') && !e.target.closest('label') && !e.target.closest('[data-no-drag=\"true\"]')) { e.preventDefault(); startDrag(e.touches[0].clientX, e.touches[0].clientY); } });
 
         let isResizing = false; let resizeStartX, resizeStartY, startWidth, startHeight;
         const startResize = (clientX, clientY) => { isResizing = true; isWindowDragging = true; resizeStartX = clientX; resizeStartY = clientY; startWidth = popup.offsetWidth; startHeight = popup.offsetHeight; };
@@ -8676,6 +8812,7 @@
         }
 
         collapseChatIfEnabled();
+        collapseTopSectionIfExpanded();
         const actionToken = ++activeActionToken;
 
         const imageId = hasImage ? `chat-img-${++chatImageCounter}` : null;
