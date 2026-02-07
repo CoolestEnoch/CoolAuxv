@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v14.4
+// @version      v14.5
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -43,6 +43,7 @@
     const PROVIDER_TEMPLATE_STORAGE_KEY = "coolauxv_provider_templates_v1";
     const PROVIDER_SECRET_STORAGE_KEY = "coolauxv_provider_custom_secrets_v1";
     const PROVIDER_SHARE_VERSION = 1;
+    const DEFAULT_KEY_LINK_TITLE = "获取 KEY";
 
     const LOG_PRESETS = ["debug", "info", "warn", "error", "none"];
 
@@ -70,6 +71,14 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v14.5 更新日志
+        ## 🛠️ Bug修复
+        *   修复了导出配置文件对隐私信息处理逻辑混乱的问题。
+        *   现在分享提供商会询问你是否包含隐私信息了。
+        ## 🔄 界面交互优化
+        *   移除了外部的提供商删除按钮，整合到批量管理种。
+        *   现在可以自定义“获取KEY”按钮的悬浮提示了。
+        ---
         v14.4 更新日志
         ## 🪟 窗口管理优化
         *   修复悬浮球常驻逻辑：缩小按钮始终缩小到悬浮球，不受常驻设置影响
@@ -412,6 +421,7 @@
             apiKey: String(tpl.apiKey || ""),
             apiKeyPlaceholder: String(tpl.apiKeyPlaceholder || ""),
             keyLink: String(tpl.keyLink || ""),
+            keyLinkTitle: String(tpl.keyLinkTitle || DEFAULT_KEY_LINK_TITLE),
             roles: {
                 system: (tpl.roles && tpl.roles.system) ? String(tpl.roles.system) : "system",
                 user: (tpl.roles && tpl.roles.user) ? String(tpl.roles.user) : "user",
@@ -3222,6 +3232,7 @@
 
             if (clone.type === "chat-completions") delete clone.type;
             if (clone.label && clone.id && clone.label === clone.id) delete clone.label;
+            if (clone.keyLinkTitle === DEFAULT_KEY_LINK_TITLE) delete clone.keyLinkTitle;
 
             const defaultRoles = { system: "system", user: "user", assistant: "assistant" };
             if (clone.roles && isDeepEqual(clone.roles, defaultRoles)) delete clone.roles;
@@ -3280,9 +3291,10 @@
             }
 
             if (clone.customFieldMeta && isPlainObject(clone.customFieldMeta)) {
+                const resolvedDisplay = Object.assign({}, DEFAULT_DISPLAY_FIELDS, clone.display || {});
                 const displayDefaults = {
-                    display: !(clone.display && clone.display.customFields === false),
-                    masked: !!(clone.display && clone.display.customFieldsMask)
+                    display: !(resolvedDisplay.customFields === false),
+                    masked: !!resolvedDisplay.customFieldsMask
                 };
                 const nextMeta = {};
                 Object.keys(clone.customFieldMeta).forEach((key) => {
@@ -3595,6 +3607,7 @@
                 apiKey: "",
                 apiKeyPlaceholder: "",
                 keyLink: "",
+                keyLinkTitle: DEFAULT_KEY_LINK_TITLE,
                 roles: { system: "system", user: "user", assistant: "assistant" },
                 headersTemplate: {
                     "Content-Type": "application/json",
@@ -3730,6 +3743,8 @@
                             </label>
                         </div>
                         <input type="text" id="coolauxv-provider-form-key-link" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="https://..." value="${escapeAttr(baseTemplate.keyLink || "")}">
+                        <div class="coolauxv-sub-label">获取 KEY 按钮提示 (title)</div>
+                        <input type="text" id="coolauxv-provider-form-key-link-title" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="${DEFAULT_KEY_LINK_TITLE}" value="${escapeAttr(baseTemplate.keyLinkTitle || DEFAULT_KEY_LINK_TITLE)}">
 
                         <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">协议与角色</div>
                         <div class="coolauxv-sub-label">协议类型
@@ -4182,6 +4197,7 @@
                     const baseUrl = (box.querySelector("#coolauxv-provider-form-base-url") || {}).value || "";
                     const apiKeyPlaceholder = (box.querySelector("#coolauxv-provider-form-api-key-placeholder") || {}).value || "";
                     const keyLink = (box.querySelector("#coolauxv-provider-form-key-link") || {}).value || "";
+                    const keyLinkTitle = (box.querySelector("#coolauxv-provider-form-key-link-title") || {}).value || "";
                     const type = typeInput && typeInput.value === "openai-responses"
                         ? "openai-responses"
                         : (typeInput && typeInput.value === "chat-parts" ? "chat-parts" : "chat-completions");
@@ -4260,6 +4276,7 @@
                         apiKey: apiKeyValue,
                         apiKeyPlaceholder: String(apiKeyPlaceholder || "").trim(),
                         keyLink: String(keyLink || "").trim(),
+                        keyLinkTitle: String(keyLinkTitle || "").trim() || DEFAULT_KEY_LINK_TITLE,
                         roles: { system: roleSystem, user: roleUser, assistant: roleAssistant },
                         headersTemplate: headersParsed,
                         bodyTemplate: bodyParsed,
@@ -4461,8 +4478,7 @@
                             <span class="coolauxv-link-btn" data-provider-toggle="${provider.id}" style="margin-left:auto; cursor:pointer; user-select:none;">收起</span>
                             <span class="coolauxv-link-btn" data-action="edit-provider" data-provider-id="${provider.id}" style="cursor:pointer; user-select:none;">⚙️ 高级选项</span>
                             ${display.apiKey ? `<span class="coolauxv-link-btn" data-action="toggle-key" data-target="${keyInputId}" style="cursor:pointer; user-select:none;">👁️ 显示</span>` : ""}
-                            <span class="coolauxv-link-btn" data-action="delete-provider" data-provider-id="${provider.id}" style="cursor:pointer; user-select:none;">🗑 删除</span>
-                            ${provider.keyLink ? `<a href="${provider.keyLink}" target="_blank" class="coolauxv-link-btn" title="获取 KEY">🔑 获取KEY</a>` : ""}
+                            ${provider.keyLink ? `<a href="${provider.keyLink}" target="_blank" class="coolauxv-link-btn" title="${escapeAttr(provider.keyLinkTitle || DEFAULT_KEY_LINK_TITLE)}">🔑 获取KEY</a>` : ""}
                         </label>
                         <div id="${sectionId}" class="coolauxv-collapse-section" data-provider-section="${provider.id}">
                             ${fieldBlock}
@@ -4710,20 +4726,6 @@
                     openProviderModal({ mode: "edit", providerId: providerId });
                     return;
                 }
-                if (action === "delete-provider") {
-                    const providerId = target.dataset.providerId;
-                    if (!providerId) return;
-                    if (!confirm(`确定要删除提供商 ${providerId} 吗？`)) return;
-                    let templates = getProviderTemplates().filter((tpl) => tpl.id !== providerId);
-                    if (!templates.length) {
-                        templates = getDefaultProviderTemplates();
-                    }
-                    saveProviderTemplates(templates);
-                    clearProviderSecretFields(providerId);
-                    selectedProviderIds.delete(providerId);
-                    renderProviderUI();
-                    return;
-                }
                 const toggleId = target.dataset.providerToggle;
                 if (toggleId) {
                     const section = providerSectionsContainer.querySelector(`[data-provider-section="${toggleId}"]`);
@@ -4958,16 +4960,28 @@
                     alert("请先选择要分享的提供商。");
                     return;
                 }
+                const includePrivacy = confirm("分享配置是否包含隐私信息（如 API KEY、打码字段）？\n确定=包含，取消=不包含");
+                const secrets = loadProviderSecretStore();
                 const templates = getProviderTemplates()
                     .filter((tpl) => selectedProviderIds.has(tpl.id))
                     .map((tpl) => {
                         const clone = cloneDeep(tpl);
-                        clone.apiKey = "";
+                        if (!includePrivacy) {
+                            clone.apiKey = "";
+                        }
                         if (clone.customFields) {
                             const meta = getCustomFieldMetaMap(clone);
+                            const secretValues = secrets[clone.id] && typeof secrets[clone.id] === "object" ? secrets[clone.id] : {};
                             Object.keys(clone.customFields).forEach((key) => {
                                 if (meta[key] && meta[key].masked) {
-                                    clone.customFields[key] = "";
+                                    if (includePrivacy) {
+                                        const secretVal = secretValues[key];
+                                        clone.customFields[key] = secretVal !== undefined && secretVal !== null
+                                            ? String(secretVal)
+                                            : "";
+                                    } else {
+                                        clone.customFields[key] = "";
+                                    }
                                 }
                             });
                         }
@@ -5303,7 +5317,10 @@
                     if (meta[key] && meta[key].masked) {
                         if (includePrivacy) {
                             const secretVal = secrets[clone.id] && secrets[clone.id][key];
-                            clone.customFields[key] = secretVal !== undefined && secretVal !== null ? String(secretVal) : "";
+                            const fallbackVal = clone.customFields[key];
+                            clone.customFields[key] = secretVal !== undefined && secretVal !== null
+                                ? String(secretVal)
+                                : (fallbackVal !== undefined && fallbackVal !== null ? String(fallbackVal) : "");
                         } else {
                             clone.customFields[key] = "";
                         }
@@ -5343,27 +5360,122 @@
             prompt("配置已导出，请复制以下文本：", payload);
         };
 
+        const openConfigImportModal = (onSubmit) => {
+            const existingOverlay = document.getElementById("coolauxv-config-import-modal-overlay");
+            if (existingOverlay && existingOverlay.parentNode) {
+                existingOverlay.parentNode.removeChild(existingOverlay);
+            }
+
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-config-import-modal-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0, 0, 0, 0.5)",
+                zIndex: "2147483661",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backdropFilter: "blur(4px)",
+                opacity: "0",
+                transition: "opacity 0.2s"
+            });
+
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff",
+                width: "540px",
+                maxWidth: "92%",
+                maxHeight: "88vh",
+                display: "flex",
+                flexDirection: "column",
+                padding: "18px",
+                borderRadius: "12px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+                transform: "scale(0.96)",
+                transition: "transform 0.2s",
+                overflow: "hidden"
+            });
+
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+                    <div style="font-size:18px; font-weight:800; color:#a516e8;">⬆️ 恢复配置</div>
+                    <button type="button" id="coolauxv-config-import-modal-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:8px; flex:1;">
+                    <div class="coolauxv-sub-label">请粘贴配置 Base64 文本</div>
+                    <textarea id="coolauxv-config-import-input" class="coolauxv-setting-input coolauxv-resizable-input" rows="8" placeholder="粘贴导出的 Base64..."></textarea>
+                    <div style="font-size:11px; color:#888;">支持完整配置导出文本。</div>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                    <button type="button" id="coolauxv-config-import-cancel" class="coolauxv-action-btn" style="flex:1;">取消</button>
+                    <button type="button" id="coolauxv-config-import-submit" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">恢复</button>
+                </div>
+            `;
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => {
+                overlay.style.opacity = "1";
+                box.style.transform = "scale(1)";
+            });
+
+            const closeModal = () => {
+                document.removeEventListener("keydown", onEsc);
+                overlay.style.opacity = "0";
+                box.style.transform = "scale(0.96)";
+                setTimeout(() => {
+                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                }, 200);
+            };
+
+            const onEsc = (e) => {
+                if (e.key === "Escape") closeModal();
+            };
+            document.addEventListener("keydown", onEsc);
+
+            const inputEl = box.querySelector("#coolauxv-config-import-input");
+            const submitBtn = box.querySelector("#coolauxv-config-import-submit");
+            const closeBtn = box.querySelector("#coolauxv-config-import-modal-close");
+            const cancelBtn = box.querySelector("#coolauxv-config-import-cancel");
+            if (inputEl) setTimeout(() => inputEl.focus(), 0);
+
+            if (submitBtn) {
+                submitBtn.addEventListener("click", () => {
+                    const text = inputEl ? String(inputEl.value || "").trim() : "";
+                    closeModal();
+                    if (text && typeof onSubmit === "function") onSubmit(text);
+                });
+            }
+            if (closeBtn) closeBtn.addEventListener("click", closeModal);
+            if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeModal();
+            });
+        };
+
         const importConfig = () => {
-            const input = prompt("请粘贴配置 Base64 文本：", "");
-            if (!input) {
-                return;
-            }
-            let parsed = null;
-            try {
-                const decoded = decodeBase64(input.trim());
-                parsed = JSON.parse(decoded);
-            } catch (e) {
-                alert("配置格式无效，请确认 Base64 内容正确。");
-                return;
-            }
-            if (!parsed || typeof parsed !== "object") {
-                alert("配置内容无效，请确认 Base64 内容正确。");
-                return;
-            }
-            const cleaned = pruneEmptyValues(parsed);
-            applyConfigSnapshot(cleaned);
-            refreshConfigUI();
-            alert("配置已恢复。");
+            openConfigImportModal((input) => {
+                let parsed = null;
+                try {
+                    const decoded = decodeBase64(input);
+                    parsed = JSON.parse(decoded);
+                } catch (e) {
+                    alert("配置格式无效，请确认 Base64 内容正确。");
+                    return;
+                }
+                if (!parsed || typeof parsed !== "object") {
+                    alert("配置内容无效，请确认 Base64 内容正确。");
+                    return;
+                }
+                const cleaned = pruneEmptyValues(parsed);
+                applyConfigSnapshot(cleaned);
+                refreshConfigUI();
+                alert("配置已恢复。");
+            });
         };
 
         if (exportBtn) exportBtn.onclick = exportConfig;
