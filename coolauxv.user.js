@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v14.5
+// @version      v14.6
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -171,6 +171,13 @@
     const PROVIDER_SECRET_STORAGE_KEY = "coolauxv_provider_custom_secrets_v1";
     const PROVIDER_SHARE_VERSION = 1;
     const DEFAULT_KEY_LINK_TITLE = "获取 KEY";
+    const getScriptVersion = () => {
+        const gmInfo = (typeof GM_info !== "undefined" && GM_info) ? GM_info : (globalThis && globalThis.GM_info);
+        if (gmInfo && gmInfo.script && gmInfo.script.version) {
+            return String(gmInfo.script.version);
+        }
+        return "";
+    };
 
     const LOG_PRESETS = ["debug", "info", "warn", "error", "none"];
 
@@ -178,6 +185,7 @@
 
     const DEFAULT_PROMPT_VISION = "请先详细描述这张图，然后再详细解读这张图。";
     const DEFAULT_ENABLE_CONTINUOUS_CHAT = false;
+    const DEFAULT_CHAT_ENTER_SEND = false;
     const DEFAULT_PROMPT_CONTINUOUS_CHAT = "忽略之前给你的提示词，现在开始你是一个连续对话助手，要结合上下文用中文回答用户问题；如有图片，请结合图片内容回答；要听从用户指示。";
 
     const DEFAULT_WIN_WIDTH = "480px";
@@ -187,6 +195,7 @@
     const DEFAULT_SHOW_REASONING = true;
     const DEFAULT_ENABLE_BLUR_GLASS = false; // 默认关闭模糊
     const DEFAULT_USE_NEW_SCREENSHOT = "v1"; // 默认使用老逻辑截图
+    const DEFAULT_ENABLE_BASIC_ANIM = true; // 默认开启基础动画（折叠/展开）
     const DEFAULT_ENABLE_MINIMIZE_ANIM = false; // 默认关闭收起动画
     const POPUP_ANIM_EASING = "cubic-bezier(0.2, 0, 0, 1)";
     const POPUP_ANIM_EASE_IN = "cubic-bezier(0.4, 0, 1, 1)";
@@ -198,6 +207,27 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v14.6 更新日志
+        ## 💬 对话控制增强
+        *   连续对话中新增“重新回答”按钮，可重新生成AI回复
+        *   新增“编辑”按钮，支持修改历史消息内容
+        *   编辑模式下提供“确认编辑”和“取消编辑”操作
+        *   首轮对话（翻译/解读/识图触发）不允许编辑/重新回答
+        ## 🎨 界面交互优化
+        *   顶部内容区域支持鼠标悬停临时展开（收起状态下）
+        *   设置按钮动态切换图标（主界面⚙️/设置界面🏠）并带动画
+        *   设置界面中隐藏顶栏的展开/原文/显示推理控件
+        *   顶栏按钮限制为单行高度，避免布局错位
+        ## ⚙️ 动画设置细化
+        *   动画设置拆分为“基础动画”和“高级动画”
+        *   基础动画控制内容区、连续对话、推理区的展开收起
+        *   高级动画控制界面切换等复杂动画
+        *   勾选高级动画自动启用基础动画
+        ## 📋 设置界面改进
+        *   “配置设置”后显示当前版本号
+        *   打开GitHub仓库、检查更新、更新日志按钮单独成行
+        *   改进界面状态切换的视觉反馈
+        ---
         v14.5 更新日志
         ## 🛠️ Bug修复
         *   修复了导出配置文件对隐私信息处理逻辑混乱的问题。
@@ -1160,6 +1190,39 @@
     .coolauxv-ctrl-btn { padding: 0 4px; font-size: 18px; color: #666; cursor: pointer; transition: color 0.2s; line-height: 1; }
     .coolauxv-ctrl-btn:hover { color: #3b82f6; }
     #coolauxv-quit:hover { color: #ef4444; }
+    #coolauxv-settings-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+    }
+    #coolauxv-settings-btn .coolauxv-settings-icon-track {
+        position: relative;
+        width: 1.2em;
+        height: 1.2em;
+        overflow: hidden;
+        display: inline-block;
+    }
+    #coolauxv-settings-btn .coolauxv-settings-icon {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 1;
+        transform: translate3d(0, 0, 0);
+        opacity: 1;
+        will-change: transform, opacity;
+    }
+    #coolauxv-settings-btn .coolauxv-settings-icon-next {
+        opacity: 0;
+        pointer-events: none;
+    }
+    #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-main-top-section,
+    #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-chat-body,
+    #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-reasoning-wrapper {
+        transition: none !important;
+    }
 
     /* 复选框 */
     .coolauxv-toggle-label {
@@ -1254,6 +1317,42 @@
         float: none !important;
         text-align: left !important;
         box-sizing: border-box !important;
+    }
+    .coolauxv-settings-inline-wrap {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: flex-start;
+        margin-top: 6px;
+    }
+    .coolauxv-settings-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 180px;
+        flex: 0 1 auto;
+    }
+    .coolauxv-settings-item-wide {
+        min-width: 260px;
+        flex: 1 1 260px;
+    }
+    .coolauxv-settings-item-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+    .coolauxv-settings-item .coolauxv-toggle-label {
+        width: auto;
+        background: none;
+        padding: 0;
+        border: none;
+        margin-right: 0;
+    }
+    .coolauxv-settings-item-hint {
+        font-size: 11px;
+        color: #999;
+        line-height: 1.4;
     }
 
     .coolauxv-provider-checkbox {
@@ -1604,6 +1703,12 @@
     #coolauxv-chat-toggle:hover {
         background: #e0efff;
     }
+    #coolauxv-header-left {
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
+        min-width: 0;
+    }
     #coolauxv-top-collapse-btn {
         cursor: pointer;
         font-size: 12px;
@@ -1612,9 +1717,32 @@
         border: none;
         padding: 2px 6px;
         border-radius: 4px;
+        white-space: nowrap;
+        line-height: 1;
     }
     #coolauxv-top-collapse-btn:hover {
         background: #e0efff;
+    }
+    #coolauxv-header-main-controls {
+        display: flex;
+        align-items: center;
+        flex-wrap: nowrap;
+        white-space: nowrap;
+        overflow: hidden;
+        max-width: none;
+        opacity: 1;
+        transform: scaleX(1);
+        transform-origin: left center;
+        transition: max-width 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+        will-change: max-width, opacity, transform;
+    }
+    #coolauxv-header-main-controls.coolauxv-header-controls-collapsed {
+        max-width: 0 !important;
+        opacity: 0;
+        transform: scaleX(0.96);
+        pointer-events: none;
     }
     #coolauxv-main-top-section {
         display: flex;
@@ -1676,6 +1804,44 @@
         box-shadow: 0 2px 8px rgba(0,0,0,0.08);
         border-color: rgba(0,0,0,0.15);
         background: #fff;
+    }
+    .coolauxv-chat-refresh-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 600;
+        border: 1px solid rgba(59,130,246,0.35);
+        background: #eff6ff;
+        color: #1d4ed8;
+        vertical-align: middle;
+        margin-left: 6px;
+    }
+    .coolauxv-chat-refresh-btn:hover {
+        background: #dbeafe;
+        border-color: rgba(59,130,246,0.55);
+    }
+    .coolauxv-chat-edit-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 600;
+        border: 1px solid rgba(16,185,129,0.35);
+        background: #ecfdf5;
+        color: #065f46;
+        vertical-align: middle;
+        margin-left: 6px;
+    }
+    .coolauxv-chat-edit-btn:hover {
+        background: #d1fae5;
+        border-color: rgba(16,185,129,0.55);
     }
 
     /* ============================
@@ -2196,6 +2362,168 @@
         }
     };
 
+    const setHeaderMainControlsVisibility = (visible) => {
+        if (!popup) return;
+        const controls = popup.querySelector("#coolauxv-header-main-controls");
+        if (!controls) return;
+
+        if (visible) {
+            if (controls.style.display === "flex" && !controls.classList.contains("coolauxv-header-controls-collapsed")) {
+                return;
+            }
+            controls.style.display = "flex";
+            controls.style.overflow = "hidden";
+            controls.classList.add("coolauxv-header-controls-collapsed");
+            controls.style.maxWidth = "0px";
+            void controls.offsetWidth;
+            const targetWidth = Math.max(controls.scrollWidth, 1);
+            controls.style.maxWidth = `${targetWidth}px`;
+            controls.classList.remove("coolauxv-header-controls-collapsed");
+            let timeoutId = 0;
+            const onEnd = (e) => {
+                if (e.propertyName !== "max-width") return;
+                cleanup();
+                if (!controls.classList.contains("coolauxv-header-controls-collapsed")) {
+                    controls.style.maxWidth = "none";
+                    controls.style.overflow = "visible";
+                }
+            };
+            const cleanup = () => {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = 0;
+                }
+                controls.removeEventListener("transitionend", onEnd);
+            };
+            controls.addEventListener("transitionend", onEnd);
+            timeoutId = window.setTimeout(() => {
+                cleanup();
+                if (!controls.classList.contains("coolauxv-header-controls-collapsed")) {
+                    controls.style.maxWidth = "none";
+                    controls.style.overflow = "visible";
+                }
+            }, 320);
+            return;
+        }
+
+        if (controls.style.display === "none") return;
+        controls.style.overflow = "hidden";
+        if (controls.style.maxWidth === "none" || !controls.style.maxWidth) {
+            controls.style.maxWidth = `${Math.max(controls.scrollWidth, 1)}px`;
+        }
+        void controls.offsetWidth;
+        controls.classList.add("coolauxv-header-controls-collapsed");
+        controls.style.maxWidth = "0px";
+        let timeoutId = 0;
+        const onEnd = (e) => {
+            if (e.propertyName !== "max-width") return;
+            cleanup();
+            if (controls.classList.contains("coolauxv-header-controls-collapsed")) {
+                controls.style.display = "none";
+            }
+        };
+        const cleanup = () => {
+            if (timeoutId) {
+                clearTimeout(timeoutId);
+                timeoutId = 0;
+            }
+            controls.removeEventListener("transitionend", onEnd);
+        };
+        controls.addEventListener("transitionend", onEnd);
+        timeoutId = window.setTimeout(() => {
+            cleanup();
+            if (controls.classList.contains("coolauxv-header-controls-collapsed")) {
+                controls.style.display = "none";
+            }
+        }, 320);
+    };
+
+    const getSettingsBtnIconByView = (view) => (view === "settings" ? "🏠" : "⚙️");
+    const getSettingsBtnTitleByView = (view) => (view === "settings" ? "返回主界面" : "设置");
+
+    const applySettingsBtnIcon = (view) => {
+        if (!popup) return;
+        const settingsBtn = popup.querySelector("#coolauxv-settings-btn");
+        if (!settingsBtn) return;
+        const currentIcon = settingsBtn.querySelector(".coolauxv-settings-icon-current");
+        const nextIcon = settingsBtn.querySelector(".coolauxv-settings-icon-next");
+        if (!currentIcon || !nextIcon) return;
+
+        const icon = getSettingsBtnIconByView(view);
+        currentIcon.textContent = icon;
+        currentIcon.style.transition = "none";
+        currentIcon.style.transform = "translate3d(0, 0, 0)";
+        currentIcon.style.opacity = "1";
+
+        nextIcon.textContent = "";
+        nextIcon.style.transition = "none";
+        nextIcon.style.transform = "translate3d(0, 0, 0)";
+        nextIcon.style.opacity = "0";
+
+        settingsBtn.dataset.iconView = view;
+        settingsBtn.dataset.iconAnimating = "false";
+        settingsBtn.title = getSettingsBtnTitleByView(view);
+    };
+
+    const animateSettingsBtnIcon = (targetView, edge) => {
+        if (!popup) return;
+        const settingsBtn = popup.querySelector("#coolauxv-settings-btn");
+        if (!settingsBtn) return;
+        const currentIcon = settingsBtn.querySelector(".coolauxv-settings-icon-current");
+        const nextIcon = settingsBtn.querySelector(".coolauxv-settings-icon-next");
+        if (!currentIcon || !nextIcon) return;
+
+        const currentView = settingsBtn.dataset.iconView || "main";
+        if (currentView === targetView) {
+            applySettingsBtnIcon(targetView);
+            return;
+        }
+
+        const outEdge = edge || "right";
+        const outTransform = getViewTransform(outEdge);
+        const inTransform = getViewTransform(getOppositeViewEdge(outEdge));
+        const speed = getAnimSpeedFactor();
+        const durTransform = Math.round(250 / speed);
+        const durOpacity = Math.round(200 / speed);
+
+        settingsBtn.dataset.iconAnimating = "true";
+        settingsBtn.title = getSettingsBtnTitleByView(targetView);
+
+        nextIcon.textContent = getSettingsBtnIconByView(targetView);
+        currentIcon.style.transition = "none";
+        currentIcon.style.transform = "translate3d(0, 0, 0)";
+        currentIcon.style.opacity = "1";
+        nextIcon.style.transition = "none";
+        nextIcon.style.transform = inTransform;
+        nextIcon.style.opacity = "0";
+
+        void settingsBtn.offsetWidth;
+
+        currentIcon.style.transition = `transform ${durTransform}ms ${POPUP_ANIM_EASING}, opacity ${durOpacity}ms ${POPUP_ANIM_EASING}`;
+        nextIcon.style.transition = `transform ${durTransform}ms ${POPUP_ANIM_EASING}, opacity ${durOpacity}ms ${POPUP_ANIM_EASING}`;
+
+        requestAnimationFrame(() => {
+            currentIcon.style.transform = outTransform;
+            currentIcon.style.opacity = "0";
+            nextIcon.style.transform = "translate3d(0, 0, 0)";
+            nextIcon.style.opacity = "1";
+        });
+
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            applySettingsBtnIcon(targetView);
+        };
+        const onEnd = (e) => {
+            if (e.target !== nextIcon || e.propertyName !== "transform") return;
+            nextIcon.removeEventListener("transitionend", onEnd);
+            finish();
+        };
+        nextIcon.addEventListener("transitionend", onEnd);
+        setTimeout(finish, Math.max(durTransform, durOpacity) + 80);
+    };
+
     const setViewImmediate = (targetView) => {
         if (!popup) return;
         const mainView = popup.querySelector("#coolauxv-main-view");
@@ -2206,6 +2534,8 @@
             viewSwitchTimer = null;
         }
         isViewSwitching = false;
+        setHeaderMainControlsVisibility(targetView !== "settings");
+        applySettingsBtnIcon(targetView);
         if (targetView === "settings") {
             mainView.style.display = "none";
             mainView.style.opacity = "0";
@@ -2318,6 +2648,11 @@
         if (popup) popup.style.pointerEvents = animating ? "none" : "auto";
         if (floatBall) floatBall.style.pointerEvents = animating ? "none" : "auto";
     };
+
+    const isBasicAnimEnabled = () => GM_getValue("coolauxv_enable_basic_anim", DEFAULT_ENABLE_BASIC_ANIM);
+    const isMinimizeAnimEnabled = () => (
+        isBasicAnimEnabled() && GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM)
+    );
 
     const getAnimSpeedFactor = () => {
         const raw = GM_getValue("coolauxv_anim_speed", DEFAULT_ANIM_SPEED);
@@ -2613,6 +2948,7 @@
     let chatAssistantBuffer = "";
     let chatPendingAssistantPrefix = "";
     let chatAssistantLabel = "";
+    let chatEditingTurnId = "";
     let isChatCollapsed = true;
     let isTopSectionCollapsed = false;
     let updateChatCollapseUI = () => { };
@@ -2659,7 +2995,7 @@
                 if (popup.style.display !== "flex") {
                     floatBall.style.display = "none";
                     resetPopupState();
-                    const enableMinAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+                    const enableMinAnim = isMinimizeAnimEnabled();
                     if (enableMinAnim) {
                         animatePopupFromBottom(() => {
                             checkUpdateAndShowChangelog();
@@ -2706,7 +3042,7 @@
                 // 恢复默认操作
                 resetPopupState();
                 setViewImmediate("main");
-                const enableMinAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+                const enableMinAnim = isMinimizeAnimEnabled();
                 if (enableMinAnim) {
                     animatePopupFromFloatBall(() => {
                         floatBall.style.display = "none";
@@ -2803,6 +3139,9 @@
             if (GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS)) {
                 popup.classList.add("coolauxv-blur-glass-enabled");
             }
+            if (!isBasicAnimEnabled()) {
+                popup.classList.add("coolauxv-basic-anim-off");
+            }
             Object.assign(popup.style, {
                 display: "none", flexDirection: "column", position: "fixed",
                 zIndex: "2147483646",
@@ -2824,18 +3163,25 @@
 
             popup.innerHTML = `
             <div id="coolauxv-header" style="background:#f8f9fa; padding:10px 12px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; user-select:none; flex-shrink:0; cursor: move; flex-wrap:wrap; gap:5px;">
-              <div style="display:flex; align-items:center; flex-wrap:wrap;">
+              <div id="coolauxv-header-left">
                 <span style="font-weight:800; color:#a516e8; margin-right:10px;">⚡ CoolAuxv</span>
 
-                <span id="coolauxv-settings-btn" class="coolauxv-ctrl-btn" title="设置" style="font-size:16px;">⚙️</span>
+                <span id="coolauxv-settings-btn" class="coolauxv-ctrl-btn" title="设置" style="font-size:16px;">
+                    <span class="coolauxv-settings-icon-track">
+                        <span class="coolauxv-settings-icon coolauxv-settings-icon-current">⚙️</span>
+                        <span class="coolauxv-settings-icon coolauxv-settings-icon-next"></span>
+                    </span>
+                </span>
 
-                <button type="button" id="coolauxv-top-collapse-btn" data-no-drag="true" title="展开/收起顶部区域">收起</button>
-                <label class="coolauxv-toggle-label" title="显示原文" style="margin-left:8px;">
-                    <input type="checkbox" id="coolauxv-raw-toggle" ${DEFAULT_SHOW_RAW ? "checked" : ""}>原文
-                </label>
-                <label class="coolauxv-toggle-label" id="coolauxv-reasoning-toggle-container" style="display:none;" title="显示推理">
-                    <input type="checkbox" id="coolauxv-reasoning-toggle" ${DEFAULT_SHOW_REASONING ? "checked" : ""}>显示推理
-                </label>
+                <div id="coolauxv-header-main-controls">
+                    <button type="button" id="coolauxv-top-collapse-btn" data-no-drag="true" title="展开/收起顶部区域">收起</button>
+                    <label class="coolauxv-toggle-label" title="显示原文" style="margin-left:8px;">
+                        <input type="checkbox" id="coolauxv-raw-toggle" ${DEFAULT_SHOW_RAW ? "checked" : ""}>原文
+                    </label>
+                    <label class="coolauxv-toggle-label" id="coolauxv-reasoning-toggle-container" style="display:none;" title="显示推理">
+                        <input type="checkbox" id="coolauxv-reasoning-toggle" ${DEFAULT_SHOW_REASONING ? "checked" : ""}>显示推理
+                    </label>
+                </div>
               </div>
               <div style="display:flex; gap:6px; align-items:center;">
                 <span id="coolauxv-quit" class="coolauxv-ctrl-btn" title="退出">⏻</span>
@@ -2899,6 +3245,7 @@
                               <button id="coolauxv-btn-screenshot-chat" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
                               <button id="coolauxv-btn-preview-chat" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="预览截图">🔍</button>
                               <button id="coolauxv-btn-clear-chat-shot" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="清除识屏">🗑 清除</button>
+                              <button id="coolauxv-btn-chat-edit-cancel" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.5;" title="退出编辑模式">取消编辑</button>
                               <button id="coolauxv-btn-chat-send" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">发送</button>
                           </div>
                       </div>
@@ -2909,13 +3256,18 @@
             <!-- 设置界面 -->
             <div id="coolauxv-settings-view">
                 <h3 style="margin-top:0; border-bottom:1px solid #eee; padding-bottom:10px;">
-                    ⚙️ 配置设置
-                    <a href="https://github.com/CoolestEnoch/CoolAuxv" target="_blank" class="coolauxv-github-btn" title="查看源码与文档">
-                        <svg height="16" width="16" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-                        CoolAuxv (GitHub)
-                    </a>
-                    <a href="https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js" class="coolauxv-github-btn" title="检查更新">检查更新</a>
-                    <a href="https://github.com/CoolestEnoch/CoolAuxv/commits/main" target="_blank" class="coolauxv-github-btn" title="查看历史版本更新日志">更新日志</a>
+                    <div style="display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;">
+                        <span>⚙️ 配置设置</span>
+                        <span style="font-size:12px; color:#999; font-weight:normal;">版本 ${getScriptVersion() || "未知"}</span>
+                    </div>
+                    <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                        <a href="https://github.com/CoolestEnoch/CoolAuxv" target="_blank" class="coolauxv-github-btn" title="查看源码与文档">
+                            <svg height="16" width="16" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+                            CoolAuxv (GitHub)
+                        </a>
+                        <a href="https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js" class="coolauxv-github-btn" title="检查更新">检查更新</a>
+                        <a href="https://github.com/CoolestEnoch/CoolAuxv/commits/main" target="_blank" class="coolauxv-github-btn" title="查看历史版本更新日志">更新日志</a>
+                    </div>
                 </h3>
 
                 <div class="coolauxv-setting-group">
@@ -3021,23 +3373,38 @@
 
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">杂项 (Miscellaneous)</label>
-                    <div style="display:flex; flex-wrap:wrap; gap:15px; align-items:center;">
-                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                            <input type="checkbox" id="coolauxv-cfg-blur-glass"> 流体玻璃 (Blur Glass)
-                        </label>
-                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                            <input type="checkbox" id="coolauxv-cfg-persistent-ball"> 悬浮球常驻
-                        </label>
-                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                            <input type="checkbox" id="coolauxv-cfg-draggable-ball"> 悬浮球可拖动
-                        </label>
-                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                            <input type="checkbox" id="coolauxv-cfg-minimize-anim"> 界面动画
-                        </label>
-                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                            动画速度
-                            <input type="number" id="coolauxv-cfg-anim-speed" min="0.3" max="3" step="0.1" style="width:70px; margin-left:6px;">
-                        </label>
+                    <div class="coolauxv-settings-inline-wrap">
+                        <div class="coolauxv-settings-item">
+                            <label class="coolauxv-toggle-label">
+                                <input type="checkbox" id="coolauxv-cfg-blur-glass"> 流体玻璃 (Blur Glass)
+                            </label>
+                        </div>
+                        <div class="coolauxv-settings-item">
+                            <label class="coolauxv-toggle-label">
+                                <input type="checkbox" id="coolauxv-cfg-persistent-ball"> 悬浮球常驻
+                            </label>
+                        </div>
+                        <div class="coolauxv-settings-item">
+                            <label class="coolauxv-toggle-label">
+                                <input type="checkbox" id="coolauxv-cfg-draggable-ball"> 悬浮球可拖动
+                            </label>
+                        </div>
+                        <div class="coolauxv-settings-item">
+                            <label class="coolauxv-toggle-label">
+                                <input type="checkbox" id="coolauxv-cfg-basic-anim"> 基础动画
+                            </label>
+                        </div>
+                        <div class="coolauxv-settings-item">
+                            <label class="coolauxv-toggle-label">
+                                <input type="checkbox" id="coolauxv-cfg-minimize-anim"> 高级动画
+                            </label>
+                        </div>
+                        <div class="coolauxv-settings-item">
+                            <label class="coolauxv-toggle-label">
+                                动画速度
+                                <input type="number" id="coolauxv-cfg-anim-speed" min="0.3" max="3" step="0.1" style="width:70px; margin-left:6px;">
+                            </label>
+                        </div>
                     </div>
                 </div>
 
@@ -3045,29 +3412,31 @@
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label" style="color:#e65100;">🧪 实验性功能 (Experimental)</label>
 
-                    <!-- 第一行：标签 + 下拉框 (Flex横向排列) -->
-                    <div style="display:flex; align-items:center; gap:10px; margin-top:5px;">
-                        <span style="font-size:13px; color:#555;">截屏算法版本</span>
-                        <select id="coolauxv-cfg-new-screenshot" style="padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:12px; background:#fff;">
-                            <option value="v1">v1 (默认 - 旧算法)</option>
-                            <option value="v2">v2 (html2canvas 全屏)</option>
-                            <option value="v3">v3 (原生接口 - 屏幕共享)</option>
-                        </select>
+                    <div class="coolauxv-settings-inline-wrap">
+                        <div class="coolauxv-settings-item coolauxv-settings-item-wide">
+                            <div class="coolauxv-settings-item-head">
+                                <span style="font-size:13px; color:#555;">截屏算法版本</span>
+                                <select id="coolauxv-cfg-new-screenshot" style="padding:4px 8px; border:1px solid #ddd; border-radius:4px; font-size:12px; background:#fff;">
+                                    <option value="v1">v1 (默认 - 旧算法)</option>
+                                    <option value="v2">v2 (html2canvas 全屏)</option>
+                                    <option value="v3">v3 (原生接口 - 屏幕共享)</option>
+                                </select>
+                            </div>
+                            <div class="coolauxv-settings-item-hint">v1: 兼容性最好; v2: 修复错位; v3: 更通用，但Android可能不能用</div>
+                        </div>
+                        <div class="coolauxv-settings-item">
+                            <label class="coolauxv-toggle-label">
+                                <input type="checkbox" id="coolauxv-cfg-continuous-chat"> 连续对话
+                            </label>
+                            <div class="coolauxv-settings-item-hint">启用后显示连续对话输入区</div>
+                        </div>
+                        <div class="coolauxv-settings-item">
+                            <label class="coolauxv-toggle-label">
+                                <input type="checkbox" id="coolauxv-cfg-chat-enter-send"> 回车键发送消息
+                            </label>
+                            <div class="coolauxv-settings-item-hint">开启后 Enter 发送，Shift+Enter 换行</div>
+                        </div>
                     </div>
-
-                    <!-- 第二行：提示文字 (独立div，Block纵向排列) -->
-                    <div style="display:block; margin-top:6px; font-size:11px; color:#999; line-height:1.4;">
-                        v1: 兼容性最好; v2: 修复错位; v3: 更通用，但Android可能不能用
-                    </div>
-
-                    <div style="display:flex; align-items:center; gap:10px; margin-top:8px;">
-                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                            <input type="checkbox" id="coolauxv-cfg-continuous-chat"> 连续对话
-                        </label>
-                        <span style="font-size:11px; color:#999;">使用视觉模型</span>
-                    </div>
-
-                    <div style="display:flex; align-items:center; gap:12px; margin-top:10px; flex-wrap:wrap;"></div>
                 </div>
 
 
@@ -3182,8 +3551,15 @@
             settingsBtn.onclick = () => {
                 if (isViewSwitching) return;
                 const showSettings = activeView !== "settings";
+                const targetView = showSettings ? "settings" : "main";
+                setHeaderMainControlsVisibility(!showSettings);
                 const edge = getRandomViewEdge();
-                const enableAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+                const enableAnim = isMinimizeAnimEnabled();
+                if (enableAnim) {
+                    animateSettingsBtnIcon(targetView, getRandomViewEdge());
+                } else {
+                    applySettingsBtnIcon(targetView);
+                }
                 if (showSettings) {
                     loadConfig(); // 进入设置时重新加载配置，确保显示最新值
                     if (enableAnim) {
@@ -3291,6 +3667,8 @@
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
         const inputContinuousChat = popup.querySelector("#coolauxv-cfg-continuous-chat");
+        const inputChatEnterSend = popup.querySelector("#coolauxv-cfg-chat-enter-send");
+        const inputBasicAnim = popup.querySelector("#coolauxv-cfg-basic-anim");
         const inputMinimizeAnim = popup.querySelector("#coolauxv-cfg-minimize-anim");
         const inputAnimSpeed = popup.querySelector("#coolauxv-cfg-anim-speed");
         const chatBar = popup.querySelector("#coolauxv-chat-bar");
@@ -3324,6 +3702,8 @@
             "coolauxv_append_chat",
             "coolauxv_use_new_screenshot",
             "coolauxv_enable_continuous_chat",
+            "coolauxv_chat_enter_send",
+            "coolauxv_enable_basic_anim",
             "coolauxv_enable_minimize_anim",
             "coolauxv_anim_speed",
             "coolauxv_enable_blur_glass",
@@ -3586,6 +3966,8 @@
                 coolauxv_log_level: DEFAULT_LOG_LEVEL,
                 coolauxv_use_new_screenshot: DEFAULT_USE_NEW_SCREENSHOT,
                 coolauxv_enable_continuous_chat: DEFAULT_ENABLE_CONTINUOUS_CHAT,
+                coolauxv_chat_enter_send: DEFAULT_CHAT_ENTER_SEND,
+                coolauxv_enable_basic_anim: DEFAULT_ENABLE_BASIC_ANIM,
                 coolauxv_enable_minimize_anim: DEFAULT_ENABLE_MINIMIZE_ANIM,
                 coolauxv_anim_speed: DEFAULT_ANIM_SPEED,
                 coolauxv_enable_blur_glass: DEFAULT_ENABLE_BLUR_GLASS,
@@ -5371,6 +5753,15 @@
             updateProviderFeatureVisibility();
         };
 
+        const applyBasicAnimSetting = (enabled) => {
+            if (!popup) return;
+            popup.classList.toggle("coolauxv-basic-anim-off", !enabled);
+            // 重新同步折叠区状态，保证关闭基础动画时立即生效
+            updateChatCollapseUI();
+            updateTopSectionCollapseUI();
+            setReasoningAnimatedVisibility(hasReasoning && isShowReasoning);
+        };
+
         const finalizeChatBodyExpand = () => {
             if (!chatBody || isChatCollapsed) return;
             chatBody.style.maxHeight = "none";
@@ -5395,10 +5786,81 @@
             topSection.style.maxHeight = `${topSection.scrollHeight}px`;
         };
 
+        let isTopSectionHoverPreviewing = false;
+
+        const startTopSectionHoverPreview = () => {
+            if (!topSection || !isTopSectionCollapsed) return;
+            if (isTopSectionHoverPreviewing) return;
+            isTopSectionHoverPreviewing = true;
+            if (!isBasicAnimEnabled()) {
+                topSection.style.overflow = "visible";
+                topSection.classList.remove("coolauxv-top-collapsed");
+                topSection.style.maxHeight = "none";
+                return;
+            }
+            topSection.style.overflow = "hidden";
+            topSection.classList.remove("coolauxv-top-collapsed");
+            topSection.style.maxHeight = "0px";
+            requestAnimationFrame(() => {
+                if (!isTopSectionHoverPreviewing || !isTopSectionCollapsed) return;
+                topSection.style.maxHeight = `${topSection.scrollHeight}px`;
+                let expandTimeoutId = 0;
+                const onExpandEnd = (e) => {
+                    if (e.propertyName !== "max-height") return;
+                    cleanupExpand();
+                    if (isTopSectionHoverPreviewing && isTopSectionCollapsed) {
+                        topSection.style.maxHeight = "none";
+                        topSection.style.overflow = "visible";
+                    }
+                };
+                const cleanupExpand = () => {
+                    if (expandTimeoutId) {
+                        clearTimeout(expandTimeoutId);
+                        expandTimeoutId = 0;
+                    }
+                    topSection.removeEventListener("transitionend", onExpandEnd);
+                };
+                topSection.addEventListener("transitionend", onExpandEnd);
+                expandTimeoutId = window.setTimeout(() => {
+                    cleanupExpand();
+                    if (isTopSectionHoverPreviewing && isTopSectionCollapsed) {
+                        topSection.style.maxHeight = "none";
+                        topSection.style.overflow = "visible";
+                    }
+                }, 320);
+            });
+        };
+
+        const stopTopSectionHoverPreview = () => {
+            if (!topSection || !isTopSectionHoverPreviewing) return;
+            isTopSectionHoverPreviewing = false;
+            topSection.style.overflow = "hidden";
+            if (topSection.style.maxHeight === "none") {
+                topSection.style.maxHeight = `${topSection.scrollHeight}px`;
+            }
+            void topSection.offsetHeight;
+            topSection.classList.add("coolauxv-top-collapsed");
+            topSection.style.maxHeight = "0px";
+        };
+
         updateTopSectionCollapseUI = () => {
             if (!topSection || !topSectionToggleBtn) return;
+            if (isTopSectionHoverPreviewing) {
+                isTopSectionHoverPreviewing = false;
+            }
 
             topSectionToggleBtn.textContent = isTopSectionCollapsed ? "展开" : "收起";
+            if (!isBasicAnimEnabled()) {
+                topSection.classList.toggle("coolauxv-top-collapsed", isTopSectionCollapsed);
+                if (isTopSectionCollapsed) {
+                    topSection.style.overflow = "hidden";
+                    topSection.style.maxHeight = "0px";
+                } else {
+                    topSection.style.overflow = "visible";
+                    topSection.style.maxHeight = "none";
+                }
+                return;
+            }
             topSection.classList.toggle("coolauxv-top-collapsed", isTopSectionCollapsed);
             if (isTopSectionCollapsed) {
                 topSection.style.overflow = "hidden";
@@ -5446,6 +5908,23 @@
 
             chatToggleBtn.textContent = isChatCollapsed ? "展开" : "收起";
             chatBar.classList.toggle("coolauxv-chat-collapsed", isChatCollapsed);
+            if (!isBasicAnimEnabled()) {
+                if (isChatCollapsed) {
+                    chatBody.style.overflow = "hidden";
+                    chatBody.style.maxHeight = "0px";
+                } else {
+                    chatBody.style.overflow = "visible";
+                    chatBody.style.maxHeight = "none";
+                }
+                if (resultDiv && wasNearBottom) {
+                    requestAnimationFrame(() => {
+                        resultDiv.scrollTop = resultDiv.scrollHeight;
+                    });
+                } else if (resultDiv) {
+                    resultDiv.scrollTop = Math.min(pinnedScrollTop, resultDiv.scrollHeight);
+                }
+                return;
+            }
             if (isChatCollapsed) {
                 chatBody.style.overflow = "hidden";
                 if (chatBody.style.maxHeight === "none") {
@@ -5519,6 +5998,14 @@
                 isTopSectionCollapsed = !isTopSectionCollapsed;
                 updateTopSectionCollapseUI();
             };
+            topSectionToggleBtn.addEventListener("mouseenter", () => {
+                if (!isTopSectionCollapsed) return;
+                startTopSectionHoverPreview();
+            });
+            topSectionToggleBtn.addEventListener("mouseleave", () => {
+                if (!isTopSectionCollapsed) return;
+                stopTopSectionHoverPreview();
+            });
         }
 
         if (chatInput && chatBody) {
@@ -5573,13 +6060,24 @@
                 if (val === false) val = "v1";
                 inputNewScreenshot.value = val;
             }
-            if (inputMinimizeAnim) inputMinimizeAnim.checked = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+            const basicAnimEnabled = GM_getValue("coolauxv_enable_basic_anim", DEFAULT_ENABLE_BASIC_ANIM);
+            const minimizeAnimRaw = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+            const minimizeAnimEnabled = basicAnimEnabled ? minimizeAnimRaw : false;
+            if (!basicAnimEnabled && minimizeAnimRaw) {
+                GM_setValue("coolauxv_enable_minimize_anim", false);
+            }
+            if (inputBasicAnim) inputBasicAnim.checked = basicAnimEnabled;
+            if (inputMinimizeAnim) {
+                inputMinimizeAnim.checked = minimizeAnimEnabled;
+                inputMinimizeAnim.disabled = false;
+            }
             if (inputAnimSpeed) {
                 const raw = GM_getValue("coolauxv_anim_speed", DEFAULT_ANIM_SPEED);
                 inputAnimSpeed.value = raw ? String(raw) : String(DEFAULT_ANIM_SPEED);
             }
             if (inputPromptVision) inputPromptVision.value = GM_getValue("coolauxv_prompt_vision", "");
             if (inputContinuousChat) inputContinuousChat.checked = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+            if (inputChatEnterSend) inputChatEnterSend.checked = GM_getValue("coolauxv_chat_enter_send", DEFAULT_CHAT_ENTER_SEND);
 
             syncAllClearButtons();
         };
@@ -5599,7 +6097,20 @@
                 if (val === false) val = "v1";
                 inputNewScreenshot.value = val;
             }
-            if (inputMinimizeAnim) inputMinimizeAnim.checked = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+            const basicAnimEnabled = GM_getValue("coolauxv_enable_basic_anim", DEFAULT_ENABLE_BASIC_ANIM);
+            const minimizeAnimRaw = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+            const minimizeAnimEnabled = basicAnimEnabled ? minimizeAnimRaw : false;
+            if (!basicAnimEnabled && minimizeAnimRaw) {
+                GM_setValue("coolauxv_enable_minimize_anim", false);
+            }
+            if (inputBasicAnim) {
+                inputBasicAnim.checked = basicAnimEnabled;
+                applyBasicAnimSetting(basicAnimEnabled);
+            }
+            if (inputMinimizeAnim) {
+                inputMinimizeAnim.checked = minimizeAnimEnabled;
+                inputMinimizeAnim.disabled = false;
+            }
             if (inputAnimSpeed) {
                 const raw = GM_getValue("coolauxv_anim_speed", DEFAULT_ANIM_SPEED);
                 inputAnimSpeed.value = raw ? String(raw) : String(DEFAULT_ANIM_SPEED);
@@ -5612,6 +6123,9 @@
                 const enabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
                 inputContinuousChat.checked = enabled;
                 toggleContinuousChat();
+            }
+            if (inputChatEnterSend) {
+                inputChatEnterSend.checked = GM_getValue("coolauxv_chat_enter_send", DEFAULT_CHAT_ENTER_SEND);
             }
         };
 
@@ -5825,9 +6339,35 @@
                 toggleContinuousChat();
             });
         }
+        if (inputChatEnterSend) {
+            inputChatEnterSend.addEventListener("change", (e) => {
+                const enabled = e.target.checked;
+                GM_setValue("coolauxv_chat_enter_send", enabled);
+                if (enabled) {
+                    showModal("输入体验已变更", "已开启“回车键发送消息”：\nEnter 发送消息，Shift+Enter 换行。\n\n触屏用户注意：没外接键盘会导致无法正常换行。");
+                }
+            });
+        }
+        if (inputBasicAnim) {
+            inputBasicAnim.addEventListener("change", (e) => {
+                const enabled = e.target.checked;
+                GM_setValue("coolauxv_enable_basic_anim", enabled);
+                if (!enabled) {
+                    GM_setValue("coolauxv_enable_minimize_anim", false);
+                    if (inputMinimizeAnim) inputMinimizeAnim.checked = false;
+                }
+                applyBasicAnimSetting(enabled);
+            });
+        }
         if (inputMinimizeAnim) {
             inputMinimizeAnim.addEventListener("change", (e) => {
-                GM_setValue("coolauxv_enable_minimize_anim", e.target.checked);
+                const enabled = e.target.checked;
+                GM_setValue("coolauxv_enable_minimize_anim", enabled);
+                if (enabled && inputBasicAnim && !inputBasicAnim.checked) {
+                    inputBasicAnim.checked = true;
+                    GM_setValue("coolauxv_enable_basic_anim", true);
+                    applyBasicAnimSetting(true);
+                }
             });
         }
         if (inputAnimSpeed) {
@@ -6325,12 +6865,15 @@
         return buildProviderPayload(template, model, messages);
     }
 
-    function appendChatHistoryRecord(role, text, imageBase64) {
+    function appendChatHistoryRecord(role, text, imageBase64, meta = {}) {
         if (!role) return;
         chatHistoryRecords.push({
             role: role,
             text: text || "",
-            imageBase64: imageBase64 || ""
+            imageBase64: imageBase64 || "",
+            displayText: typeof meta.displayText === "string" ? meta.displayText : "",
+            turnId: typeof meta.turnId === "string" ? meta.turnId : "",
+            assistantLabel: typeof meta.assistantLabel === "string" ? meta.assistantLabel : ""
         });
     }
 
@@ -6368,11 +6911,17 @@
         chatMessages = buildChatMessagesForProvider(targetProvider);
     }
 
-    function formatChatUserBlock(userText, imageId, isFirst) {
+    function formatChatUserBlock(userText, imageId, isFirst, turnId) {
         const safeText = userText ? userText : (imageId ? "（仅识屏）" : "");
+        const refreshBtn = turnId
+            ? ` <button type="button" class="coolauxv-chat-refresh-btn" data-chat-turn-id="${turnId}" title="重新生成本轮输出">↻ 重新回答</button>`
+            : "";
+        const editBtn = turnId
+            ? ` <button type="button" class="coolauxv-chat-edit-btn" data-chat-turn-id="${turnId}" title="编辑本轮消息">✎ 编辑</button>`
+            : "";
         let block = "";
         if (!isFirst) block += "\n\n---\n\n";
-        block += `**👤 用户：**\n${safeText}\n`;
+        block += `**👤 用户：**${refreshBtn}${editBtn}\n${safeText}\n`;
         if (imageId) {
             block += `\n<button type="button" class="coolauxv-chat-preview-btn" data-chat-img-id="${imageId}">🔍 预览识屏</button>\n`;
         }
@@ -6397,6 +6946,184 @@
         return getChatAssistantPrefix(label) + (text || "");
     }
 
+    function generateChatTurnId() {
+        return `turn-${generateMessageId()}`;
+    }
+
+    function updateChatEditModeUI() {
+        if (!popup) return;
+        const btnChatSend = popup.querySelector("#coolauxv-btn-chat-send");
+        const btnChatEditCancel = popup.querySelector("#coolauxv-btn-chat-edit-cancel");
+        const isEditing = !!chatEditingTurnId;
+        if (btnChatSend) {
+            btnChatSend.textContent = isEditing ? "确认编辑" : "发送";
+            btnChatSend.title = isEditing ? "确认编辑并重新生成本轮" : "发送";
+        }
+        if (btnChatEditCancel) {
+            setAnimatedVisibility(btnChatEditCancel, isEditing);
+        }
+    }
+
+    function exitChatEditMode() {
+        chatEditingTurnId = "";
+        updateChatEditModeUI();
+    }
+
+    function enterChatEditMode(turnId) {
+        if (!turnId || !popup) return;
+        if (isRendering) {
+            alert("当前正在生成内容，请稍候再试。");
+            return;
+        }
+        startChatSessionIfNeeded();
+        const targetRecord = chatHistoryRecords.find((record) => record.role === "user" && record.turnId === turnId);
+        if (!targetRecord) {
+            alert("未找到对应的连续对话轮次，无法编辑。");
+            return;
+        }
+        const chatInput = popup.querySelector("#coolauxv-chat-input");
+        if (!chatInput) return;
+
+        chatEditingTurnId = turnId;
+        updateChatEditModeUI();
+
+        const imageBase64 = targetRecord.imageBase64 || "";
+        const inputText = targetRecord.displayText
+            ? targetRecord.displayText
+            : (imageBase64 ? "" : (targetRecord.text || ""));
+        chatInput.value = inputText;
+        chatCapturedImageBase64 = imageBase64;
+
+        const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
+        const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
+        setAnimatedVisibility(btnChatPreview, !!imageBase64);
+        setAnimatedVisibility(btnChatClear, !!imageBase64);
+
+        chatInput.focus();
+        try {
+            chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+        } catch (e) { }
+    }
+
+    async function confirmChatEditSend() {
+        if (!chatEditingTurnId) return false;
+        if (!popup) return true;
+        const chatInput = popup.querySelector("#coolauxv-chat-input");
+        if (!chatInput) return true;
+
+        const userText = chatInput.value.trim();
+        const imageBase64 = chatCapturedImageBase64 || "";
+        const hasImage = !!imageBase64;
+        if (!userText && !hasImage) {
+            appendChatError("⚠️ 请输入内容或识屏。");
+            return true;
+        }
+
+        startChatSessionIfNeeded();
+        const targetIndex = chatHistoryRecords.findIndex((record) => record.role === "user" && record.turnId === chatEditingTurnId);
+        if (targetIndex < 0) {
+            alert("未找到对应的连续对话轮次，无法编辑。");
+            exitChatEditMode();
+            return true;
+        }
+
+        const config = getActiveConfig();
+        const targetRecord = chatHistoryRecords[targetIndex];
+        const turnId = targetRecord.turnId || chatEditingTurnId || generateChatTurnId();
+        targetRecord.turnId = turnId;
+        targetRecord.imageBase64 = imageBase64;
+        targetRecord.displayText = userText || (hasImage ? "（仅识屏）" : "");
+        targetRecord.text = userText || (hasImage ? config.promptVision : "");
+
+        exitChatEditMode();
+        await regenerateChatTurn(turnId);
+        return true;
+    }
+
+    function rebuildChatDisplayFromHistory(fallbackAssistantLabel) {
+        const defaultAssistantLabel = fallbackAssistantLabel || chatAssistantLabel;
+        chatDisplayBuffer = "";
+        chatImageStore = {};
+        chatImageCounter = 0;
+
+        chatHistoryRecords.forEach((record) => {
+            if (!record || !record.role) return;
+            if (record.role === "user") {
+                const isFirstRenderedUser = chatDisplayBuffer.length === 0;
+                const turnId = isFirstRenderedUser ? "" : (record.turnId || generateChatTurnId());
+                record.turnId = turnId;
+                let imageId = null;
+                if (record.imageBase64) {
+                    imageId = `chat-img-${++chatImageCounter}`;
+                    chatImageStore[imageId] = record.imageBase64;
+                }
+                const displayText = record.displayText
+                    ? record.displayText
+                    : (record.text || (imageId ? "（仅识屏）" : ""));
+                chatDisplayBuffer += formatChatUserBlock(displayText, imageId, chatDisplayBuffer.length === 0, turnId);
+                return;
+            }
+            if (record.role === "assistant") {
+                const assistantLabel = record.assistantLabel || defaultAssistantLabel;
+                const assistantBlock = buildChatAssistantBlock(record.text || "", assistantLabel);
+                if (chatDisplayBuffer) {
+                    chatDisplayBuffer += assistantBlock;
+                } else {
+                    chatDisplayBuffer = assistantBlock.replace(/^\n+/, "");
+                }
+            }
+        });
+        chatAssistantBuffer = "";
+        chatPendingAssistantPrefix = "";
+        streamTextBuffer = chatDisplayBuffer;
+        lastRenderedText = "";
+    }
+
+    async function regenerateChatTurn(turnId) {
+        if (!turnId) return;
+        if (!popup) return;
+        if (isRendering) {
+            alert("当前正在生成内容，请稍候再试。");
+            return;
+        }
+        if (chatEditingTurnId) {
+            exitChatEditMode();
+        }
+        startChatSessionIfNeeded();
+
+        const targetIndex = chatHistoryRecords.findIndex((record) => record.role === "user" && record.turnId === turnId);
+        if (targetIndex < 0) {
+            alert("未找到对应的连续对话轮次，无法刷新。");
+            return;
+        }
+
+        const targetRecord = chatHistoryRecords[targetIndex];
+        const replayImageBase64 = targetRecord.imageBase64 || "";
+        const replayDisplayText = targetRecord.displayText
+            ? targetRecord.displayText
+            : (replayImageBase64 ? "" : (targetRecord.text || ""));
+
+        chatHistoryRecords = chatHistoryRecords.slice(0, targetIndex);
+        rebuildChatDisplayFromHistory(chatAssistantLabel);
+
+        const config = getActiveConfig();
+        const provider = config.provider;
+        chatProvider = resolveProviderId(provider || DEFAULT_PROVIDER, getProviderTemplates());
+        chatMessages = buildChatMessagesForProvider(chatProvider);
+        renderContent();
+
+        const chatInput = popup.querySelector("#coolauxv-chat-input");
+        if (!chatInput) return;
+        chatInput.value = replayDisplayText || "";
+        chatCapturedImageBase64 = replayImageBase64;
+        const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
+        const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
+        setAnimatedVisibility(btnChatPreview, !!replayImageBase64);
+        setAnimatedVisibility(btnChatClear, !!replayImageBase64);
+
+        await doChatSend();
+    }
+
     function recordHistoryEntry(entry) {
         if (!entry) return;
         const output = (entry.assistantText || "").trim();
@@ -6414,30 +7141,38 @@
         chatImageCounter = 0;
         const config = getActiveConfig();
         const provider = config.provider;
-        const providerTemplate = config.template || getProviderTemplateSafe(provider);
         chatHistoryRecords = [];
         const baseChatLabel = formatChatModelLabel(provider, config.modelVision);
         chatAssistantLabel = baseChatLabel;
 
         historyRecords.forEach((entry) => {
             if (entry.systemPrompt) appendChatHistoryRecord("system", entry.systemPrompt, "");
+            const displayText = entry.userDisplayText ? entry.userDisplayText : (entry.imageBase64 ? "" : (entry.userContentText || ""));
+            const turnId = generateChatTurnId();
             if (entry.userContentText || entry.imageBase64) {
-                appendChatHistoryRecord("user", entry.userContentText, entry.imageBase64);
+                appendChatHistoryRecord("user", entry.userContentText, entry.imageBase64, {
+                    displayText: displayText,
+                    turnId: turnId
+                });
             }
-            if (entry.assistantText) appendChatHistoryRecord("assistant", entry.assistantText, "");
+            if (entry.assistantText) {
+                const entryLabel = (entry && entry.provider && entry.model)
+                    ? formatChatModelLabel(entry.provider, entry.model)
+                    : baseChatLabel;
+                appendChatHistoryRecord("assistant", entry.assistantText, "", { assistantLabel: entryLabel });
+            }
 
-            const entryLabel = (entry && entry.provider && entry.model)
-                ? formatChatModelLabel(entry.provider, entry.model)
-                : baseChatLabel;
             let imageId = null;
             if (entry.imageBase64) {
                 imageId = `chat-img-${++chatImageCounter}`;
                 chatImageStore[imageId] = entry.imageBase64;
             }
-            const displayText = entry.userDisplayText ? entry.userDisplayText : (entry.imageBase64 ? "" : (entry.userContentText || ""));
             const isFirst = chatDisplayBuffer.length === 0;
-            chatDisplayBuffer += formatChatUserBlock(displayText, imageId, isFirst);
+            chatDisplayBuffer += formatChatUserBlock(displayText, imageId, isFirst, isFirst ? "" : turnId);
             if (entry.assistantText) {
+                const entryLabel = (entry && entry.provider && entry.model)
+                    ? formatChatModelLabel(entry.provider, entry.model)
+                    : baseChatLabel;
                 chatDisplayBuffer += buildChatAssistantBlock(entry.assistantText, entryLabel);
             }
         });
@@ -6498,7 +7233,7 @@
             logAiResponse(provider, config.modelVision, "chat", chatAssistantBuffer);
             const assistantMessage = buildProviderMessage(config.template, "assistant", chatAssistantBuffer, "");
             if (assistantMessage) chatMessages.push(assistantMessage);
-            appendChatHistoryRecord("assistant", chatAssistantBuffer, "");
+            appendChatHistoryRecord("assistant", chatAssistantBuffer, "", { assistantLabel: chatAssistantLabel });
             chatDisplayBuffer += chatPendingAssistantPrefix + chatAssistantBuffer;
         }
         chatAssistantBuffer = "";
@@ -6512,7 +7247,7 @@
     function hasChatOutput() {
         if (!chatSessionStarted) return false;
         if (chatAssistantBuffer && chatAssistantBuffer.trim()) return true;
-        return chatDisplayBuffer.includes("**🤖 AI：**");
+        return chatDisplayBuffer.includes("**🤖 AI");
     }
 
     function shouldSuppressResultError() {
@@ -6537,7 +7272,7 @@
             const config = getActiveConfig();
             const assistantMessage = buildProviderMessage(config.template, "assistant", recordContent, "");
             if (assistantMessage) chatMessages.push(assistantMessage);
-            appendChatHistoryRecord("assistant", recordContent, "");
+            appendChatHistoryRecord("assistant", recordContent, "", { assistantLabel: chatAssistantLabel });
         }
         streamTextBuffer = chatDisplayBuffer;
         lastRenderedText = "";
@@ -6569,9 +7304,11 @@
         chatPendingAssistantPrefix = "";
         chatProvider = "";
         chatSystemPrompt = "";
+        chatEditingTurnId = "";
         streamMode = "single";
         streamTextBuffer = "";
         lastRenderedText = "";
+        updateChatEditModeUI();
     }
 
     function clearConversationState() {
@@ -6587,6 +7324,7 @@
         chatPendingAssistantPrefix = "";
         chatProvider = "";
         chatSystemPrompt = "";
+        chatEditingTurnId = "";
         streamMode = "single";
         streamTextBuffer = "";
         streamReasoningBuffer = "";
@@ -6605,6 +7343,7 @@
         if (reasoningWrapper) reasoningWrapper.style.display = "none";
         if (reasoningToggle) reasoningToggle.style.display = "none";
         if (separator) separator.style.display = "none";
+        updateChatEditModeUI();
     }
 
     // --- 4. 核心功能 ---
@@ -6869,6 +7608,24 @@
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
         if (!reasoningWrapper) return;
         const isCollapsed = reasoningWrapper.classList.contains("coolauxv-reasoning-collapsed");
+        if (!isBasicAnimEnabled()) {
+            reasoningWrapper.dataset.lastHeight = "";
+            if (visible) {
+                if (reasoningWrapper.style.display !== "flex") {
+                    reasoningWrapper.style.display = "flex";
+                }
+                reasoningWrapper.style.height = "50%";
+                const targetHeight = resolveReasoningTargetHeight(reasoningWrapper);
+                reasoningWrapper.style.maxHeight = targetHeight;
+                reasoningWrapper.classList.remove("coolauxv-reasoning-collapsed");
+                ensureReasoningHeight();
+            } else {
+                reasoningWrapper.classList.add("coolauxv-reasoning-collapsed");
+                reasoningWrapper.style.maxHeight = "0px";
+                reasoningWrapper.style.display = "none";
+            }
+            return;
+        }
 
         if (visible) {
             const currentHeight = reasoningWrapper.getBoundingClientRect().height;
@@ -6909,7 +7666,7 @@
 
     function minimizeWindow() {
         if (isPopupAnimating) return;
-        const enableMinAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+        const enableMinAnim = isMinimizeAnimEnabled();
         floatBall.style.display = "block";
         if (enableMinAnim) {
             animatePopupToFloatBall(() => {
@@ -6966,7 +7723,7 @@
 
     function closeWindow() {
         if (isPopupAnimating) return;
-        const enableMinAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+        const enableMinAnim = isMinimizeAnimEnabled();
         if (enableMinAnim) {
             animatePopupSlideOutDown(() => {
                 performCloseWindow();
@@ -6986,7 +7743,7 @@
     function quitScript() {
         if (!confirm("确定要退出吗？")) return;
         if (isPopupAnimating) return;
-        const enableMinAnim = GM_getValue("coolauxv_enable_minimize_anim", DEFAULT_ENABLE_MINIMIZE_ANIM);
+        const enableMinAnim = isMinimizeAnimEnabled();
         if (enableMinAnim) {
             animatePopupScaleOut(() => {
                 performQuit();
@@ -7005,6 +7762,8 @@
         const btnTrans = popup.querySelector("#coolauxv-btn-trans");
         const btnExplain = popup.querySelector("#coolauxv-btn-explain");
         const btnChatSend = popup.querySelector("#coolauxv-btn-chat-send");
+        const btnChatEditCancel = popup.querySelector("#coolauxv-btn-chat-edit-cancel");
+        const chatInput = popup.querySelector("#coolauxv-chat-input");
 
         if (minBtn) minBtn.onclick = minimizeWindow;
         if (closeBtn) closeBtn.onclick = closeWindow;
@@ -7045,6 +7804,21 @@
         if (btnTrans) btnTrans.onclick = () => doAction("translate");
         if (btnExplain) btnExplain.onclick = () => doAction("explain");
         if (btnChatSend) btnChatSend.onclick = () => doChatSend();
+        if (btnChatEditCancel) btnChatEditCancel.onclick = () => {
+            exitChatEditMode();
+        };
+        if (chatInput) {
+            chatInput.addEventListener("keydown", (e) => {
+                if (e.key !== "Enter") return;
+                if (e.shiftKey) return;
+                if (e.isComposing || e.keyCode === 229) return;
+                const enterSendEnabled = GM_getValue("coolauxv_chat_enter_send", DEFAULT_CHAT_ENTER_SEND);
+                if (!enterSendEnabled) return;
+                e.preventDefault();
+                doChatSend();
+            });
+        }
+        updateChatEditModeUI();
 
         const resultDiv = popup.querySelector("#coolauxv-result");
         const previewOverlay = document.querySelector("#coolauxv-img-preview-overlay");
@@ -7059,6 +7833,18 @@
                     const shouldExpand = detailBody.classList.contains("coolauxv-collapsed");
                     setCollapseAnimatedVisibility(detailBody, shouldExpand);
                     toggleBtn.textContent = shouldExpand ? "收起原始错误信息" : "查看原始错误信息";
+                    return;
+                }
+                const refreshBtn = e.target.closest(".coolauxv-chat-refresh-btn");
+                if (refreshBtn) {
+                    const turnId = refreshBtn.dataset.chatTurnId || "";
+                    regenerateChatTurn(turnId);
+                    return;
+                }
+                const editBtn = e.target.closest(".coolauxv-chat-edit-btn");
+                if (editBtn) {
+                    const turnId = editBtn.dataset.chatTurnId || "";
+                    enterChatEditMode(turnId);
                     return;
                 }
                 const btn = e.target.closest(".coolauxv-chat-preview-btn");
@@ -7458,10 +8244,10 @@
 
     // 版本检测与日志弹窗逻辑 (使用通用弹窗)
     function checkUpdateAndShowChangelog() {
-        const currentVer = GM_info.script.version;
+        const currentVer = getScriptVersion();
         const lastVer = GM_getValue("coolauxv_installed_version", "0.0");
 
-        if (currentVer !== lastVer) {
+        if (currentVer && currentVer !== lastVer) {
             showModal(`🎉 更新日志 ${currentVer}`, LATEST_CHANGELOG);
             GM_setValue("coolauxv_installed_version", currentVer);
         }
@@ -8904,6 +9690,11 @@
         const resultDiv = popup.querySelector("#coolauxv-result");
         if (!chatInput || !resultDiv) return;
 
+        if (chatEditingTurnId) {
+            const handled = await confirmChatEditSend();
+            if (handled) return;
+        }
+
         const userText = chatInput.value.trim();
         const hasImage = !!chatCapturedImageBase64;
 
@@ -8931,7 +9722,8 @@
         if (imageId) chatImageStore[imageId] = chatCapturedImageBase64;
 
         const displayText = userText || (imageId ? "（仅识屏）" : "");
-        chatDisplayBuffer += formatChatUserBlock(displayText, imageId, chatDisplayBuffer.length === 0);
+        const turnId = generateChatTurnId();
+        chatDisplayBuffer += formatChatUserBlock(displayText, imageId, chatDisplayBuffer.length === 0, turnId);
         chatAssistantLabel = formatChatModelLabel(provider, config.modelVision);
         chatPendingAssistantPrefix = getChatAssistantPrefix(chatAssistantLabel);
         chatAssistantBuffer = "";
@@ -8940,7 +9732,10 @@
         renderContent();
 
         const messageText = userText || (hasImage ? config.promptVision : "");
-        appendChatHistoryRecord("user", messageText, hasImage ? chatCapturedImageBase64 : "");
+        appendChatHistoryRecord("user", messageText, hasImage ? chatCapturedImageBase64 : "", {
+            displayText: displayText,
+            turnId: turnId
+        });
         const userMessage = buildProviderMessage(providerTemplate, "user", messageText, hasImage ? chatCapturedImageBase64 : "");
         if (userMessage) chatMessages.push(userMessage);
 
