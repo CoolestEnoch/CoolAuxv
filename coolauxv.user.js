@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v14.6
+// @version      v15.0
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -172,6 +172,11 @@
     const PROVIDER_SHARE_VERSION = 1;
     const CHAT_HISTORY_SHARE_VERSION = 1;
     const CHAT_HISTORY_SHARE_TYPE = "coolauxv-chat-history";
+    const CHAT_QUEUE_SHARE_VERSION = 1;
+    const CHAT_QUEUE_SHARE_TYPE = "coolauxv-chat-queue";
+    const CHAT_QUEUE_STORAGE_KEY = "coolauxv_chat_queue_v1";
+    const CHAT_QUEUE_VERSION = 1;
+    const CHAT_QUEUE_MAX_SIZE = 100;
     const DEFAULT_KEY_LINK_TITLE = "获取 KEY";
     const getScriptVersion = () => {
         const gmInfo = (typeof GM_info !== "undefined" && GM_info) ? GM_info : (globalThis && globalThis.GM_info);
@@ -187,6 +192,7 @@
 
     const DEFAULT_PROMPT_VISION = "请先详细描述这张图，然后再详细解读这张图。";
     const DEFAULT_ENABLE_CONTINUOUS_CHAT = false;
+    const DEFAULT_CHAT_HISTORY_PERSIST = false;
     const DEFAULT_CHAT_ENTER_SEND = false;
     const DEFAULT_PROMPT_CONTINUOUS_CHAT = "忽略之前给你的提示词，现在开始你是一个连续对话助手，要结合上下文用中文回答用户问题；如有图片，请结合图片内容回答；要听从用户指示。";
 
@@ -209,115 +215,29 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
-        v14.6 更新日志
-        ## 💬 对话控制增强
-        *   连续对话中新增“重新回答”按钮，可重新生成AI回复
-        *   新增“编辑”按钮，支持修改历史消息内容
-        *   编辑模式下提供“确认编辑”和“取消编辑”操作
-        *   首轮对话（翻译/解读/识图触发）不允许编辑/重新回答
-        ## 🎨 界面交互优化
-        *   顶部内容区域支持鼠标悬停临时展开（收起状态下）
-        *   设置按钮动态切换图标（主界面⚙️/设置界面🏠）并带动画
-        *   设置界面中隐藏顶栏的展开/原文/显示推理控件
-        *   顶栏按钮限制为单行高度，避免布局错位
-        ## ⚙️ 动画设置细化
-        *   动画设置拆分为“基础动画”和“高级动画”
-        *   基础动画控制内容区、连续对话、推理区的展开收起
-        *   高级动画控制界面切换等复杂动画
-        *   勾选高级动画自动启用基础动画
-        ## 📋 设置界面改进
-        *   “配置设置”后显示当前版本号
-        *   打开GitHub仓库、检查更新、更新日志按钮单独成行
-        *   改进界面状态切换的视觉反馈
-        ---
-        v14.5 更新日志
-        ## 🛠️ Bug修复
-        *   修复了导出配置文件对隐私信息处理逻辑混乱的问题。
-        *   现在分享提供商会询问你是否包含隐私信息了。
-        ## 🔄 界面交互优化
-        *   移除了外部的提供商删除按钮，整合到批量管理种。
-        *   现在可以自定义“获取KEY”按钮的悬浮提示了。
-        ---
-        v14.4 更新日志
-        ## 🪟 窗口管理优化
-        *   修复悬浮球常驻逻辑：缩小按钮始终缩小到悬浮球，不受常驻设置影响
-        *   关闭按钮现在会清空所有内容区域，恢复界面初始状态
-        *   悬浮球常驻设置仅影响关闭按钮行为，不影响缩小功能
-        ## 🔘 顶部区域折叠控制
-        *   新增内容区域展开/收起按钮（位于“原文”复选框左侧）
-        *   顶部区域展开状态不再持久化保存，每次重新开始
-        *   开始连续对话时，自动收起顶部区域保持界面简洁
-        ## 🔄 界面交互优化
-        *   优化翻译模式与连续对话模式的切换体验
-        *   改进窗口状态管理，提供更清晰的视觉反馈
-        *   增强用户在对话过程中对工作区的控制能力
-        ---
-        v14.3 更新日志
-        ## 💬 Chat Parts 格式支持
-        *   新增 Chat Parts 格式，支持更结构化的对话组织
-        *   优化多轮对话的视觉呈现和交互体验
-        ## 🔄 更新管理优化
-        *   新增更新按钮，方便一键更新脚本版本
-        *   脚本包名从 \`translator\` 变更为 \`coolauxv\`
-        ## 🎨 界面与体验优化
-        *   提供商设置界面全面优化，布局更清晰
-        *   修复窗口关闭时的动画漂移问题，视觉更平滑
-        ## 🐛 调试与日志增强
-        *   控制台日志增加更多详细信息，便于问题排查
-        *   改进错误报告机制，开发者体验更友好
-        ---
-        v14.2 更新日志
-        ## ✨ 界面动画
-        *   添加了进入、退出动画。
-        *   添加了动画总开关和速度管理器。
-        ## 🛠️ Bug修复
-        *   修复了切换模型提供商时模型选择界面变成空白的问题。
-        ---
-        v14.1 更新日志
-        ## 🔧 提供商管理增强
-        *   提供商ID现在支持编辑，便于自定义和管理
-        *   优化提供商分享链接，长度更短更简洁
-        ## 🛠️ 稳定性改进
-        *   修复Chromium扩展版中，部分提供商的流式响应不工作问题
-        *   修复手动配置提供商时，模型设置不显示的问题
-        ## 📱 跨平台优化
-        *   增强流式响应兼容性，适配更多自定义提供商
-        *   确保各平台下提供商配置功能一致性
-        ---
-        v14.0 更新日志
-        ## 🏗️ 模块化提供商系统
-        *   新增模块化AI提供商系统，支持通过模板自定义添加任意AI服务
-        *   现有提供商（OpenAI、智谱、CNB）全部迁移至新系统
-        *   支持自定义请求URL、请求头/体、角色名称等所有参数
-        *   提供一键分享（base64导出）、批量删除、导入功能
-        ## 🔧 提供商高级配置
-        *   新增提供商分类功能（如视觉模型、通用模型），每类可添加多个模型
-        *   每个模型支持名称、子类别、标签三重属性
-        *   自定义字段支持键值对插值（如 {{apiKey}} 用于请求头）
-        *   隐私字段可勾选"打码"，导出配置时可选择排除隐私信息
-        ## 🎨 设置界面全面升级
-        *   设置界面全新设计，提供商配置可折叠展开
-        *   "默认大模型提供商"旁新增"展开/收起全部"切换按钮
-        *   所有输入框后增加清空按钮，API KEY等敏感字段支持显示/隐藏
-        *   提供商配置移至高级选项弹窗，界面更清晰
-        *   设置面板打开/关闭增加随机方向动画效果
-        ## ✨ 新提供商支持
-        *   新增CNB AI提供商，支持连续对话，默认模型 hunyuan-a13b
-        *   CNB Repo和KEY输入框支持隐藏/显示，配置更灵活
-        ## 🛡️ 隐私与权限控制
-        *   提供商可独立控制是否支持识图、连续对话功能
-        *   首页功能按钮（识图、连续对话）根据提供商权限动态显示
-        *   自定义字段支持单独设置"打码"和"默认展示"选项
-        ## 🔄 动画体验优化
-        *   设置界面切换提供商时，旧提供商收起与新提供商展开动画同步进行
-        *   启用实验性功能后，最小化按钮使用"悬浮球"缩放动画
-        *   错误信息展示支持展开/收起动画，查看原始错误更便捷
-        ## 🐛 问题修复与优化
-        *   修复翻译后切换模型导致AI来源混淆的问题
-        *   改进API错误处理，支持多种错误格式，提示更友好
-        *   修复配置导出/导入功能失效问题
-        *   重置功能现在删除脚本创建的所有存储键值
-        *   修复连续对话时未添加@connect导致的连接问题
+        v15.0 更新日志
+        ## 💾 聊天记录管理系统
+        *   新增聊天记录管理功能，支持导出为Base64/PDF、从Base64导入
+        *   PDF导出功能，方便分享对话内容（单向导出）
+        *   聊天持久化系统，支持后台队列存储和跨标签页同步
+        *   聊天记录批量操作：删除、导出、导入
+        ## 🖼️ 对话功能增强
+        *   连续对话支持插入本地图片（粘贴或文件选择器）
+        *   新增中断按钮，可在AI输出时停止生成
+        *   聊天记录自动保存，关闭窗口时自动存入后台队列
+        ## 📄 PDF导出优化
+        *   PDF导出支持自定义角色选择（默认用户和助手角色）
+        *   修复PDF导出中LaTeX公式渲染问题
+        *   改进导出界面体验，优化操作流程
+        ## 🗂️ 后台聊天队列
+        *   独立聊天记录管理面板，可恢复、删除、导出历史对话
+        *   持久化存储选项，实现跨标签页对话同步
+        *   唯一对话ID机制，避免重复记录
+        *   可清空所有持久化聊天记录（需二次确认）
+        ## 🎨 界面优化
+        *   优化聊天记录管理对话框布局，移除冗余按钮
+        *   调整Base64输入框大小，改善视觉体验
+        *   增强聊天记录面板的组织和展示方式
     `;
 
     const DEFAULT_PROVIDER_BASE64_LIST = [
@@ -2964,6 +2884,7 @@
     let updateChatCollapseUI = () => { };
     let updateTopSectionCollapseUI = () => { };
     let openChatHistoryManager = async () => { };
+    let queueCurrentChatSessionToBackground = () => false;
 
     let lastRenderedText = "";
     let lastRenderedReasoning = "";
@@ -3258,6 +3179,7 @@
                       <div id="coolauxv-chat-body">
                           <textarea id="coolauxv-chat-input" placeholder="连续对话输入..."></textarea>
                           <div id="coolauxv-chat-actions">
+                              <button id="coolauxv-btn-chat-image-file" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.45; white-space:nowrap;" title="选择本地图片">🖼 本地</button>
                               <button id="coolauxv-btn-screenshot-chat" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
                               <button id="coolauxv-btn-preview-chat" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="预览截图">🔍</button>
                               <button id="coolauxv-btn-clear-chat-shot" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="清除识屏">🗑 清除</button>
@@ -3265,6 +3187,7 @@
                               <button id="coolauxv-btn-chat-edit-cancel" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.5;" title="退出编辑模式">取消编辑</button>
                               <button id="coolauxv-btn-chat-send" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">发送</button>
                           </div>
+                          <input type="file" id="coolauxv-input-chat-image-file" accept="image/*" style="display:none;">
                       </div>
                   </div>
                 </div>
@@ -3446,6 +3369,15 @@
                                 <input type="checkbox" id="coolauxv-cfg-continuous-chat"> 连续对话
                             </label>
                             <div class="coolauxv-settings-item-hint">启用后显示连续对话输入区</div>
+                        </div>
+                        <div class="coolauxv-settings-item">
+                            <label class="coolauxv-toggle-label">
+                                <input type="checkbox" id="coolauxv-cfg-chat-history-persist"> 聊天记录持久化
+                            </label>
+                            <div class="coolauxv-settings-item-hint">关闭聊天框时自动入后台队列；开启后支持跨标签页同步</div>
+                            <div style="margin-top:4px;">
+                                <button type="button" id="coolauxv-btn-clear-chat-persist" class="coolauxv-link-btn" style="border-color:#fecaca; color:#b91c1c; background:#fff1f2;">🧹 清空持久化聊天记录</button>
+                            </div>
                         </div>
                         <div class="coolauxv-settings-item">
                             <label class="coolauxv-toggle-label">
@@ -3684,6 +3616,8 @@
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
         const inputContinuousChat = popup.querySelector("#coolauxv-cfg-continuous-chat");
+        const inputChatHistoryPersist = popup.querySelector("#coolauxv-cfg-chat-history-persist");
+        const btnClearChatPersist = popup.querySelector("#coolauxv-btn-clear-chat-persist");
         const inputChatEnterSend = popup.querySelector("#coolauxv-cfg-chat-enter-send");
         const inputBasicAnim = popup.querySelector("#coolauxv-cfg-basic-anim");
         const inputMinimizeAnim = popup.querySelector("#coolauxv-cfg-minimize-anim");
@@ -3719,6 +3653,7 @@
             "coolauxv_append_chat",
             "coolauxv_use_new_screenshot",
             "coolauxv_enable_continuous_chat",
+            "coolauxv_chat_history_persist",
             "coolauxv_chat_enter_send",
             "coolauxv_enable_basic_anim",
             "coolauxv_enable_minimize_anim",
@@ -3760,6 +3695,7 @@
             CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
             LEGACY_CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
             GM_deleteValue(PROVIDER_SECRET_STORAGE_KEY);
+            GM_deleteValue(CHAT_QUEUE_STORAGE_KEY);
         };
 
         const encodeBase64 = (text) => {
@@ -3802,21 +3738,228 @@
             };
         };
 
+        const normalizeChatHistoryPayload = (payload) => {
+            if (!payload || typeof payload !== "object") return null;
+            const records = Array.isArray(payload.chatHistoryRecords)
+                ? payload.chatHistoryRecords.map((record) => normalizeChatHistoryRecord(record)).filter(Boolean)
+                : [];
+            if (!records.length) return null;
+            const rawSessionId = typeof payload.chatSessionId === "string"
+                ? payload.chatSessionId
+                : (typeof payload.chatId === "string" ? payload.chatId : "");
+            const normalizedSessionId = String(rawSessionId || "").trim();
+            return {
+                type: CHAT_HISTORY_SHARE_TYPE,
+                version: CHAT_HISTORY_SHARE_VERSION,
+                exportedAt: typeof payload.exportedAt === "string" ? payload.exportedAt : new Date().toISOString(),
+                chatProvider: typeof payload.chatProvider === "string" ? payload.chatProvider : "",
+                chatSessionId: normalizedSessionId,
+                chatSystemPrompt: typeof payload.chatSystemPrompt === "string" ? payload.chatSystemPrompt : "",
+                chatAssistantLabel: typeof payload.chatAssistantLabel === "string" ? payload.chatAssistantLabel : "",
+                chatHistoryRecords: records
+            };
+        };
+
         const buildChatHistoryExportPayload = () => {
             const records = chatHistoryRecords
                 .map((record) => normalizeChatHistoryRecord(record))
                 .filter(Boolean);
+            if (chatSessionStarted && chatAssistantBuffer && chatAssistantBuffer.trim()) {
+                const pendingAssistantRecord = normalizeChatHistoryRecord({
+                    role: "assistant",
+                    text: chatAssistantBuffer,
+                    assistantLabel: chatAssistantLabel || ""
+                });
+                if (pendingAssistantRecord) records.push(pendingAssistantRecord);
+            }
             if (!records.length) return null;
-            return {
+            const sessionId = String(chatSessionId || "").trim() || generateRequestId();
+            chatSessionId = sessionId;
+            return normalizeChatHistoryPayload({
                 type: CHAT_HISTORY_SHARE_TYPE,
                 version: CHAT_HISTORY_SHARE_VERSION,
                 exportedAt: new Date().toISOString(),
                 chatProvider: chatProvider || "",
-                chatSessionId: chatSessionId || "",
+                chatSessionId: sessionId,
                 chatSystemPrompt: chatSystemPrompt || "",
                 chatAssistantLabel: chatAssistantLabel || "",
                 chatHistoryRecords: records
+            });
+        };
+
+        const toChatHistoryImportPayload = (payload) => {
+            const normalized = normalizeChatHistoryPayload(payload);
+            if (!normalized) return null;
+            return {
+                records: normalized.chatHistoryRecords,
+                providerId: normalized.chatProvider || "",
+                sessionId: normalized.chatSessionId || "",
+                systemPrompt: normalized.chatSystemPrompt || "",
+                assistantLabel: normalized.chatAssistantLabel || ""
             };
+        };
+
+        const normalizeChatQueueItem = (item) => {
+            if (!item || typeof item !== "object") return null;
+            const payload = normalizeChatHistoryPayload(item.payload);
+            if (!payload) return null;
+            const id = String(item.id || payload.chatSessionId || "").trim() || `queue-${generateRequestId()}`;
+            payload.chatSessionId = id;
+            const nowIso = new Date().toISOString();
+            const createdAtRaw = String(item.createdAt || "").trim();
+            const updatedAtRaw = String(item.updatedAt || item.modifiedAt || item.createdAt || "").trim();
+            const createdAt = createdAtRaw || updatedAtRaw || nowIso;
+            const updatedAt = updatedAtRaw || createdAtRaw || nowIso;
+            const title = String(item.title || "").trim();
+            return {
+                id: id,
+                version: CHAT_QUEUE_VERSION,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                title: title,
+                payload: payload
+            };
+        };
+
+        const parseQueueTime = (value) => {
+            const time = Date.parse(String(value || "").trim());
+            return Number.isFinite(time) ? time : 0;
+        };
+
+        const shouldReplaceQueueItem = (nextItem, currentItem) => {
+            const nextTime = parseQueueTime(nextItem && (nextItem.updatedAt || nextItem.createdAt));
+            const currentTime = parseQueueTime(currentItem && (currentItem.updatedAt || currentItem.createdAt));
+            if (nextTime !== currentTime) return nextTime > currentTime;
+            const nextCreated = parseQueueTime(nextItem && nextItem.createdAt);
+            const currentCreated = parseQueueTime(currentItem && currentItem.createdAt);
+            return nextCreated >= currentCreated;
+        };
+
+        const normalizeChatQueueList = (list) => {
+            const byId = new Map();
+            const source = Array.isArray(list) ? list : [];
+            source.forEach((item) => {
+                const normalized = normalizeChatQueueItem(item);
+                if (!normalized) return;
+                const existing = byId.get(normalized.id);
+                if (!existing || shouldReplaceQueueItem(normalized, existing)) {
+                    byId.set(normalized.id, normalized);
+                }
+            });
+            return Array.from(byId.values())
+                .sort((a, b) => parseQueueTime(b.updatedAt || b.createdAt) - parseQueueTime(a.updatedAt || a.createdAt));
+        };
+
+        const mergeChatQueueLists = (primary, secondary) => {
+            const first = Array.isArray(primary) ? primary : [];
+            const second = Array.isArray(secondary) ? secondary : [];
+            return normalizeChatQueueList(first.concat(second));
+        };
+
+        const isChatHistoryQueueFeatureEnabled = () => {
+            return GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+        };
+
+        const isChatHistoryQueuePersistenceEnabled = () => {
+            return GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST);
+        };
+
+        const loadPersistentChatQueue = () => {
+            try {
+                return normalizeChatQueueList(GM_getValue(CHAT_QUEUE_STORAGE_KEY, []));
+            } catch (e) {
+                return [];
+            }
+        };
+
+        const savePersistentChatQueue = (list) => {
+            const normalized = normalizeChatQueueList(list).slice(0, CHAT_QUEUE_MAX_SIZE);
+            GM_setValue(CHAT_QUEUE_STORAGE_KEY, normalized);
+            return normalized;
+        };
+
+        let chatBackgroundQueue = [];
+        let chatQueuePersistBootstrapped = false;
+
+        const syncChatQueueFromPersistentStore = () => {
+            if (!isChatHistoryQueuePersistenceEnabled()) {
+                chatQueuePersistBootstrapped = false;
+                return chatBackgroundQueue;
+            }
+            const globalQueue = loadPersistentChatQueue();
+            if (!chatQueuePersistBootstrapped && chatBackgroundQueue.length) {
+                chatBackgroundQueue = normalizeChatQueueList(chatBackgroundQueue.concat(globalQueue)).slice(0, CHAT_QUEUE_MAX_SIZE);
+                savePersistentChatQueue(chatBackgroundQueue);
+            } else {
+                chatBackgroundQueue = globalQueue.slice(0, CHAT_QUEUE_MAX_SIZE);
+            }
+            chatQueuePersistBootstrapped = true;
+            return chatBackgroundQueue;
+        };
+
+        const persistChatQueueToGlobalStore = () => {
+            if (!isChatHistoryQueuePersistenceEnabled()) {
+                chatQueuePersistBootstrapped = false;
+                return;
+            }
+            chatBackgroundQueue = normalizeChatQueueList(chatBackgroundQueue).slice(0, CHAT_QUEUE_MAX_SIZE);
+            savePersistentChatQueue(chatBackgroundQueue);
+            chatQueuePersistBootstrapped = true;
+        };
+
+        const getChatQueueItems = () => {
+            syncChatQueueFromPersistentStore();
+            return chatBackgroundQueue.slice();
+        };
+
+        const formatChatQueueTitle = (payload) => {
+            const normalized = normalizeChatHistoryPayload(payload);
+            if (!normalized) return "连续对话";
+            const firstUser = normalized.chatHistoryRecords.find((record) => record.role === "user");
+            const rawText = firstUser
+                ? ((firstUser.displayText || firstUser.text || (firstUser.imageBase64 ? "（仅识屏）" : "")).trim())
+                : "";
+            const compact = rawText.replace(/\s+/g, " ");
+            if (!compact) return "连续对话";
+            return compact.length > 24 ? `${compact.slice(0, 24)}...` : compact;
+        };
+
+        const enqueueChatPayloadToQueue = (payload, options = {}) => {
+            if (!isChatHistoryQueueFeatureEnabled()) return null;
+            const normalizedPayload = normalizeChatHistoryPayload(payload);
+            if (!normalizedPayload) return null;
+            const queueId = String(options.id || normalizedPayload.chatSessionId || "").trim() || `queue-${generateRequestId()}`;
+            normalizedPayload.chatSessionId = queueId;
+            syncChatQueueFromPersistentStore();
+            const existingItem = chatBackgroundQueue.find((item) => item.id === queueId);
+            const updatedAt = String(options.updatedAt || "").trim() || new Date().toISOString();
+            const queuedItem = normalizeChatQueueItem({
+                id: queueId,
+                createdAt: (existingItem && existingItem.createdAt) || options.createdAt || updatedAt,
+                updatedAt: updatedAt,
+                title: options.title || formatChatQueueTitle(normalizedPayload),
+                payload: normalizedPayload
+            });
+            if (!queuedItem) return null;
+            chatBackgroundQueue = normalizeChatQueueList([queuedItem].concat(chatBackgroundQueue)).slice(0, CHAT_QUEUE_MAX_SIZE);
+            persistChatQueueToGlobalStore();
+            return queuedItem;
+        };
+
+        const getChatQueueItemById = (itemId) => {
+            if (!itemId) return null;
+            const items = getChatQueueItems();
+            return items.find((item) => item.id === itemId) || null;
+        };
+
+        const removeChatQueueItemById = (itemId) => {
+            if (!itemId) return false;
+            syncChatQueueFromPersistentStore();
+            const before = chatBackgroundQueue.length;
+            chatBackgroundQueue = chatBackgroundQueue.filter((item) => item.id !== itemId);
+            const changed = chatBackgroundQueue.length !== before;
+            if (changed) persistChatQueueToGlobalStore();
+            return changed;
         };
 
         const parseChatHistoryImportPayload = (base64Input) => {
@@ -3926,6 +4069,10 @@
                 isChatCollapsed = false;
                 updateChatCollapseUI();
             }
+            if (importedHasRecords) {
+                isTopSectionCollapsed = true;
+                updateTopSectionCollapseUI();
+            }
             return true;
         };
 
@@ -3982,7 +4129,38 @@
                 .replace(/"/g, "&quot;")
                 .replace(/</g, "&lt;")
                 .replace(/>/g, "&gt;");
-            const toHtmlText = (value) => escapeHtml(value).replace(/\n/g, "<br>");
+            const renderPdfMathText = (value) => {
+                const text = String(value ?? "");
+                const fallback = escapeHtml(text).replace(/\n/g, "<br>");
+                if (typeof katex === "undefined" || !katex || typeof katex.renderToString !== "function") {
+                    return fallback;
+                }
+                const mathPattern = /\\\[((?:.|\n)*?)\\\]|\\\(((?:.|\n)*?)\\\)|\$\$([\s\S]+?)\$\$|\$([^\n$]+?)\$/g;
+                let lastIndex = 0;
+                let output = "";
+                let matched = false;
+                text.replace(mathPattern, (raw, blockLatex, inlineLatex, blockDollarLatex, inlineDollarLatex, offset) => {
+                    matched = true;
+                    output += escapeHtml(text.slice(lastIndex, offset)).replace(/\n/g, "<br>");
+                    const expr = blockLatex !== undefined
+                        ? blockLatex
+                        : (inlineLatex !== undefined
+                            ? inlineLatex
+                            : (blockDollarLatex !== undefined ? blockDollarLatex : inlineDollarLatex));
+                    const displayMode = blockLatex !== undefined || blockDollarLatex !== undefined;
+                    try {
+                        output += katex.renderToString(expr, { throwOnError: false, displayMode: displayMode });
+                    } catch (e) {
+                        output += escapeHtml(raw);
+                    }
+                    lastIndex = offset + raw.length;
+                    return raw;
+                });
+                if (!matched) return fallback;
+                output += escapeHtml(text.slice(lastIndex)).replace(/\n/g, "<br>");
+                return output;
+            };
+            const toHtmlText = (value) => renderPdfMathText(value);
             const roleLabelMap = {
                 system: "系统",
                 user: "用户",
@@ -4035,6 +4213,7 @@
 <head>
   <meta charset="utf-8">
   <title>CoolAuxv 聊天记录</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
   <style>
     @page { size: A4; margin: 14mm; }
     * { box-sizing: border-box; }
@@ -4088,6 +4267,12 @@
       color: #111827;
       white-space: normal;
       word-break: break-word;
+    }
+    .chat-text .katex-display {
+      margin: 0.4em 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 2px 0;
     }
     .chat-image-wrap {
       margin-top: 8px;
@@ -4181,7 +4366,7 @@
             const box = document.createElement("div");
             Object.assign(box.style, {
                 background: "#fff",
-                width: "560px",
+                width: "520px",
                 maxWidth: "92%",
                 maxHeight: "88vh",
                 display: "flex",
@@ -4201,7 +4386,7 @@
                 </div>
                 <div style="display:flex; flex-direction:column; gap:8px; flex:1;">
                     <div class="coolauxv-sub-label">已生成 Base64，可复制或保存为 .auv</div>
-                    <textarea id="coolauxv-chat-history-export-text" class="coolauxv-setting-input coolauxv-resizable-input" rows="5" spellcheck="false"></textarea>
+                    <textarea id="coolauxv-chat-history-export-text" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" spellcheck="false"></textarea>
                     <div style="font-size:11px; color:#888;">为避免浏览器输入框长度限制，建议使用此处文本框操作。</div>
                     <div class="coolauxv-sub-label">导出角色（PDF）</div>
                     <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
@@ -4220,7 +4405,6 @@
                     <button type="button" id="coolauxv-chat-history-export-copy" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1 1 40%;">复制 Base64</button>
                     <button type="button" id="coolauxv-chat-history-export-save" class="coolauxv-action-btn" style="flex:1 1 40%;">保存 .auv</button>
                     <button type="button" id="coolauxv-chat-history-export-pdf" class="coolauxv-action-btn" style="flex:1 1 40%;">导出 PDF</button>
-                    <button type="button" id="coolauxv-chat-history-export-cancel" class="coolauxv-action-btn" style="flex:1 1 40%;">关闭</button>
                 </div>
             `;
 
@@ -4252,7 +4436,6 @@
             const roleAssistantEl = box.querySelector("#coolauxv-chat-history-export-role-assistant");
             const roleSystemEl = box.querySelector("#coolauxv-chat-history-export-role-system");
             const closeBtn = box.querySelector("#coolauxv-chat-history-export-close");
-            const cancelBtn = box.querySelector("#coolauxv-chat-history-export-cancel");
             if (inputEl) {
                 inputEl.value = base64Text || "";
                 setTimeout(() => {
@@ -4310,24 +4493,29 @@
                 });
             }
             if (closeBtn) closeBtn.addEventListener("click", closeModal);
-            if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
             overlay.addEventListener("click", (e) => {
                 if (e.target === overlay) closeModal();
             });
         };
 
-        const exportChatHistory = () => {
-            const payload = buildChatHistoryExportPayload();
-            if (!payload) {
+        const exportChatHistoryPayload = (payload) => {
+            const normalizedPayload = normalizeChatHistoryPayload(payload);
+            if (!normalizedPayload) {
                 alert("当前没有可导出的连续对话记录。");
-                return;
+                return false;
             }
-            const base64 = encodeBase64(JSON.stringify(payload));
+            const base64 = encodeBase64(JSON.stringify(normalizedPayload));
             if (!base64) {
                 alert("聊天记录导出失败，请稍后重试。");
-                return;
+                return false;
             }
-            openChatHistoryExportModal(base64, payload);
+            openChatHistoryExportModal(base64, normalizedPayload);
+            return true;
+        };
+
+        const exportChatHistory = () => {
+            const payload = buildChatHistoryExportPayload();
+            return exportChatHistoryPayload(payload);
         };
 
         const openChatHistoryImportModal = () => {
@@ -4356,7 +4544,7 @@
             const box = document.createElement("div");
             Object.assign(box.style, {
                 background: "#fff",
-                width: "560px",
+                width: "520px",
                 maxWidth: "92%",
                 maxHeight: "88vh",
                 display: "flex",
@@ -4376,13 +4564,12 @@
                 </div>
                 <div style="display:flex; flex-direction:column; gap:8px; flex:1;">
                     <div class="coolauxv-sub-label">粘贴 Base64 文本，或选择 .auv 文件</div>
-                    <textarea id="coolauxv-chat-history-import-text" class="coolauxv-setting-input coolauxv-resizable-input" rows="5" placeholder="粘贴导入内容..." spellcheck="false"></textarea>
+                    <textarea id="coolauxv-chat-history-import-text" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="粘贴导入内容..." spellcheck="false"></textarea>
                     <div style="font-size:11px; color:#888;">支持聊天记录导出的 Base64 文本。</div>
                 </div>
                 <div style="display:flex; gap:10px; margin-top:12px;">
                     <button type="button" id="coolauxv-chat-history-import-file" class="coolauxv-action-btn" style="flex:1;">选择 .auv</button>
                     <button type="button" id="coolauxv-chat-history-import-submit" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">导入</button>
-                    <button type="button" id="coolauxv-chat-history-import-cancel" class="coolauxv-action-btn" style="flex:1;">取消</button>
                 </div>
             `;
 
@@ -4410,7 +4597,6 @@
             const fileBtn = box.querySelector("#coolauxv-chat-history-import-file");
             const submitBtn = box.querySelector("#coolauxv-chat-history-import-submit");
             const closeBtn = box.querySelector("#coolauxv-chat-history-import-close");
-            const cancelBtn = box.querySelector("#coolauxv-chat-history-import-cancel");
             if (inputEl) setTimeout(() => inputEl.focus(), 0);
 
             if (fileBtn) {
@@ -4446,7 +4632,357 @@
                 });
             }
             if (closeBtn) closeBtn.addEventListener("click", closeModal);
-            if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeModal();
+            });
+        };
+
+        const escapeQueueText = (value) => String(value ?? "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+
+        const formatQueueTime = (iso) => {
+            if (!iso) return "";
+            try {
+                return new Date(iso).toLocaleString();
+            } catch (e) {
+                return String(iso);
+            }
+        };
+
+        const getQueueRecordCount = (item) => {
+            const payload = item && item.payload ? item.payload : null;
+            return payload && Array.isArray(payload.chatHistoryRecords) ? payload.chatHistoryRecords.length : 0;
+        };
+
+        const buildQueueMetaText = (item) => {
+            if (!item || !item.payload) return "";
+            const providerText = item.payload.chatProvider ? `Provider: ${item.payload.chatProvider}` : "Provider: 未记录";
+            return `${providerText} · ${getQueueRecordCount(item)} 条消息 · 更新于 ${formatQueueTime(item.updatedAt || item.createdAt)}`;
+        };
+
+        const exportChatQueueItems = (items) => {
+            const normalizedItems = normalizeChatQueueList(items);
+            if (!normalizedItems.length) {
+                alert("请先选择要导出的后台会话。");
+                return false;
+            }
+            const payload = {
+                type: CHAT_QUEUE_SHARE_TYPE,
+                version: CHAT_QUEUE_SHARE_VERSION,
+                exportedAt: new Date().toISOString(),
+                items: normalizedItems
+            };
+            const base64 = encodeBase64(JSON.stringify(payload));
+            if (!base64) {
+                alert("批量导出失败，请稍后重试。");
+                return false;
+            }
+            openChatQueueExportModal(base64);
+            return true;
+        };
+
+        const openChatQueueExportModal = (base64Text) => {
+            const existingOverlay = document.getElementById("coolauxv-chat-queue-export-overlay");
+            if (existingOverlay && existingOverlay.parentNode) {
+                existingOverlay.parentNode.removeChild(existingOverlay);
+            }
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-chat-queue-export-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0, 0, 0, 0.5)",
+                zIndex: "2147483661",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backdropFilter: "blur(4px)",
+                opacity: "0",
+                transition: "opacity 0.2s"
+            });
+
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff",
+                width: "520px",
+                maxWidth: "92%",
+                maxHeight: "88vh",
+                display: "flex",
+                flexDirection: "column",
+                padding: "18px",
+                borderRadius: "12px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+                transform: "scale(0.96)",
+                transition: "transform 0.2s",
+                overflow: "hidden"
+            });
+
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+                    <div style="font-size:18px; font-weight:800; color:#a516e8;">⬇️ 批量导出后台会话</div>
+                    <button type="button" id="coolauxv-chat-queue-export-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:8px; flex:1;">
+                    <div class="coolauxv-sub-label">已生成 Base64，可复制或保存为 .auv</div>
+                    <textarea id="coolauxv-chat-queue-export-text" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" spellcheck="false"></textarea>
+                    <div style="font-size:11px; color:#888;">可在“批量导入后台会话”中恢复。</div>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
+                    <button type="button" id="coolauxv-chat-queue-export-copy" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1 1 40%;">复制 Base64</button>
+                    <button type="button" id="coolauxv-chat-queue-export-save" class="coolauxv-action-btn" style="flex:1 1 40%;">保存 .auv</button>
+                </div>
+            `;
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => {
+                overlay.style.opacity = "1";
+                box.style.transform = "scale(1)";
+            });
+
+            const closeModal = () => {
+                document.removeEventListener("keydown", onEsc);
+                overlay.style.opacity = "0";
+                box.style.transform = "scale(0.96)";
+                setTimeout(() => {
+                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                }, 200);
+            };
+            const onEsc = (e) => {
+                if (e.key === "Escape") closeModal();
+            };
+            document.addEventListener("keydown", onEsc);
+
+            const inputEl = box.querySelector("#coolauxv-chat-queue-export-text");
+            const copyBtn = box.querySelector("#coolauxv-chat-queue-export-copy");
+            const saveBtn = box.querySelector("#coolauxv-chat-queue-export-save");
+            const closeBtn = box.querySelector("#coolauxv-chat-queue-export-close");
+            if (inputEl) {
+                inputEl.value = base64Text || "";
+                setTimeout(() => {
+                    inputEl.focus();
+                    inputEl.select();
+                }, 0);
+            }
+            if (copyBtn) {
+                copyBtn.addEventListener("click", async () => {
+                    const text = inputEl ? String(inputEl.value || "").trim() : "";
+                    if (!text) {
+                        alert("没有可复制的内容。");
+                        return;
+                    }
+                    const copied = await copyTextToClipboard(text);
+                    if (copied) {
+                        alert("批量会话 Base64 已复制到剪贴板。");
+                    } else {
+                        alert("复制失败，请手动复制文本框内容。");
+                    }
+                });
+            }
+            if (saveBtn) {
+                saveBtn.addEventListener("click", () => {
+                    const text = inputEl ? String(inputEl.value || "").trim() : "";
+                    if (!text) {
+                        alert("没有可保存的内容。");
+                        return;
+                    }
+                    const saved = downloadChatHistoryFile(text);
+                    if (saved) {
+                        alert("批量会话已保存为 .auv 文件。");
+                    } else {
+                        alert("保存失败，请稍后重试。");
+                    }
+                });
+            }
+            if (closeBtn) closeBtn.addEventListener("click", closeModal);
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeModal();
+            });
+        };
+
+        const parseChatQueueImportItems = (base64Input) => {
+            const raw = String(base64Input || "").trim();
+            if (!raw) return [];
+            let parsed = null;
+            try {
+                parsed = JSON.parse(decodeBase64(raw.replace(/\s+/g, "")));
+            } catch (e) {
+                parsed = null;
+            }
+
+            if (Array.isArray(parsed)) {
+                const normalizedArray = normalizeChatQueueList(parsed);
+                if (normalizedArray.length) return normalizedArray;
+            } else if (parsed && typeof parsed === "object") {
+                if (parsed.type === CHAT_QUEUE_SHARE_TYPE && Array.isArray(parsed.items)) {
+                    return normalizeChatQueueList(parsed.items);
+                }
+                if (parsed.payload) {
+                    const singleItem = normalizeChatQueueItem(parsed);
+                    if (singleItem) return [singleItem];
+                }
+            }
+
+            const fallbackHistory = parseChatHistoryImportPayload(raw);
+            if (!fallbackHistory) return [];
+            const historyPayload = normalizeChatHistoryPayload({
+                type: CHAT_HISTORY_SHARE_TYPE,
+                version: CHAT_HISTORY_SHARE_VERSION,
+                exportedAt: new Date().toISOString(),
+                chatProvider: fallbackHistory.providerId || "",
+                chatSessionId: fallbackHistory.sessionId || "",
+                chatSystemPrompt: fallbackHistory.systemPrompt || "",
+                chatAssistantLabel: fallbackHistory.assistantLabel || "",
+                chatHistoryRecords: fallbackHistory.records || []
+            });
+            if (!historyPayload) return [];
+            const queueItem = normalizeChatQueueItem({
+                id: historyPayload.chatSessionId || `queue-${generateRequestId()}`,
+                updatedAt: new Date().toISOString(),
+                title: formatChatQueueTitle(historyPayload),
+                payload: historyPayload
+            });
+            return queueItem ? [queueItem] : [];
+        };
+
+        const importChatQueueItems = (items) => {
+            const normalizedItems = normalizeChatQueueList(items);
+            if (!normalizedItems.length) return 0;
+            syncChatQueueFromPersistentStore();
+            chatBackgroundQueue = normalizeChatQueueList(normalizedItems.concat(chatBackgroundQueue)).slice(0, CHAT_QUEUE_MAX_SIZE);
+            persistChatQueueToGlobalStore();
+            return normalizedItems.length;
+        };
+
+        const openChatQueueImportModal = (onImported) => {
+            const existingOverlay = document.getElementById("coolauxv-chat-queue-import-overlay");
+            if (existingOverlay && existingOverlay.parentNode) {
+                existingOverlay.parentNode.removeChild(existingOverlay);
+            }
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-chat-queue-import-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0, 0, 0, 0.5)",
+                zIndex: "2147483661",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backdropFilter: "blur(4px)",
+                opacity: "0",
+                transition: "opacity 0.2s"
+            });
+
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff",
+                width: "520px",
+                maxWidth: "92%",
+                maxHeight: "88vh",
+                display: "flex",
+                flexDirection: "column",
+                padding: "18px",
+                borderRadius: "12px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+                transform: "scale(0.96)",
+                transition: "transform 0.2s",
+                overflow: "hidden"
+            });
+
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+                    <div style="font-size:18px; font-weight:800; color:#a516e8;">⬆️ 批量导入后台会话</div>
+                    <button type="button" id="coolauxv-chat-queue-import-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:8px; flex:1;">
+                    <div class="coolauxv-sub-label">粘贴批量 Base64 文本，或选择 .auv 文件</div>
+                    <textarea id="coolauxv-chat-queue-import-text" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="粘贴导入内容..." spellcheck="false"></textarea>
+                    <div style="font-size:11px; color:#888;">支持批量会话导出内容，也兼容单条聊天记录 Base64。</div>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                    <button type="button" id="coolauxv-chat-queue-import-file" class="coolauxv-action-btn" style="flex:1;">选择 .auv</button>
+                    <button type="button" id="coolauxv-chat-queue-import-submit" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">导入到后台队列</button>
+                </div>
+            `;
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => {
+                overlay.style.opacity = "1";
+                box.style.transform = "scale(1)";
+            });
+
+            const closeModal = () => {
+                document.removeEventListener("keydown", onEsc);
+                overlay.style.opacity = "0";
+                box.style.transform = "scale(0.96)";
+                setTimeout(() => {
+                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                }, 200);
+            };
+            const onEsc = (e) => {
+                if (e.key === "Escape") closeModal();
+            };
+            document.addEventListener("keydown", onEsc);
+
+            const inputEl = box.querySelector("#coolauxv-chat-queue-import-text");
+            const fileBtn = box.querySelector("#coolauxv-chat-queue-import-file");
+            const submitBtn = box.querySelector("#coolauxv-chat-queue-import-submit");
+            const closeBtn = box.querySelector("#coolauxv-chat-queue-import-close");
+            if (inputEl) setTimeout(() => inputEl.focus(), 0);
+
+            if (fileBtn) {
+                fileBtn.addEventListener("click", () => {
+                    const fileInput = document.createElement("input");
+                    fileInput.type = "file";
+                    fileInput.accept = ".auv,text/plain";
+                    fileInput.addEventListener("change", async () => {
+                        const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+                        if (!file) return;
+                        try {
+                            const text = await file.text();
+                            if (inputEl) {
+                                inputEl.value = text;
+                                inputEl.focus();
+                            }
+                        } catch (e) {
+                            alert("读取 .auv 文件失败，请重试。");
+                        }
+                    }, { once: true });
+                    fileInput.click();
+                });
+            }
+            if (submitBtn) {
+                submitBtn.addEventListener("click", () => {
+                    const text = inputEl ? String(inputEl.value || "").trim() : "";
+                    if (!text) {
+                        alert("请先粘贴 Base64 文本或选择 .auv 文件。");
+                        return;
+                    }
+                    const parsedItems = parseChatQueueImportItems(text);
+                    if (!parsedItems.length) {
+                        alert("导入内容无效，无法识别后台会话。");
+                        return;
+                    }
+                    const importedCount = importChatQueueItems(parsedItems);
+                    if (!importedCount) {
+                        alert("导入失败，请稍后重试。");
+                        return;
+                    }
+                    if (typeof onImported === "function") onImported(importedCount);
+                    closeModal();
+                });
+            }
+            if (closeBtn) closeBtn.addEventListener("click", closeModal);
             overlay.addEventListener("click", (e) => {
                 if (e.target === overlay) closeModal();
             });
@@ -4478,8 +5014,9 @@
             const box = document.createElement("div");
             Object.assign(box.style, {
                 background: "#fff",
-                width: "420px",
+                width: "680px",
                 maxWidth: "90%",
+                maxHeight: "88vh",
                 display: "flex",
                 flexDirection: "column",
                 padding: "18px",
@@ -4495,14 +5032,25 @@
                     <div style="font-size:18px; font-weight:800; color:#a516e8;">💬 聊天记录管理</div>
                     <button type="button" id="coolauxv-chat-history-action-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
                 </div>
-                <div style="font-size:12px; color:#666; margin-bottom:12px;">请选择要执行的操作</div>
-                <div style="display:flex; gap:10px;">
-                    <button type="button" id="coolauxv-chat-history-action-export" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">导出聊天记录</button>
+                <div style="font-size:12px; color:#666; margin-bottom:12px;">可导入导出聊天记录，也可以管理后台队列里的历史会话。</div>
+                <div style="display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
+                    <button type="button" id="coolauxv-chat-history-action-export" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">导出当前聊天记录</button>
                     <button type="button" id="coolauxv-chat-history-action-import" class="coolauxv-action-btn" style="flex:1;">导入聊天记录</button>
+                    <button type="button" id="coolauxv-chat-history-action-batch-toggle" class="coolauxv-action-btn" style="flex:0.6;">🧩 批量</button>
                 </div>
-                <div style="margin-top:10px;">
-                    <button type="button" id="coolauxv-chat-history-action-cancel" class="coolauxv-action-btn" style="width:100%;">取消</button>
+                <div id="coolauxv-chat-history-batch-actions" style="display:none; gap:8px; margin-bottom:10px; flex-wrap:wrap; align-items:center;">
+                    <button type="button" id="coolauxv-chat-history-batch-select-all" class="coolauxv-action-btn" style="flex:0.6;">全选</button>
+                    <button type="button" id="coolauxv-chat-history-batch-clear" class="coolauxv-action-btn" style="flex:0.6;">清空选择</button>
+                    <button type="button" id="coolauxv-chat-history-batch-export" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">批量导出</button>
+                    <button type="button" id="coolauxv-chat-history-batch-import" class="coolauxv-action-btn" style="flex:1;">批量导入</button>
+                    <button type="button" id="coolauxv-chat-history-batch-delete" class="coolauxv-action-btn" style="flex:1; background:#fee2e2; color:#b91c1c; border-color:#fecaca;">批量删除</button>
+                    <span id="coolauxv-chat-history-batch-count" style="font-size:11px; color:#666; margin-left:auto;">已选 0 项</span>
                 </div>
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px;">
+                    <div style="font-size:13px; font-weight:700; color:#374151;">后台对话队列</div>
+                    <div style="font-size:11px; color:#888;">仅连续对话开启时生效</div>
+                </div>
+                <div id="coolauxv-chat-history-queue-list" class="coolauxv-scroll-box" style="display:flex; flex-direction:column; gap:8px; overflow-y:auto; max-height:52vh; padding-right:2px;"></div>
             `;
 
             overlay.appendChild(box);
@@ -4528,7 +5076,76 @@
             const exportBtn = box.querySelector("#coolauxv-chat-history-action-export");
             const importBtn = box.querySelector("#coolauxv-chat-history-action-import");
             const closeBtn = box.querySelector("#coolauxv-chat-history-action-close");
-            const cancelBtn = box.querySelector("#coolauxv-chat-history-action-cancel");
+            const batchToggleBtn = box.querySelector("#coolauxv-chat-history-action-batch-toggle");
+            const batchActions = box.querySelector("#coolauxv-chat-history-batch-actions");
+            const batchSelectAllBtn = box.querySelector("#coolauxv-chat-history-batch-select-all");
+            const batchClearBtn = box.querySelector("#coolauxv-chat-history-batch-clear");
+            const batchExportBtn = box.querySelector("#coolauxv-chat-history-batch-export");
+            const batchImportBtn = box.querySelector("#coolauxv-chat-history-batch-import");
+            const batchDeleteBtn = box.querySelector("#coolauxv-chat-history-batch-delete");
+            const batchCountEl = box.querySelector("#coolauxv-chat-history-batch-count");
+            const queueListEl = box.querySelector("#coolauxv-chat-history-queue-list");
+            let isBatchMode = false;
+            const selectedQueueIds = new Set();
+
+            const setBatchMode = (enabled) => {
+                isBatchMode = !!enabled;
+                if (!isBatchMode) {
+                    selectedQueueIds.clear();
+                }
+                if (batchActions) {
+                    batchActions.style.display = isBatchMode ? "flex" : "none";
+                }
+                if (batchToggleBtn) {
+                    batchToggleBtn.textContent = isBatchMode ? "完成批量" : "🧩 批量";
+                }
+                renderQueueItems();
+            };
+
+            const updateBatchCount = () => {
+                if (!batchCountEl) return;
+                batchCountEl.textContent = `已选 ${selectedQueueIds.size} 项`;
+            };
+
+            const renderQueueItems = () => {
+                if (!queueListEl) return;
+                if (!isChatHistoryQueueFeatureEnabled()) {
+                    selectedQueueIds.clear();
+                    updateBatchCount();
+                    queueListEl.innerHTML = `<div style="font-size:12px; color:#999; text-align:center; padding:16px 8px; border:1px dashed #d1d5db; border-radius:8px;">请先在设置中开启“连续对话”，后台队列功能才会生效。</div>`;
+                    return;
+                }
+                const items = getChatQueueItems();
+                const existingIds = new Set(items.map((item) => item.id));
+                Array.from(selectedQueueIds).forEach((id) => {
+                    if (!existingIds.has(id)) selectedQueueIds.delete(id);
+                });
+                updateBatchCount();
+                if (!items.length) {
+                    queueListEl.innerHTML = `<div style="font-size:12px; color:#999; text-align:center; padding:16px 8px; border:1px dashed #d1d5db; border-radius:8px;">后台队列为空。关闭聊天框后会自动收纳到这里。</div>`;
+                    return;
+                }
+                queueListEl.innerHTML = items.map((item) => `
+                    <div data-queue-id="${item.id}" style="border:1px solid #e5e7eb; border-radius:10px; padding:10px 12px; background:#f9fafb; ${selectedQueueIds.has(item.id) ? "box-shadow: inset 0 0 0 1px #93c5fd;" : ""}">
+                        <div style="display:flex; gap:8px; align-items:flex-start;">
+                            ${isBatchMode ? `
+                                <label style="display:flex; align-items:center; margin-top:2px; cursor:pointer;">
+                                    <input type="checkbox" data-queue-select="${item.id}" ${selectedQueueIds.has(item.id) ? "checked" : ""}>
+                                </label>
+                            ` : ""}
+                            <div style="flex:1; min-width:0;">
+                                <div style="font-size:13px; font-weight:700; color:#111827; margin-bottom:4px; word-break:break-word;">${escapeQueueText(item.title || "连续对话")}</div>
+                                <div style="font-size:11px; color:#6b7280; margin-bottom:8px; word-break:break-word;">${escapeQueueText(buildQueueMetaText(item))}</div>
+                            </div>
+                        </div>
+                        <div style="display:${isBatchMode ? "none" : "flex"}; gap:8px; flex-wrap:wrap;">
+                            <button type="button" class="coolauxv-action-btn coolauxv-btn-primary" data-queue-action="restore" data-queue-id="${item.id}" style="flex:1 1 28%;">恢复</button>
+                            <button type="button" class="coolauxv-action-btn" data-queue-action="export" data-queue-id="${item.id}" style="flex:1 1 28%;">导出</button>
+                            <button type="button" class="coolauxv-action-btn" data-queue-action="delete" data-queue-id="${item.id}" style="flex:1 1 28%; background:#fee2e2; color:#b91c1c; border-color:#fecaca;">删除</button>
+                        </div>
+                    </div>
+                `).join("");
+            };
 
             if (exportBtn) {
                 exportBtn.addEventListener("click", () => {
@@ -4542,11 +5159,133 @@
                     openChatHistoryImportModal();
                 });
             }
+            if (batchToggleBtn) {
+                batchToggleBtn.addEventListener("click", () => {
+                    setBatchMode(!isBatchMode);
+                });
+            }
+            if (batchSelectAllBtn) {
+                batchSelectAllBtn.addEventListener("click", () => {
+                    if (!isChatHistoryQueueFeatureEnabled()) {
+                        alert("请先开启连续对话。");
+                        return;
+                    }
+                    selectedQueueIds.clear();
+                    getChatQueueItems().forEach((item) => selectedQueueIds.add(item.id));
+                    renderQueueItems();
+                });
+            }
+            if (batchClearBtn) {
+                batchClearBtn.addEventListener("click", () => {
+                    selectedQueueIds.clear();
+                    renderQueueItems();
+                });
+            }
+            if (batchExportBtn) {
+                batchExportBtn.addEventListener("click", () => {
+                    const selectedItems = getChatQueueItems().filter((item) => selectedQueueIds.has(item.id));
+                    if (!selectedItems.length) {
+                        alert("请先选择要导出的后台会话。");
+                        return;
+                    }
+                    exportChatQueueItems(selectedItems);
+                });
+            }
+            if (batchImportBtn) {
+                batchImportBtn.addEventListener("click", () => {
+                    if (!isChatHistoryQueueFeatureEnabled()) {
+                        alert("请先开启连续对话。");
+                        return;
+                    }
+                    openChatQueueImportModal((count) => {
+                        selectedQueueIds.clear();
+                        renderQueueItems();
+                        alert(`已导入 ${count} 条后台会话。`);
+                    });
+                });
+            }
+            if (batchDeleteBtn) {
+                batchDeleteBtn.addEventListener("click", () => {
+                    if (!selectedQueueIds.size) {
+                        alert("请先选择要删除的后台会话。");
+                        return;
+                    }
+                    if (!confirm(`确定删除选中的 ${selectedQueueIds.size} 条后台会话吗？`)) return;
+                    syncChatQueueFromPersistentStore();
+                    chatBackgroundQueue = chatBackgroundQueue.filter((item) => !selectedQueueIds.has(item.id));
+                    persistChatQueueToGlobalStore();
+                    selectedQueueIds.clear();
+                    renderQueueItems();
+                });
+            }
+            if (queueListEl) {
+                queueListEl.addEventListener("change", (e) => {
+                    if (!isBatchMode) return;
+                    const selectInput = e.target.closest("[data-queue-select]");
+                    if (!selectInput) return;
+                    const queueId = selectInput.getAttribute("data-queue-select");
+                    if (!queueId) return;
+                    if (selectInput.checked) selectedQueueIds.add(queueId);
+                    else selectedQueueIds.delete(queueId);
+                    renderQueueItems();
+                });
+                queueListEl.addEventListener("click", (e) => {
+                    if (!isChatHistoryQueueFeatureEnabled()) {
+                        alert("请先开启连续对话。");
+                        return;
+                    }
+                    if (isBatchMode) return;
+                    const actionBtn = e.target.closest("[data-queue-action]");
+                    if (!actionBtn) return;
+                    const action = actionBtn.getAttribute("data-queue-action");
+                    const queueId = actionBtn.getAttribute("data-queue-id");
+                    if (!queueId) return;
+                    const item = getChatQueueItemById(queueId);
+                    if (!item) {
+                        alert("该会话不存在，列表将刷新。");
+                        renderQueueItems();
+                        return;
+                    }
+                    if (action === "restore") {
+                        const parsedPayload = toChatHistoryImportPayload(item.payload);
+                        if (!parsedPayload) {
+                            alert("会话数据无效，无法恢复。");
+                            return;
+                        }
+                        closeModal();
+                        const applied = applyImportedChatHistory(parsedPayload);
+                        if (applied) {
+                            alert("已恢复该会话。");
+                        }
+                        return;
+                    }
+                    if (action === "export") {
+                        closeModal();
+                        exportChatHistoryPayload(item.payload);
+                        return;
+                    }
+                    if (action === "delete") {
+                        const ok = removeChatQueueItemById(queueId);
+                        if (!ok) {
+                            alert("删除失败，请重试。");
+                        }
+                        renderQueueItems();
+                    }
+                });
+            }
             if (closeBtn) closeBtn.addEventListener("click", closeModal);
-            if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
             overlay.addEventListener("click", (e) => {
                 if (e.target === overlay) closeModal();
             });
+            renderQueueItems();
+        };
+
+        queueCurrentChatSessionToBackground = () => {
+            if (!isChatHistoryQueueFeatureEnabled()) return false;
+            const payload = buildChatHistoryExportPayload();
+            if (!payload) return false;
+            const queued = enqueueChatPayloadToQueue(payload, { createdAt: new Date().toISOString() });
+            return !!queued;
         };
 
         openChatHistoryManager = async () => {
@@ -4748,6 +5487,7 @@
                 coolauxv_log_level: DEFAULT_LOG_LEVEL,
                 coolauxv_use_new_screenshot: DEFAULT_USE_NEW_SCREENSHOT,
                 coolauxv_enable_continuous_chat: DEFAULT_ENABLE_CONTINUOUS_CHAT,
+                coolauxv_chat_history_persist: DEFAULT_CHAT_HISTORY_PERSIST,
                 coolauxv_chat_enter_send: DEFAULT_CHAT_ENTER_SEND,
                 coolauxv_enable_basic_anim: DEFAULT_ENABLE_BASIC_ANIM,
                 coolauxv_enable_minimize_anim: DEFAULT_ENABLE_MINIMIZE_ANIM,
@@ -6859,6 +7599,7 @@
             }
             if (inputPromptVision) inputPromptVision.value = GM_getValue("coolauxv_prompt_vision", "");
             if (inputContinuousChat) inputContinuousChat.checked = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+            if (inputChatHistoryPersist) inputChatHistoryPersist.checked = GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST);
             if (inputChatEnterSend) inputChatEnterSend.checked = GM_getValue("coolauxv_chat_enter_send", DEFAULT_CHAT_ENTER_SEND);
 
             syncAllClearButtons();
@@ -6906,6 +7647,10 @@
                 inputContinuousChat.checked = enabled;
                 toggleContinuousChat();
             }
+            if (inputChatHistoryPersist) {
+                const persistEnabled = GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST);
+                inputChatHistoryPersist.checked = persistEnabled;
+            }
             if (inputChatEnterSend) {
                 inputChatEnterSend.checked = GM_getValue("coolauxv_chat_enter_send", DEFAULT_CHAT_ENTER_SEND);
             }
@@ -6913,6 +7658,7 @@
 
         const buildExportSnapshot = (includePrivacy) => {
             const snapshot = snapshotConfig();
+            delete snapshot[CHAT_QUEUE_STORAGE_KEY];
             const rawTemplates = snapshot[PROVIDER_TEMPLATE_STORAGE_KEY];
             if (!Array.isArray(rawTemplates)) {
                 return snapshot;
@@ -7119,6 +7865,31 @@
                 const enabled = e.target.checked;
                 GM_setValue("coolauxv_enable_continuous_chat", enabled);
                 toggleContinuousChat();
+            });
+        }
+        if (inputChatHistoryPersist) {
+            inputChatHistoryPersist.addEventListener("change", (e) => {
+                const enabled = e.target.checked;
+                GM_setValue("coolauxv_chat_history_persist", enabled);
+                if (enabled) {
+                    chatQueuePersistBootstrapped = false;
+                    syncChatQueueFromPersistentStore();
+                    persistChatQueueToGlobalStore();
+                }
+            });
+        }
+        if (btnClearChatPersist) {
+            btnClearChatPersist.addEventListener("click", () => {
+                if (!confirm("确定要清空所有持久化聊天记录吗？")) return;
+                if (!confirm("该操作不可恢复。是否继续？")) return;
+                GM_deleteValue(CHAT_QUEUE_STORAGE_KEY);
+                if (GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST)) {
+                    chatBackgroundQueue = [];
+                    chatQueuePersistBootstrapped = true;
+                } else {
+                    chatQueuePersistBootstrapped = false;
+                }
+                alert("已清空持久化聊天记录。");
             });
         }
         if (inputChatEnterSend) {
@@ -7393,6 +8164,7 @@
 
         const btnShotMain = popup.querySelector("#coolauxv-btn-screenshot");
         const btnShotChat = popup.querySelector("#coolauxv-btn-screenshot-chat");
+        const btnChatImageFile = popup.querySelector("#coolauxv-btn-chat-image-file");
         const btnPreview = popup.querySelector("#coolauxv-btn-preview");
         const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
         const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
@@ -7404,6 +8176,7 @@
 
         setDisplay(btnShotMain, supportsVision);
         setDisplay(btnShotChat, supportsVision);
+        setDisplay(btnChatImageFile, supportsVision);
 
         if (!supportsVision) {
             capturedImageBase64 = "";
@@ -7427,6 +8200,52 @@
             updateChatCollapseUI();
         }
     }
+
+    const readImageFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+        if (!file) {
+            reject(new Error("empty file"));
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+        reader.onerror = () => reject(new Error("read image failed"));
+        reader.readAsDataURL(file);
+    });
+
+    const applyChatImageCapture = (dataUrl) => {
+        const imageUrl = String(dataUrl || "").trim();
+        if (!imageUrl) return false;
+        const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), getProviderTemplates());
+        if (!isProviderSupportsVision(providerId)) {
+            alert("当前提供商不支持识图，无法插入图片。");
+            return false;
+        }
+        chatCapturedImageBase64 = imageUrl;
+        const btnChatPreview = popup ? popup.querySelector("#coolauxv-btn-preview-chat") : null;
+        const btnChatClear = popup ? popup.querySelector("#coolauxv-btn-clear-chat-shot") : null;
+        setAnimatedVisibility(btnChatPreview, true);
+        setAnimatedVisibility(btnChatClear, true);
+        return true;
+    };
+
+    const loadChatImageFromFile = async (file) => {
+        if (!file) return false;
+        if (!String(file.type || "").startsWith("image/")) {
+            alert("仅支持图片文件。");
+            return false;
+        }
+        try {
+            const dataUrl = await readImageFileAsDataUrl(file);
+            if (!dataUrl) {
+                alert("读取图片失败，请重试。");
+                return false;
+            }
+            return applyChatImageCapture(dataUrl);
+        } catch (e) {
+            alert("读取图片失败，请重试。");
+            return false;
+        }
+    };
 
     const applyTemplateString = (value, context) => {
         return String(value).replace(/{{\s*([a-zA-Z0-9_.-]+)\s*}}/g, (match, key) => {
@@ -8506,6 +9325,7 @@
         isTopSectionCollapsed = false;
         updateTopSectionCollapseUI();
 
+        queueCurrentChatSessionToBackground();
         clearConversationState();
 
         // --- 悬浮球常驻逻辑 ---
@@ -8562,6 +9382,8 @@
         const btnChatSend = popup.querySelector("#coolauxv-btn-chat-send");
         const btnChatStop = popup.querySelector("#coolauxv-btn-chat-stop");
         const btnChatEditCancel = popup.querySelector("#coolauxv-btn-chat-edit-cancel");
+        const btnChatImageFile = popup.querySelector("#coolauxv-btn-chat-image-file");
+        const inputChatImageFile = popup.querySelector("#coolauxv-input-chat-image-file");
         const chatInput = popup.querySelector("#coolauxv-chat-input");
 
         if (minBtn) minBtn.onclick = minimizeWindow;
@@ -8609,6 +9431,17 @@
         if (btnChatEditCancel) btnChatEditCancel.onclick = () => {
             exitChatEditMode();
         };
+        if (btnChatImageFile && inputChatImageFile) {
+            btnChatImageFile.onclick = () => {
+                inputChatImageFile.value = "";
+                inputChatImageFile.click();
+            };
+            inputChatImageFile.addEventListener("change", async () => {
+                const file = inputChatImageFile.files && inputChatImageFile.files[0] ? inputChatImageFile.files[0] : null;
+                if (!file) return;
+                await loadChatImageFromFile(file);
+            });
+        }
         if (chatInput) {
             chatInput.addEventListener("keydown", (e) => {
                 if (e.key !== "Enter") return;
@@ -8618,6 +9451,17 @@
                 if (!enterSendEnabled) return;
                 e.preventDefault();
                 doChatSend();
+            });
+            chatInput.addEventListener("paste", async (e) => {
+                const clipboard = e.clipboardData;
+                if (!clipboard || !clipboard.items) return;
+                const items = Array.from(clipboard.items);
+                const imageItem = items.find((item) => item && item.kind === "file" && String(item.type || "").startsWith("image/"));
+                if (!imageItem) return;
+                const file = imageItem.getAsFile();
+                if (!file) return;
+                e.preventDefault();
+                await loadChatImageFromFile(file);
             });
         }
         updateChatEditModeUI();
