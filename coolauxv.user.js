@@ -170,6 +170,8 @@
     const PROVIDER_TEMPLATE_STORAGE_KEY = "coolauxv_provider_templates_v1";
     const PROVIDER_SECRET_STORAGE_KEY = "coolauxv_provider_custom_secrets_v1";
     const PROVIDER_SHARE_VERSION = 1;
+    const CHAT_HISTORY_SHARE_VERSION = 1;
+    const CHAT_HISTORY_SHARE_TYPE = "coolauxv-chat-history";
     const DEFAULT_KEY_LINK_TITLE = "获取 KEY";
     const getScriptVersion = () => {
         const gmInfo = (typeof GM_info !== "undefined" && GM_info) ? GM_info : (globalThis && globalThis.GM_info);
@@ -1691,6 +1693,12 @@
         font-size: 12px;
         color: #666;
     }
+    #coolauxv-chat-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+    #coolauxv-chat-history-btn,
     #coolauxv-chat-toggle {
         cursor: pointer;
         font-size: 12px;
@@ -1700,6 +1708,7 @@
         padding: 2px 6px;
         border-radius: 4px;
     }
+    #coolauxv-chat-history-btn:hover,
     #coolauxv-chat-toggle:hover {
         background: #e0efff;
     }
@@ -2933,6 +2942,7 @@
     let openaiStreamHasFull = false;
     let chatPartsStreamHasDelta = false;
     let chatPartsStreamHasFull = false;
+    let ignoreIncomingOutput = false;
 
     let historyRecords = [];
     let chatMessages = [];
@@ -2953,6 +2963,7 @@
     let isTopSectionCollapsed = false;
     let updateChatCollapseUI = () => { };
     let updateTopSectionCollapseUI = () => { };
+    let openChatHistoryManager = async () => { };
 
     let lastRenderedText = "";
     let lastRenderedReasoning = "";
@@ -3211,6 +3222,8 @@
                       <!-- 解读按钮：紫色风格 -->
                       <button id="coolauxv-btn-explain" class="coolauxv-action-btn coolauxv-btn-purple" style="flex:1;">解读</button>
 
+                      <button id="coolauxv-btn-stop" class="coolauxv-action-btn" style="display:none; flex:0.6; background:#fee2e2; color:#b91c1c; border-color:#fecaca;" title="打断当前输出">⏹ 停止</button>
+
                       <!-- 识屏按钮：蓝色风格 -->
                       <button id="coolauxv-btn-screenshot" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
 
@@ -3237,7 +3250,10 @@
                   <div id="coolauxv-chat-bar">
                       <div id="coolauxv-chat-header">
                           <span>连续对话</span>
-                          <button type="button" id="coolauxv-chat-toggle">收起</button>
+                          <div id="coolauxv-chat-header-actions">
+                              <button type="button" id="coolauxv-chat-history-btn" title="导入或导出聊天记录">聊天记录</button>
+                              <button type="button" id="coolauxv-chat-toggle">收起</button>
+                          </div>
                       </div>
                       <div id="coolauxv-chat-body">
                           <textarea id="coolauxv-chat-input" placeholder="连续对话输入..."></textarea>
@@ -3245,6 +3261,7 @@
                               <button id="coolauxv-btn-screenshot-chat" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
                               <button id="coolauxv-btn-preview-chat" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="预览截图">🔍</button>
                               <button id="coolauxv-btn-clear-chat-shot" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="清除识屏">🗑 清除</button>
+                              <button id="coolauxv-btn-chat-stop" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.5; background:#fee2e2; color:#b91c1c; border-color:#fecaca;" title="打断当前输出">⏹ 停止</button>
                               <button id="coolauxv-btn-chat-edit-cancel" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.5;" title="退出编辑模式">取消编辑</button>
                               <button id="coolauxv-btn-chat-send" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">发送</button>
                           </div>
@@ -3769,6 +3786,771 @@
                 return new TextDecoder().decode(bytes);
             }
             return decodeURIComponent(escape(raw));
+        };
+
+        const normalizeChatHistoryRecord = (record) => {
+            if (!record || typeof record !== "object") return null;
+            const role = String(record.role || "").trim();
+            if (!["system", "user", "assistant"].includes(role)) return null;
+            return {
+                role: role,
+                text: typeof record.text === "string" ? record.text : "",
+                imageBase64: typeof record.imageBase64 === "string" ? record.imageBase64 : "",
+                displayText: typeof record.displayText === "string" ? record.displayText : "",
+                turnId: typeof record.turnId === "string" ? record.turnId : "",
+                assistantLabel: typeof record.assistantLabel === "string" ? record.assistantLabel : ""
+            };
+        };
+
+        const buildChatHistoryExportPayload = () => {
+            const records = chatHistoryRecords
+                .map((record) => normalizeChatHistoryRecord(record))
+                .filter(Boolean);
+            if (!records.length) return null;
+            return {
+                type: CHAT_HISTORY_SHARE_TYPE,
+                version: CHAT_HISTORY_SHARE_VERSION,
+                exportedAt: new Date().toISOString(),
+                chatProvider: chatProvider || "",
+                chatSessionId: chatSessionId || "",
+                chatSystemPrompt: chatSystemPrompt || "",
+                chatAssistantLabel: chatAssistantLabel || "",
+                chatHistoryRecords: records
+            };
+        };
+
+        const parseChatHistoryImportPayload = (base64Input) => {
+            const raw = String(base64Input || "").trim();
+            if (!raw) return null;
+            let parsed = null;
+            try {
+                const normalizedBase64 = raw.replace(/\s+/g, "");
+                parsed = JSON.parse(decodeBase64(normalizedBase64));
+            } catch (e) {
+                return null;
+            }
+            let recordsSource = null;
+            let providerId = "";
+            let sessionId = "";
+            let systemPrompt = "";
+            let assistantLabel = "";
+
+            if (Array.isArray(parsed)) {
+                recordsSource = parsed;
+            } else if (parsed && typeof parsed === "object") {
+                if (parsed.type && parsed.type !== CHAT_HISTORY_SHARE_TYPE) return null;
+                if (Array.isArray(parsed.chatHistoryRecords)) recordsSource = parsed.chatHistoryRecords;
+                else if (Array.isArray(parsed.records)) recordsSource = parsed.records;
+                providerId = typeof parsed.chatProvider === "string"
+                    ? parsed.chatProvider
+                    : (typeof parsed.providerId === "string" ? parsed.providerId : "");
+                sessionId = typeof parsed.chatSessionId === "string"
+                    ? parsed.chatSessionId
+                    : (typeof parsed.sessionId === "string" ? parsed.sessionId : "");
+                systemPrompt = typeof parsed.chatSystemPrompt === "string"
+                    ? parsed.chatSystemPrompt
+                    : (typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "");
+                assistantLabel = typeof parsed.chatAssistantLabel === "string"
+                    ? parsed.chatAssistantLabel
+                    : (typeof parsed.assistantLabel === "string" ? parsed.assistantLabel : "");
+            }
+
+            if (!Array.isArray(recordsSource)) return null;
+            const records = recordsSource
+                .map((record) => normalizeChatHistoryRecord(record))
+                .filter(Boolean);
+            return {
+                records: records,
+                providerId: providerId,
+                sessionId: sessionId,
+                systemPrompt: systemPrompt,
+                assistantLabel: assistantLabel
+            };
+        };
+
+        const applyImportedChatHistory = (parsedPayload) => {
+            if (!parsedPayload || !Array.isArray(parsedPayload.records)) return false;
+            if (isRendering) {
+                alert("当前正在生成内容，请稍候再导入。");
+                return false;
+            }
+            if (abortController) abortController.abort();
+            if (gmRequest && gmRequest.abort) gmRequest.abort();
+
+            clearChatSessionState();
+
+            const chatInputEl = popup.querySelector("#coolauxv-chat-input");
+            if (chatInputEl) chatInputEl.value = "";
+            chatCapturedImageBase64 = "";
+            const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
+            const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
+            setAnimatedVisibility(btnChatPreview, false);
+            setAnimatedVisibility(btnChatClear, false);
+
+            chatHistoryRecords = parsedPayload.records;
+            const importedHasRecords = chatHistoryRecords.length > 0;
+            const templates = getProviderTemplates();
+            const config = getActiveConfig();
+            const resolvedProvider = resolveProviderId(parsedPayload.providerId || config.provider || DEFAULT_PROVIDER, templates);
+            chatProvider = importedHasRecords ? resolvedProvider : "";
+            chatSessionStarted = importedHasRecords;
+            chatSessionId = importedHasRecords
+                ? (parsedPayload.sessionId || generateRequestId())
+                : "";
+            chatSystemPrompt = parsedPayload.systemPrompt || "";
+            chatAssistantLabel = parsedPayload.assistantLabel || formatChatModelLabel(resolvedProvider, config.modelVision);
+
+            if (importedHasRecords) {
+                rebuildChatDisplayFromHistory(chatAssistantLabel);
+                chatMessages = buildChatMessagesForProvider(chatProvider);
+                streamMode = "chat";
+            } else {
+                chatMessages = [];
+                chatDisplayBuffer = "";
+                streamTextBuffer = "";
+                streamMode = "single";
+            }
+
+            streamReasoningBuffer = "";
+            lastRenderedReasoning = "";
+            hasReasoning = false;
+            lastRenderedText = "";
+
+            const resultDiv = popup.querySelector("#coolauxv-result");
+            if (!streamTextBuffer && resultDiv) resultDiv.innerHTML = "";
+            const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
+            if (reasoningDiv) reasoningDiv.innerHTML = "";
+
+            renderContent();
+            if (importedHasRecords && chatBar && chatBar.style.display !== "none") {
+                isChatCollapsed = false;
+                updateChatCollapseUI();
+            }
+            return true;
+        };
+
+        const copyTextToClipboard = async (text) => {
+            const value = String(text || "");
+            if (!value) return false;
+            try {
+                if (typeof GM_setClipboard !== "undefined") {
+                    GM_setClipboard(value, "text");
+                    return true;
+                }
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(value);
+                    return true;
+                }
+            } catch (e) { }
+            return false;
+        };
+
+        const downloadChatHistoryFile = (base64Text) => {
+            const value = String(base64Text || "").trim();
+            if (!value) return false;
+            try {
+                const stamp = new Date().toISOString().replace(/[:]/g, "-").replace(/\..+$/, "").replace("T", "_");
+                const blob = new Blob([value], { type: "text/plain;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `coolauxv-chat-history-${stamp}.auv`;
+                document.body.appendChild(link);
+                link.click();
+                setTimeout(() => {
+                    URL.revokeObjectURL(url);
+                    if (link.parentNode) link.parentNode.removeChild(link);
+                }, 0);
+                return true;
+            } catch (e) {
+                return false;
+            }
+        };
+
+        const exportChatHistoryToPdf = (payload, options = {}) => {
+            if (!payload || !Array.isArray(payload.chatHistoryRecords) || !payload.chatHistoryRecords.length) {
+                alert("当前没有可导出的连续对话记录。");
+                return false;
+            }
+
+            const escapeHtml = (value) => String(value ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;");
+            const escapeAttr = (value) => String(value ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/"/g, "&quot;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;");
+            const toHtmlText = (value) => escapeHtml(value).replace(/\n/g, "<br>");
+            const roleLabelMap = {
+                system: "系统",
+                user: "用户",
+                assistant: "助手"
+            };
+            const requestedRoles = Array.isArray(options.roles) ? options.roles : ["user", "assistant"];
+            const roleSet = new Set(requestedRoles.filter((role) => ["system", "user", "assistant"].includes(role)));
+            if (!roleSet.size) {
+                alert("请至少选择一个导出角色。");
+                return false;
+            }
+            const filteredRecords = payload.chatHistoryRecords.filter((record) => roleSet.has(record.role));
+            if (!filteredRecords.length) {
+                alert("当前没有符合所选角色的聊天记录。");
+                return false;
+            }
+
+            const recordsHtml = filteredRecords.map((record, idx) => {
+                const role = ["system", "user", "assistant"].includes(record.role) ? record.role : "assistant";
+                const roleLabel = roleLabelMap[role] || role;
+                const text = (record.displayText || record.text || "").trim();
+                const imageHtml = record.imageBase64
+                    ? `<div class="chat-image-wrap"><img src="${escapeAttr(record.imageBase64)}" alt="chat-image-${idx + 1}"></div>`
+                    : "";
+                const metaParts = [];
+                if (record.turnId) metaParts.push(`轮次ID: ${escapeHtml(record.turnId)}`);
+                if (record.assistantLabel) metaParts.push(`模型: ${escapeHtml(record.assistantLabel)}`);
+                const metaHtml = metaParts.length
+                    ? `<div class="chat-meta">${metaParts.join(" · ")}</div>`
+                    : "";
+                return `
+                    <section class="chat-item role-${role}">
+                        <div class="chat-role">${roleLabel}</div>
+                        ${metaHtml}
+                        <div class="chat-text">${toHtmlText(text || "(空消息)")}</div>
+                        ${imageHtml}
+                    </section>
+                `;
+            }).join("");
+
+            const exportedAt = payload.exportedAt
+                ? new Date(payload.exportedAt).toLocaleString()
+                : new Date().toLocaleString();
+            const providerText = escapeHtml(payload.chatProvider || "未记录");
+            const sessionText = escapeHtml(payload.chatSessionId || "未记录");
+
+            const html = `
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>CoolAuxv 聊天记录</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: #111827;
+      line-height: 1.6;
+      background: #ffffff;
+    }
+    .page-header {
+      border-bottom: 2px solid #e5e7eb;
+      padding-bottom: 8px;
+      margin-bottom: 14px;
+    }
+    .page-title {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 800;
+      color: #7c3aed;
+    }
+    .page-subtitle {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+    .chat-item {
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      page-break-inside: avoid;
+      break-inside: avoid;
+    }
+    .role-system { background: #f9fafb; }
+    .role-user { background: #eff6ff; }
+    .role-assistant { background: #f8fafc; }
+    .chat-role {
+      font-size: 12px;
+      font-weight: 700;
+      color: #4b5563;
+      margin-bottom: 4px;
+    }
+    .chat-meta {
+      font-size: 11px;
+      color: #6b7280;
+      margin-bottom: 6px;
+    }
+    .chat-text {
+      font-size: 13px;
+      color: #111827;
+      white-space: normal;
+      word-break: break-word;
+    }
+    .chat-image-wrap {
+      margin-top: 8px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 4px;
+      background: #ffffff;
+    }
+    .chat-image-wrap img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <h1 class="page-title">CoolAuxv 聊天记录导出</h1>
+    <div class="page-subtitle">导出时间：${escapeHtml(exportedAt)}</div>
+    <div class="page-subtitle">Provider：${providerText} ｜ Session：${sessionText}</div>
+  </header>
+  <main>
+    ${recordsHtml}
+  </main>
+</body>
+</html>
+            `;
+
+            const printWindow = window.open("", "_blank");
+            if (!printWindow) {
+                alert("无法打开打印窗口，请检查浏览器弹窗拦截设置。");
+                return false;
+            }
+            try {
+                printWindow.document.open();
+                printWindow.document.write(html);
+                printWindow.document.close();
+                printWindow.focus();
+                setTimeout(() => {
+                    try {
+                        printWindow.print();
+                    } catch (e) {
+                        alert("打印窗口启动失败，请重试。");
+                    }
+                }, 300);
+                return true;
+            } catch (e) {
+                alert("导出 PDF 失败，请稍后重试。");
+                return false;
+            }
+        };
+
+        const importChatHistoryFromText = (base64Text) => {
+            const parsed = parseChatHistoryImportPayload(base64Text);
+            if (!parsed) {
+                alert("聊天记录格式无效，请确认 Base64 内容正确。");
+                return false;
+            }
+            const applied = applyImportedChatHistory(parsed);
+            if (applied) {
+                alert("聊天记录已导入。");
+                return true;
+            }
+            return false;
+        };
+
+        const openChatHistoryExportModal = (base64Text, payload) => {
+            const existingOverlay = document.getElementById("coolauxv-chat-history-export-overlay");
+            if (existingOverlay && existingOverlay.parentNode) {
+                existingOverlay.parentNode.removeChild(existingOverlay);
+            }
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-chat-history-export-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0, 0, 0, 0.5)",
+                zIndex: "2147483661",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backdropFilter: "blur(4px)",
+                opacity: "0",
+                transition: "opacity 0.2s"
+            });
+
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff",
+                width: "560px",
+                maxWidth: "92%",
+                maxHeight: "88vh",
+                display: "flex",
+                flexDirection: "column",
+                padding: "18px",
+                borderRadius: "12px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+                transform: "scale(0.96)",
+                transition: "transform 0.2s",
+                overflow: "hidden"
+            });
+
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+                    <div style="font-size:18px; font-weight:800; color:#a516e8;">⬇️ 导出聊天记录</div>
+                    <button type="button" id="coolauxv-chat-history-export-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:8px; flex:1;">
+                    <div class="coolauxv-sub-label">已生成 Base64，可复制或保存为 .auv</div>
+                    <textarea id="coolauxv-chat-history-export-text" class="coolauxv-setting-input coolauxv-resizable-input" rows="5" spellcheck="false"></textarea>
+                    <div style="font-size:11px; color:#888;">为避免浏览器输入框长度限制，建议使用此处文本框操作。</div>
+                    <div class="coolauxv-sub-label">导出角色（PDF）</div>
+                    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
+                        <label class="coolauxv-toggle-label" style="background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-chat-history-export-role-user" checked> user
+                        </label>
+                        <label class="coolauxv-toggle-label" style="background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-chat-history-export-role-assistant" checked> assistant
+                        </label>
+                        <label class="coolauxv-toggle-label" style="background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-chat-history-export-role-system"> system
+                        </label>
+                    </div>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
+                    <button type="button" id="coolauxv-chat-history-export-copy" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1 1 40%;">复制 Base64</button>
+                    <button type="button" id="coolauxv-chat-history-export-save" class="coolauxv-action-btn" style="flex:1 1 40%;">保存 .auv</button>
+                    <button type="button" id="coolauxv-chat-history-export-pdf" class="coolauxv-action-btn" style="flex:1 1 40%;">导出 PDF</button>
+                    <button type="button" id="coolauxv-chat-history-export-cancel" class="coolauxv-action-btn" style="flex:1 1 40%;">关闭</button>
+                </div>
+            `;
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => {
+                overlay.style.opacity = "1";
+                box.style.transform = "scale(1)";
+            });
+
+            const closeModal = () => {
+                document.removeEventListener("keydown", onEsc);
+                overlay.style.opacity = "0";
+                box.style.transform = "scale(0.96)";
+                setTimeout(() => {
+                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                }, 200);
+            };
+            const onEsc = (e) => {
+                if (e.key === "Escape") closeModal();
+            };
+            document.addEventListener("keydown", onEsc);
+
+            const inputEl = box.querySelector("#coolauxv-chat-history-export-text");
+            const copyBtn = box.querySelector("#coolauxv-chat-history-export-copy");
+            const saveBtn = box.querySelector("#coolauxv-chat-history-export-save");
+            const pdfBtn = box.querySelector("#coolauxv-chat-history-export-pdf");
+            const roleUserEl = box.querySelector("#coolauxv-chat-history-export-role-user");
+            const roleAssistantEl = box.querySelector("#coolauxv-chat-history-export-role-assistant");
+            const roleSystemEl = box.querySelector("#coolauxv-chat-history-export-role-system");
+            const closeBtn = box.querySelector("#coolauxv-chat-history-export-close");
+            const cancelBtn = box.querySelector("#coolauxv-chat-history-export-cancel");
+            if (inputEl) {
+                inputEl.value = base64Text || "";
+                setTimeout(() => {
+                    inputEl.focus();
+                    inputEl.select();
+                }, 0);
+            }
+
+            if (copyBtn) {
+                copyBtn.addEventListener("click", async () => {
+                    const text = inputEl ? String(inputEl.value || "").trim() : "";
+                    if (!text) {
+                        alert("没有可复制的内容。");
+                        return;
+                    }
+                    const copied = await copyTextToClipboard(text);
+                    if (copied) {
+                        alert("聊天记录 Base64 已复制到剪贴板。");
+                    } else {
+                        alert("复制失败，请手动复制文本框内容。");
+                        if (inputEl) {
+                            inputEl.focus();
+                            inputEl.select();
+                        }
+                    }
+                });
+            }
+            if (saveBtn) {
+                saveBtn.addEventListener("click", () => {
+                    const text = inputEl ? String(inputEl.value || "").trim() : "";
+                    if (!text) {
+                        alert("没有可保存的内容。");
+                        return;
+                    }
+                    const saved = downloadChatHistoryFile(text);
+                    if (saved) {
+                        alert("聊天记录已保存为 .auv 文件。");
+                    } else {
+                        alert("保存失败，请稍后重试。");
+                    }
+                });
+            }
+            if (pdfBtn) {
+                pdfBtn.addEventListener("click", () => {
+                    const selectedRoles = [];
+                    if (roleUserEl && roleUserEl.checked) selectedRoles.push("user");
+                    if (roleAssistantEl && roleAssistantEl.checked) selectedRoles.push("assistant");
+                    if (roleSystemEl && roleSystemEl.checked) selectedRoles.push("system");
+                    if (!selectedRoles.length) {
+                        alert("请至少选择一个导出角色。");
+                        return;
+                    }
+                    alert("即将弹出打印窗口，请在打印对话框中选择“另存为 PDF”。");
+                    exportChatHistoryToPdf(payload, { roles: selectedRoles });
+                });
+            }
+            if (closeBtn) closeBtn.addEventListener("click", closeModal);
+            if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeModal();
+            });
+        };
+
+        const exportChatHistory = () => {
+            const payload = buildChatHistoryExportPayload();
+            if (!payload) {
+                alert("当前没有可导出的连续对话记录。");
+                return;
+            }
+            const base64 = encodeBase64(JSON.stringify(payload));
+            if (!base64) {
+                alert("聊天记录导出失败，请稍后重试。");
+                return;
+            }
+            openChatHistoryExportModal(base64, payload);
+        };
+
+        const openChatHistoryImportModal = () => {
+            const existingOverlay = document.getElementById("coolauxv-chat-history-import-overlay");
+            if (existingOverlay && existingOverlay.parentNode) {
+                existingOverlay.parentNode.removeChild(existingOverlay);
+            }
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-chat-history-import-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0, 0, 0, 0.5)",
+                zIndex: "2147483661",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backdropFilter: "blur(4px)",
+                opacity: "0",
+                transition: "opacity 0.2s"
+            });
+
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff",
+                width: "560px",
+                maxWidth: "92%",
+                maxHeight: "88vh",
+                display: "flex",
+                flexDirection: "column",
+                padding: "18px",
+                borderRadius: "12px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+                transform: "scale(0.96)",
+                transition: "transform 0.2s",
+                overflow: "hidden"
+            });
+
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+                    <div style="font-size:18px; font-weight:800; color:#a516e8;">⬆️ 导入聊天记录</div>
+                    <button type="button" id="coolauxv-chat-history-import-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:8px; flex:1;">
+                    <div class="coolauxv-sub-label">粘贴 Base64 文本，或选择 .auv 文件</div>
+                    <textarea id="coolauxv-chat-history-import-text" class="coolauxv-setting-input coolauxv-resizable-input" rows="5" placeholder="粘贴导入内容..." spellcheck="false"></textarea>
+                    <div style="font-size:11px; color:#888;">支持聊天记录导出的 Base64 文本。</div>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                    <button type="button" id="coolauxv-chat-history-import-file" class="coolauxv-action-btn" style="flex:1;">选择 .auv</button>
+                    <button type="button" id="coolauxv-chat-history-import-submit" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">导入</button>
+                    <button type="button" id="coolauxv-chat-history-import-cancel" class="coolauxv-action-btn" style="flex:1;">取消</button>
+                </div>
+            `;
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => {
+                overlay.style.opacity = "1";
+                box.style.transform = "scale(1)";
+            });
+
+            const closeModal = () => {
+                document.removeEventListener("keydown", onEsc);
+                overlay.style.opacity = "0";
+                box.style.transform = "scale(0.96)";
+                setTimeout(() => {
+                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                }, 200);
+            };
+            const onEsc = (e) => {
+                if (e.key === "Escape") closeModal();
+            };
+            document.addEventListener("keydown", onEsc);
+
+            const inputEl = box.querySelector("#coolauxv-chat-history-import-text");
+            const fileBtn = box.querySelector("#coolauxv-chat-history-import-file");
+            const submitBtn = box.querySelector("#coolauxv-chat-history-import-submit");
+            const closeBtn = box.querySelector("#coolauxv-chat-history-import-close");
+            const cancelBtn = box.querySelector("#coolauxv-chat-history-import-cancel");
+            if (inputEl) setTimeout(() => inputEl.focus(), 0);
+
+            if (fileBtn) {
+                fileBtn.addEventListener("click", () => {
+                    const fileInput = document.createElement("input");
+                    fileInput.type = "file";
+                    fileInput.accept = ".auv,text/plain";
+                    fileInput.addEventListener("change", async () => {
+                        const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+                        if (!file) return;
+                        try {
+                            const text = await file.text();
+                            if (inputEl) {
+                                inputEl.value = text;
+                                inputEl.focus();
+                            }
+                        } catch (e) {
+                            alert("读取 .auv 文件失败，请重试。");
+                        }
+                    }, { once: true });
+                    fileInput.click();
+                });
+            }
+            if (submitBtn) {
+                submitBtn.addEventListener("click", () => {
+                    const text = inputEl ? String(inputEl.value || "").trim() : "";
+                    if (!text) {
+                        alert("请先粘贴 Base64 文本或选择 .auv 文件。");
+                        return;
+                    }
+                    const imported = importChatHistoryFromText(text);
+                    if (imported) closeModal();
+                });
+            }
+            if (closeBtn) closeBtn.addEventListener("click", closeModal);
+            if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeModal();
+            });
+        };
+
+        const openChatHistoryActionModal = () => {
+            const existingOverlay = document.getElementById("coolauxv-chat-history-action-overlay");
+            if (existingOverlay && existingOverlay.parentNode) {
+                existingOverlay.parentNode.removeChild(existingOverlay);
+            }
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-chat-history-action-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0, 0, 0, 0.5)",
+                zIndex: "2147483661",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backdropFilter: "blur(4px)",
+                opacity: "0",
+                transition: "opacity 0.2s"
+            });
+
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff",
+                width: "420px",
+                maxWidth: "90%",
+                display: "flex",
+                flexDirection: "column",
+                padding: "18px",
+                borderRadius: "12px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+                transform: "scale(0.96)",
+                transition: "transform 0.2s",
+                overflow: "hidden"
+            });
+
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+                    <div style="font-size:18px; font-weight:800; color:#a516e8;">💬 聊天记录管理</div>
+                    <button type="button" id="coolauxv-chat-history-action-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
+                </div>
+                <div style="font-size:12px; color:#666; margin-bottom:12px;">请选择要执行的操作</div>
+                <div style="display:flex; gap:10px;">
+                    <button type="button" id="coolauxv-chat-history-action-export" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">导出聊天记录</button>
+                    <button type="button" id="coolauxv-chat-history-action-import" class="coolauxv-action-btn" style="flex:1;">导入聊天记录</button>
+                </div>
+                <div style="margin-top:10px;">
+                    <button type="button" id="coolauxv-chat-history-action-cancel" class="coolauxv-action-btn" style="width:100%;">取消</button>
+                </div>
+            `;
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => {
+                overlay.style.opacity = "1";
+                box.style.transform = "scale(1)";
+            });
+
+            const closeModal = () => {
+                document.removeEventListener("keydown", onEsc);
+                overlay.style.opacity = "0";
+                box.style.transform = "scale(0.96)";
+                setTimeout(() => {
+                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                }, 200);
+            };
+            const onEsc = (e) => {
+                if (e.key === "Escape") closeModal();
+            };
+            document.addEventListener("keydown", onEsc);
+
+            const exportBtn = box.querySelector("#coolauxv-chat-history-action-export");
+            const importBtn = box.querySelector("#coolauxv-chat-history-action-import");
+            const closeBtn = box.querySelector("#coolauxv-chat-history-action-close");
+            const cancelBtn = box.querySelector("#coolauxv-chat-history-action-cancel");
+
+            if (exportBtn) {
+                exportBtn.addEventListener("click", () => {
+                    closeModal();
+                    exportChatHistory();
+                });
+            }
+            if (importBtn) {
+                importBtn.addEventListener("click", () => {
+                    closeModal();
+                    openChatHistoryImportModal();
+                });
+            }
+            if (closeBtn) closeBtn.addEventListener("click", closeModal);
+            if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeModal();
+            });
+        };
+
+        openChatHistoryManager = async () => {
+            openChatHistoryActionModal();
         };
 
         const isPlainObject = (value) => value && typeof value === "object" && !Array.isArray(value);
@@ -4485,7 +5267,7 @@
 
                     <div id="coolauxv-provider-form-base64" style="display:none;">
                         <div class="coolauxv-sub-label">Base64 文本</div>
-                        <textarea id="coolauxv-provider-form-base64-input" class="coolauxv-setting-input coolauxv-resizable-input" rows="8" placeholder="粘贴分享/导出的 Base64..."></textarea>
+                        <textarea id="coolauxv-provider-form-base64-input" class="coolauxv-setting-input coolauxv-resizable-input" rows="5" placeholder="粘贴分享/导出的 Base64..."></textarea>
                         <div style="font-size:11px; color:#888; margin-top:6px;">支持分享导出的文本、数组或单个提供商对象。</div>
                     </div>
                 </div>
@@ -6238,7 +7020,7 @@
                 </div>
                 <div style="display:flex; flex-direction:column; gap:8px; flex:1;">
                     <div class="coolauxv-sub-label">请粘贴配置 Base64 文本</div>
-                    <textarea id="coolauxv-config-import-input" class="coolauxv-setting-input coolauxv-resizable-input" rows="8" placeholder="粘贴导出的 Base64..."></textarea>
+                    <textarea id="coolauxv-config-import-input" class="coolauxv-setting-input coolauxv-resizable-input" rows="5" placeholder="粘贴导出的 Base64..."></textarea>
                     <div style="font-size:11px; color:#888;">支持完整配置导出文本。</div>
                 </div>
                 <div style="display:flex; gap:10px; margin-top:12px;">
@@ -7490,6 +8272,7 @@
     function startRenderLoop() {
         if (isRendering) return;
         isRendering = true;
+        updateInterruptButtons();
         const loop = () => {
             if (!isRendering) return;
             if (streamTextBuffer !== lastRenderedText || streamReasoningBuffer !== lastRenderedReasoning) {
@@ -7502,7 +8285,11 @@
         requestAnimationFrame(loop);
     }
 
-    function stopRenderLoop() { isRendering = false; renderContent(); }
+    function stopRenderLoop() {
+        isRendering = false;
+        updateInterruptButtons();
+        renderContent();
+    }
 
     function setAnimatedVisibility(element, visible) {
         if (!element) return;
@@ -7525,6 +8312,15 @@
             element.removeEventListener("transitionend", onEnd);
         };
         element.addEventListener("transitionend", onEnd);
+    }
+
+    function updateInterruptButtons() {
+        if (!popup) return;
+        const btnStop = popup.querySelector("#coolauxv-btn-stop");
+        const btnChatStop = popup.querySelector("#coolauxv-btn-chat-stop");
+        const visible = !!isRendering;
+        if (btnStop) btnStop.style.display = visible ? "flex" : "none";
+        if (btnChatStop) setAnimatedVisibility(btnChatStop, visible);
     }
 
     function setCollapseAnimatedVisibility(section, visible) {
@@ -7761,7 +8557,10 @@
         const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle");
         const btnTrans = popup.querySelector("#coolauxv-btn-trans");
         const btnExplain = popup.querySelector("#coolauxv-btn-explain");
+        const btnStop = popup.querySelector("#coolauxv-btn-stop");
+        const btnChatHistory = popup.querySelector("#coolauxv-chat-history-btn");
         const btnChatSend = popup.querySelector("#coolauxv-btn-chat-send");
+        const btnChatStop = popup.querySelector("#coolauxv-btn-chat-stop");
         const btnChatEditCancel = popup.querySelector("#coolauxv-btn-chat-edit-cancel");
         const chatInput = popup.querySelector("#coolauxv-chat-input");
 
@@ -7803,7 +8602,10 @@
 
         if (btnTrans) btnTrans.onclick = () => doAction("translate");
         if (btnExplain) btnExplain.onclick = () => doAction("explain");
+        if (btnStop) btnStop.onclick = () => interruptActiveOutput();
+        if (btnChatHistory) btnChatHistory.onclick = () => openChatHistoryManager();
         if (btnChatSend) btnChatSend.onclick = () => doChatSend();
+        if (btnChatStop) btnChatStop.onclick = () => interruptActiveOutput();
         if (btnChatEditCancel) btnChatEditCancel.onclick = () => {
             exitChatEditMode();
         };
@@ -7819,6 +8621,7 @@
             });
         }
         updateChatEditModeUI();
+        updateInterruptButtons();
 
         const resultDiv = popup.querySelector("#coolauxv-result");
         const previewOverlay = document.querySelector("#coolauxv-img-preview-overlay");
@@ -8377,6 +9180,10 @@
                 buffer = lines.pop();
                 for (const line of lines) processStreamLine(providerTemplate, line);
             }
+            if (ignoreIncomingOutput) {
+                stopRenderLoop();
+                return;
+            }
             if (buffer && buffer.trim()) {
                 processStreamLine(providerTemplate, buffer);
             }
@@ -8434,6 +9241,10 @@
                         } catch (e) {
                             Logger.error("Stream Read Error:", e);
                         } finally {
+                            if (ignoreIncomingOutput) {
+                                stopRenderLoop();
+                                return;
+                            }
                             if (gmStreamBuffer && gmStreamBuffer.trim()) {
                                 processStreamLine(providerTemplate, gmStreamBuffer);
                             }
@@ -8448,6 +9259,7 @@
             },
 
             onload: (res) => {
+                if (ignoreIncomingOutput) return;
                 if (!isStreamModeActive) {
                     stopRenderLoop();
 
@@ -8500,6 +9312,7 @@
             },
 
             onerror: (e) => {
+                if (ignoreIncomingOutput) return;
                 stopRenderLoop();
                 if (streamTextBuffer.length > 0 || streamReasoningBuffer.length > 0) {
                     resultDiv.innerHTML += "<br><br><span style='color:red; font-size:12px; font-weight:bold;'>[网络连接中断，但已保留现有内容]</span>";
@@ -8510,6 +9323,7 @@
             },
 
             ontimeout: () => {
+                if (ignoreIncomingOutput) return;
                 stopRenderLoop();
                 if (streamTextBuffer.length > 0) {
                     resultDiv.innerHTML += "<br><span style='color:red'>[请求超时，已保留内容]</span>";
@@ -8543,11 +9357,25 @@
         openaiStreamHasFull = false;
         chatPartsStreamHasDelta = false;
         chatPartsStreamHasFull = false;
+        ignoreIncomingOutput = false;
     }
 
     function abortActiveStream() {
         if (abortController) abortController.abort();
         if (gmRequest && gmRequest.abort) gmRequest.abort();
+    }
+
+    function interruptActiveOutput() {
+        if (!isRendering) return;
+        ignoreIncomingOutput = true;
+        streamErrorHandled = true;
+        const actionToken = activeActionToken;
+        activeActionToken += 1;
+        abortActiveStream();
+        if (streamMode === "chat") {
+            finalizeChatResponse(actionToken);
+        }
+        stopRenderLoop();
     }
 
     function escapeHTML(str) {
@@ -9019,6 +9847,7 @@
     }
 
     function processStreamLine(template, line) {
+        if (ignoreIncomingOutput) return;
         logAiRawStreamLine(template, line);
         const parser = template && template.stream ? template.stream.parser : "";
         if (parser === "openai-responses") {
@@ -9628,8 +10457,14 @@
                             }
                         } catch (e) {
                             Logger.error("Stream Error", e);
-                            resultDiv.innerHTML += `<br><span style='color:red'>流读取错误: ${e.message}</span>`;
+                            if (!ignoreIncomingOutput) {
+                                resultDiv.innerHTML += `<br><span style='color:red'>流读取错误: ${e.message}</span>`;
+                            }
                         } finally {
+                            if (ignoreIncomingOutput) {
+                                stopRenderLoop();
+                                return;
+                            }
                             if (buffer && buffer.trim()) {
                                 processStreamLine(providerTemplate, buffer);
                             }
@@ -9643,6 +10478,7 @@
                 }
             },
             onload: (res) => {
+                if (ignoreIncomingOutput) return;
                 logAiRawResponse(provider, config.modelVision, mode, res.responseText);
                 if (res.status === 429) {
                     stopRenderLoop();
@@ -9678,6 +10514,7 @@
                 }
             },
             onerror: (e) => {
+                if (ignoreIncomingOutput) return;
                 stopRenderLoop();
                 resultDiv.innerHTML = "<span style='color:red'>网络连接失败</span>";
                 autoExpandChatIfEnabled(actionToken);
@@ -9834,6 +10671,10 @@
                     buffer = lines.pop();
                     for (const line of lines) processStreamLine(providerTemplate, line);
                 }
+                if (ignoreIncomingOutput) {
+                    stopRenderLoop();
+                    return;
+                }
                 if (buffer && buffer.trim()) {
                     processStreamLine(providerTemplate, buffer);
                 }
@@ -9886,6 +10727,10 @@
                             Logger.error("Chat Stream Error", e);
                             streamErr = `流读取错误: ${e.message}`;
                         } finally {
+                            if (ignoreIncomingOutput) {
+                                stopRenderLoop();
+                                return;
+                            }
                             if (buffer && buffer.trim()) {
                                 processStreamLine(providerTemplate, buffer);
                             }
@@ -9897,6 +10742,7 @@
                 }
             },
             onload: (res) => {
+                if (ignoreIncomingOutput) return;
                 if (chatStreamActive) {
                     if (streamErrorHandled) return;
                     if (res.status === 200) return;
@@ -9935,12 +10781,14 @@
                 }
             },
             onerror: () => {
+                if (ignoreIncomingOutput) return;
                 if (streamErrorHandled) return;
                 stopRenderLoop();
                 finalizeChatResponse(actionToken);
                 appendChatError("网络连接失败");
             },
             ontimeout: () => {
+                if (ignoreIncomingOutput) return;
                 if (streamErrorHandled) return;
                 stopRenderLoop();
                 finalizeChatResponse(actionToken);
