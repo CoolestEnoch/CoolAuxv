@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.0
+// @version      v15.1
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -95,7 +95,19 @@
     const DEFAULT_PROMPT_TRANSLATE = "你是一个翻译引擎。将用户输入直接翻译成中文。如果输入是中文则译为英文。不要输出任何多余的解释。";
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
-        const LATEST_CHANGELOG = `
+    const LATEST_CHANGELOG = `
+        v15.1 更新日志
+        ## 🎨 聊天记录管理动画优化
+        *   聊天记录批量管理模式进入/退出时，工具栏和按钮增加展开/收起动画
+        *   批量操作左侧的拼图图标也有对应的显示/隐藏动画
+        *   动画效果与AI提供商设置的动画保持一致
+        ## 🏷️ 对话重命名功能
+        *   后台对话队列中的对话现在支持重命名
+        *   提供更灵活的对话组织和查找方式
+        ## 🔄 界面交互改进
+        *   批量管理模式交互更流畅，视觉反馈更明确
+        *   增强聊天记录管理界面的整体一致性
+        ---
         v15.0 更新日志
         ## 💾 聊天记录管理系统
         *   新增聊天记录管理功能，支持导出为Base64/PDF、从Base64导入
@@ -1104,6 +1116,100 @@
         transform: translateY(0);
         pointer-events: auto;
         margin-bottom: 8px;
+    }
+    .coolauxv-batch-toggle-btn {
+        display: inline-flex !important;
+        align-items: center;
+        gap: 4px;
+        overflow: hidden;
+        white-space: nowrap;
+    }
+    .coolauxv-batch-toggle-icon {
+        display: inline-block;
+        max-width: 1.2em;
+        opacity: 1;
+        transform: translateX(0);
+        overflow: hidden;
+        transition: max-width 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .coolauxv-batch-toggle-btn.coolauxv-batch-toggle-active .coolauxv-batch-toggle-icon {
+        max-width: 0;
+        opacity: 0;
+        transform: translateX(-8px);
+    }
+    .coolauxv-batch-toggle-btn.coolauxv-no-anim .coolauxv-batch-toggle-icon {
+        transition: none !important;
+    }
+
+    .coolauxv-chat-history-batch-actions {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 0;
+        flex-wrap: wrap;
+        align-items: center;
+        max-height: 0;
+        opacity: 0;
+        transform: translateY(-4px);
+        overflow: hidden;
+        pointer-events: none;
+        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .coolauxv-chat-history-batch-mode .coolauxv-chat-history-batch-actions {
+        max-height: 64px;
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+        margin-bottom: 10px;
+    }
+    .coolauxv-chat-history-queue-item-select {
+        display: flex;
+        align-items: center;
+        margin-top: 2px;
+        max-width: 0;
+        opacity: 0;
+        transform: translateX(-8px);
+        overflow: hidden;
+        pointer-events: none;
+        transition: max-width 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .coolauxv-chat-history-batch-mode .coolauxv-chat-history-queue-item-select {
+        max-width: 32px;
+        opacity: 1;
+        transform: translateX(0);
+        pointer-events: auto;
+    }
+    .coolauxv-chat-history-queue-item-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        max-height: 56px;
+        opacity: 1;
+        transform: translateY(0);
+        overflow: hidden;
+        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .coolauxv-chat-history-batch-mode .coolauxv-chat-history-queue-item-actions {
+        max-height: 0;
+        opacity: 0;
+        transform: translateY(-4px);
+        pointer-events: none;
+    }
+    .coolauxv-chat-history-queue-item.coolauxv-selected {
+        box-shadow: inset 0 0 0 1px #93c5fd;
+    }
+    .coolauxv-chat-history-no-anim .coolauxv-chat-history-batch-actions,
+    .coolauxv-chat-history-no-anim .coolauxv-chat-history-queue-item-select,
+    .coolauxv-chat-history-no-anim .coolauxv-chat-history-queue-item-actions,
+    .coolauxv-chat-history-no-anim .coolauxv-batch-toggle-icon {
+        transition: none !important;
     }
 
     .coolauxv-provider-title {
@@ -2982,7 +3088,10 @@
                         默认大模型提供商
                         <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
                             <span id="coolauxv-btn-provider-add" class="coolauxv-link-btn" style="cursor:pointer; user-select:none;">➕ 添加</span>
-                            <span id="coolauxv-btn-provider-batch" class="coolauxv-link-btn" style="cursor:pointer; user-select:none;">🧩 批量</span>
+                            <span id="coolauxv-btn-provider-batch" class="coolauxv-link-btn coolauxv-batch-toggle-btn" style="cursor:pointer; user-select:none;">
+                                <span class="coolauxv-batch-toggle-icon" aria-hidden="true">🧩</span>
+                                <span data-batch-toggle-text>批量</span>
+                            </span>
                             <span id="coolauxv-btn-toggle-provider-all" class="coolauxv-link-btn" style="cursor:pointer; user-select:none;">展开全部</span>
                         </div>
                     </label>
@@ -3703,6 +3812,28 @@
             const changed = chatBackgroundQueue.length !== before;
             if (changed) persistChatQueueToGlobalStore();
             return changed;
+        };
+
+        const renameChatQueueItemById = (itemId, nextTitle) => {
+            if (!itemId) return null;
+            syncChatQueueFromPersistentStore();
+            const index = chatBackgroundQueue.findIndex((item) => item.id === itemId);
+            if (index < 0) return null;
+            const current = chatBackgroundQueue[index];
+            const normalizedTitle = String(nextTitle || "").trim();
+            const fallbackTitle = formatChatQueueTitle(current.payload);
+            const resolvedTitle = normalizedTitle || fallbackTitle;
+            if (resolvedTitle === String(current.title || "").trim()) {
+                return current;
+            }
+            const renamed = normalizeChatQueueItem(Object.assign({}, current, {
+                title: resolvedTitle,
+                updatedAt: new Date().toISOString()
+            }));
+            if (!renamed) return null;
+            chatBackgroundQueue[index] = renamed;
+            persistChatQueueToGlobalStore();
+            return renamed;
         };
 
         const parseChatHistoryImportPayload = (base64Input) => {
@@ -4779,9 +4910,12 @@
                 <div style="display:flex; gap:10px; margin-bottom:12px; flex-wrap:wrap;">
                     <button type="button" id="coolauxv-chat-history-action-export" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">导出当前聊天记录</button>
                     <button type="button" id="coolauxv-chat-history-action-import" class="coolauxv-action-btn" style="flex:1;">导入聊天记录</button>
-                    <button type="button" id="coolauxv-chat-history-action-batch-toggle" class="coolauxv-action-btn" style="flex:0.6;">🧩 批量</button>
+                    <button type="button" id="coolauxv-chat-history-action-batch-toggle" class="coolauxv-action-btn coolauxv-batch-toggle-btn" style="flex:0.6;">
+                        <span class="coolauxv-batch-toggle-icon" aria-hidden="true">🧩</span>
+                        <span data-batch-toggle-text>批量</span>
+                    </button>
                 </div>
-                <div id="coolauxv-chat-history-batch-actions" style="display:none; gap:8px; margin-bottom:10px; flex-wrap:wrap; align-items:center;">
+                <div id="coolauxv-chat-history-batch-actions" class="coolauxv-chat-history-batch-actions">
                     <button type="button" id="coolauxv-chat-history-batch-select-all" class="coolauxv-action-btn" style="flex:0.6;">全选</button>
                     <button type="button" id="coolauxv-chat-history-batch-clear" class="coolauxv-action-btn" style="flex:0.6;">清空选择</button>
                     <button type="button" id="coolauxv-chat-history-batch-export" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">批量导出</button>
@@ -4820,7 +4954,6 @@
             const importBtn = box.querySelector("#coolauxv-chat-history-action-import");
             const closeBtn = box.querySelector("#coolauxv-chat-history-action-close");
             const batchToggleBtn = box.querySelector("#coolauxv-chat-history-action-batch-toggle");
-            const batchActions = box.querySelector("#coolauxv-chat-history-batch-actions");
             const batchSelectAllBtn = box.querySelector("#coolauxv-chat-history-batch-select-all");
             const batchClearBtn = box.querySelector("#coolauxv-chat-history-batch-clear");
             const batchExportBtn = box.querySelector("#coolauxv-chat-history-batch-export");
@@ -4831,23 +4964,50 @@
             let isBatchMode = false;
             const selectedQueueIds = new Set();
 
+            const updateBatchCount = () => {
+                if (!batchCountEl) return;
+                batchCountEl.textContent = `已选 ${selectedQueueIds.size} 项`;
+            };
+
+            const updateBatchToggleButtonState = () => {
+                if (!batchToggleBtn) return;
+                const enableAnim = isMinimizeAnimEnabled();
+                batchToggleBtn.classList.toggle("coolauxv-batch-toggle-active", isBatchMode);
+                batchToggleBtn.classList.toggle("coolauxv-no-anim", !enableAnim);
+                const textEl = batchToggleBtn.querySelector("[data-batch-toggle-text]");
+                if (textEl) {
+                    textEl.textContent = isBatchMode ? "完成批量" : "批量";
+                } else {
+                    batchToggleBtn.textContent = isBatchMode ? "完成批量" : "批量";
+                }
+            };
+
+            const syncQueueSelectionUI = () => {
+                if (!queueListEl) return;
+                queueListEl.querySelectorAll("[data-queue-id]").forEach((itemEl) => {
+                    const queueId = itemEl.getAttribute("data-queue-id");
+                    itemEl.classList.toggle("coolauxv-selected", !!queueId && selectedQueueIds.has(queueId));
+                });
+                queueListEl.querySelectorAll("[data-queue-select]").forEach((inputEl) => {
+                    const queueId = inputEl.getAttribute("data-queue-select");
+                    inputEl.checked = !!queueId && selectedQueueIds.has(queueId);
+                });
+            };
+
+            const updateBatchModeClass = () => {
+                box.classList.toggle("coolauxv-chat-history-batch-mode", isBatchMode);
+                box.classList.toggle("coolauxv-chat-history-no-anim", !isMinimizeAnimEnabled());
+                updateBatchToggleButtonState();
+            };
+
             const setBatchMode = (enabled) => {
                 isBatchMode = !!enabled;
                 if (!isBatchMode) {
                     selectedQueueIds.clear();
                 }
-                if (batchActions) {
-                    batchActions.style.display = isBatchMode ? "flex" : "none";
-                }
-                if (batchToggleBtn) {
-                    batchToggleBtn.textContent = isBatchMode ? "完成批量" : "🧩 批量";
-                }
-                renderQueueItems();
-            };
-
-            const updateBatchCount = () => {
-                if (!batchCountEl) return;
-                batchCountEl.textContent = `已选 ${selectedQueueIds.size} 项`;
+                updateBatchCount();
+                syncQueueSelectionUI();
+                updateBatchModeClass();
             };
 
             const renderQueueItems = () => {
@@ -4869,25 +5029,26 @@
                     return;
                 }
                 queueListEl.innerHTML = items.map((item) => `
-                    <div data-queue-id="${item.id}" style="border:1px solid #e5e7eb; border-radius:10px; padding:10px 12px; background:#f9fafb; ${selectedQueueIds.has(item.id) ? "box-shadow: inset 0 0 0 1px #93c5fd;" : ""}">
+                    <div data-queue-id="${item.id}" class="coolauxv-chat-history-queue-item ${selectedQueueIds.has(item.id) ? "coolauxv-selected" : ""}" style="border:1px solid #e5e7eb; border-radius:10px; padding:10px 12px; background:#f9fafb;">
                         <div style="display:flex; gap:8px; align-items:flex-start;">
-                            ${isBatchMode ? `
-                                <label style="display:flex; align-items:center; margin-top:2px; cursor:pointer;">
-                                    <input type="checkbox" data-queue-select="${item.id}" ${selectedQueueIds.has(item.id) ? "checked" : ""}>
-                                </label>
-                            ` : ""}
+                            <label class="coolauxv-chat-history-queue-item-select" style="cursor:pointer;">
+                                <input type="checkbox" data-queue-select="${item.id}" ${selectedQueueIds.has(item.id) ? "checked" : ""}>
+                            </label>
                             <div style="flex:1; min-width:0;">
                                 <div style="font-size:13px; font-weight:700; color:#111827; margin-bottom:4px; word-break:break-word;">${escapeQueueText(item.title || "连续对话")}</div>
                                 <div style="font-size:11px; color:#6b7280; margin-bottom:8px; word-break:break-word;">${escapeQueueText(buildQueueMetaText(item))}</div>
                             </div>
                         </div>
-                        <div style="display:${isBatchMode ? "none" : "flex"}; gap:8px; flex-wrap:wrap;">
-                            <button type="button" class="coolauxv-action-btn coolauxv-btn-primary" data-queue-action="restore" data-queue-id="${item.id}" style="flex:1 1 28%;">恢复</button>
-                            <button type="button" class="coolauxv-action-btn" data-queue-action="export" data-queue-id="${item.id}" style="flex:1 1 28%;">导出</button>
-                            <button type="button" class="coolauxv-action-btn" data-queue-action="delete" data-queue-id="${item.id}" style="flex:1 1 28%; background:#fee2e2; color:#b91c1c; border-color:#fecaca;">删除</button>
+                        <div class="coolauxv-chat-history-queue-item-actions">
+                            <button type="button" class="coolauxv-action-btn coolauxv-btn-primary" data-queue-action="restore" data-queue-id="${item.id}" style="flex:1 1 22%;">恢复</button>
+                            <button type="button" class="coolauxv-action-btn" data-queue-action="rename" data-queue-id="${item.id}" style="flex:1 1 22%;">重命名</button>
+                            <button type="button" class="coolauxv-action-btn" data-queue-action="export" data-queue-id="${item.id}" style="flex:1 1 22%;">导出</button>
+                            <button type="button" class="coolauxv-action-btn" data-queue-action="delete" data-queue-id="${item.id}" style="flex:1 1 22%; background:#fee2e2; color:#b91c1c; border-color:#fecaca;">删除</button>
                         </div>
                     </div>
                 `).join("");
+                syncQueueSelectionUI();
+                updateBatchModeClass();
             };
 
             if (exportBtn) {
@@ -4915,13 +5076,15 @@
                     }
                     selectedQueueIds.clear();
                     getChatQueueItems().forEach((item) => selectedQueueIds.add(item.id));
-                    renderQueueItems();
+                    updateBatchCount();
+                    syncQueueSelectionUI();
                 });
             }
             if (batchClearBtn) {
                 batchClearBtn.addEventListener("click", () => {
                     selectedQueueIds.clear();
-                    renderQueueItems();
+                    updateBatchCount();
+                    syncQueueSelectionUI();
                 });
             }
             if (batchExportBtn) {
@@ -4970,7 +5133,8 @@
                     if (!queueId) return;
                     if (selectInput.checked) selectedQueueIds.add(queueId);
                     else selectedQueueIds.delete(queueId);
-                    renderQueueItems();
+                    updateBatchCount();
+                    syncQueueSelectionUI();
                 });
                 queueListEl.addEventListener("click", (e) => {
                     if (!isChatHistoryQueueFeatureEnabled()) {
@@ -5002,6 +5166,17 @@
                         }
                         return;
                     }
+                    if (action === "rename") {
+                        const currentTitle = String(item.title || formatChatQueueTitle(item.payload) || "连续对话").trim();
+                        const nextTitleRaw = prompt("请输入新的会话名称（留空则自动命名）：", currentTitle);
+                        if (nextTitleRaw === null) return;
+                        const renamed = renameChatQueueItemById(queueId, nextTitleRaw);
+                        if (!renamed) {
+                            alert("重命名失败，请重试。");
+                        }
+                        renderQueueItems();
+                        return;
+                    }
                     if (action === "export") {
                         closeModal();
                         exportChatHistoryPayload(item.payload);
@@ -5020,6 +5195,7 @@
             overlay.addEventListener("click", (e) => {
                 if (e.target === overlay) closeModal();
             });
+            setBatchMode(false);
             renderQueueItems();
         };
 
@@ -5498,6 +5674,17 @@
         const updateBatchModeUI = () => {
             if (settingsRoot) {
                 settingsRoot.classList.toggle("coolauxv-batch-mode", isProviderBatchMode);
+            }
+            if (btnProviderBatch) {
+                const enableAnim = isMinimizeAnimEnabled();
+                btnProviderBatch.classList.toggle("coolauxv-batch-toggle-active", isProviderBatchMode);
+                btnProviderBatch.classList.toggle("coolauxv-no-anim", !enableAnim);
+                const textEl = btnProviderBatch.querySelector("[data-batch-toggle-text]");
+                if (textEl) {
+                    textEl.textContent = isProviderBatchMode ? "完成批量" : "批量";
+                } else {
+                    btnProviderBatch.textContent = isProviderBatchMode ? "完成批量" : "批量";
+                }
             }
             if (!providerSectionsContainer) return;
             providerSectionsContainer.querySelectorAll(".coolauxv-provider-select").forEach((checkbox) => {
