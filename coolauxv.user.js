@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.1
+// @version      v15.2
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -215,6 +215,18 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v15.2 更新日志
+        ## 💬 自动聊天会话创建
+        *   开始连续对话时会自动创建新的聊天会话，无需手动关闭
+        *   改进聊天会话管理流程，更符合用户使用习惯
+        ## 🎨 聊天记录界面增强
+        *   聊天记录管理页面支持流体玻璃特效（受流体玻璃开关控制）
+        *   删除聊天记录时增加收起动画（单独和批量删除都支持）
+        *   删除动画受高级动画开关控制
+        ## 🔄 用户体验优化
+        *   统一聊天记录界面与主界面的视觉风格
+        *   改进聊天历史管理的整体流畅性和一致性
+        ---
         v15.1 更新日志
         ## 🎨 聊天记录管理动画优化
         *   聊天记录批量管理模式进入/退出时，工具栏和按钮增加展开/收起动画
@@ -1429,6 +1441,28 @@
     .coolauxv-chat-history-no-anim .coolauxv-chat-history-queue-item-actions,
     .coolauxv-chat-history-no-anim .coolauxv-batch-toggle-icon {
         transition: none !important;
+    }
+    #coolauxv-chat-history-action-overlay.coolauxv-chat-history-glass-overlay {
+        background: rgba(15, 23, 42, 0.24) !important;
+        backdrop-filter: blur(12px) saturate(125%) !important;
+    }
+    #coolauxv-chat-history-action-overlay .coolauxv-chat-history-glass {
+        background: rgba(255, 255, 255, 0.58) !important;
+        border: 1px solid rgba(255, 255, 255, 0.65);
+        backdrop-filter: blur(18px) saturate(130%);
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.22);
+    }
+    #coolauxv-chat-history-action-overlay .coolauxv-chat-history-glass .coolauxv-chat-history-queue-item {
+        background: rgba(255, 255, 255, 0.46) !important;
+        border-color: rgba(255, 255, 255, 0.62) !important;
+        backdrop-filter: blur(10px) saturate(130%);
+    }
+    #coolauxv-chat-history-action-overlay .coolauxv-chat-history-glass .coolauxv-action-btn {
+        background: rgba(255, 255, 255, 0.66);
+        border-color: rgba(255, 255, 255, 0.72);
+    }
+    #coolauxv-chat-history-action-overlay .coolauxv-chat-history-glass .coolauxv-action-btn:hover {
+        background: rgba(255, 255, 255, 0.84);
     }
 
     .coolauxv-provider-title {
@@ -3483,7 +3517,7 @@
                             <label class="coolauxv-toggle-label">
                                 <input type="checkbox" id="coolauxv-cfg-chat-history-persist"> 聊天记录持久化
                             </label>
-                            <div class="coolauxv-settings-item-hint">关闭聊天框时自动入后台队列；开启后支持跨标签页同步</div>
+                            <div class="coolauxv-settings-item-hint">连续对话过程中实时入后台队列；开启后支持跨标签页同步</div>
                             <div style="margin-top:4px;">
                                 <button type="button" id="coolauxv-btn-clear-chat-persist" class="coolauxv-link-btn" style="border-color:#fecaca; color:#b91c1c; background:#fff1f2;">🧹 清空持久化聊天记录</button>
                             </div>
@@ -4671,7 +4705,6 @@
                 opacity: "0",
                 transition: "opacity 0.2s"
             });
-
             const box = document.createElement("div");
             Object.assign(box.style, {
                 background: "#fff",
@@ -5141,6 +5174,9 @@
                 opacity: "0",
                 transition: "opacity 0.2s"
             });
+            if (GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS)) {
+                overlay.classList.add("coolauxv-chat-history-glass-overlay");
+            }
 
             const box = document.createElement("div");
             Object.assign(box.style, {
@@ -5157,6 +5193,9 @@
                 transition: "transform 0.2s",
                 overflow: "hidden"
             });
+            if (GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS)) {
+                box.classList.add("coolauxv-chat-history-glass");
+            }
 
             box.innerHTML = `
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
@@ -5267,6 +5306,59 @@
                 updateBatchModeClass();
             };
 
+            const animateQueueItemRemoval = (queueIds, onDone) => {
+                const finish = () => {
+                    if (typeof onDone === "function") onDone();
+                };
+                const ids = Array.isArray(queueIds) ? queueIds.filter(Boolean) : [];
+                if (!ids.length || !queueListEl || !isMinimizeAnimEnabled()) {
+                    finish();
+                    return;
+                }
+                const idSet = new Set(ids);
+                const itemEls = Array.from(queueListEl.querySelectorAll("[data-queue-id]"))
+                    .filter((el) => idSet.has(el.getAttribute("data-queue-id")));
+                if (!itemEls.length) {
+                    finish();
+                    return;
+                }
+                let pending = itemEls.length;
+                const doneOne = () => {
+                    pending -= 1;
+                    if (pending <= 0) finish();
+                };
+                itemEls.forEach((itemEl) => {
+                    itemEl.style.overflow = "hidden";
+                    itemEl.style.maxHeight = `${itemEl.scrollHeight}px`;
+                    itemEl.style.opacity = "1";
+                    itemEl.style.transform = "translateY(0)";
+                    itemEl.style.transition = "max-height 0.24s cubic-bezier(0.2,0,0,1), opacity 0.2s cubic-bezier(0.2,0,0,1), transform 0.24s cubic-bezier(0.2,0,0,1)";
+                    itemEl.style.pointerEvents = "none";
+                    void itemEl.offsetHeight;
+                    let finished = false;
+                    let timeoutId = 0;
+                    const cleanup = () => {
+                        if (finished) return;
+                        finished = true;
+                        itemEl.removeEventListener("transitionend", onEnd);
+                        if (timeoutId) {
+                            clearTimeout(timeoutId);
+                            timeoutId = 0;
+                        }
+                        doneOne();
+                    };
+                    const onEnd = (e) => {
+                        if (e.propertyName !== "max-height") return;
+                        cleanup();
+                    };
+                    itemEl.addEventListener("transitionend", onEnd);
+                    timeoutId = window.setTimeout(cleanup, 320);
+                    itemEl.style.maxHeight = "0px";
+                    itemEl.style.opacity = "0";
+                    itemEl.style.transform = "translateY(-8px)";
+                });
+            };
+
             const renderQueueItems = () => {
                 if (!queueListEl) return;
                 if (!isChatHistoryQueueFeatureEnabled()) {
@@ -5374,11 +5466,15 @@
                         return;
                     }
                     if (!confirm(`确定删除选中的 ${selectedQueueIds.size} 条后台会话吗？`)) return;
-                    syncChatQueueFromPersistentStore();
-                    chatBackgroundQueue = chatBackgroundQueue.filter((item) => !selectedQueueIds.has(item.id));
-                    persistChatQueueToGlobalStore();
-                    selectedQueueIds.clear();
-                    renderQueueItems();
+                    const toDeleteIds = Array.from(selectedQueueIds);
+                    const toDeleteSet = new Set(toDeleteIds);
+                    animateQueueItemRemoval(toDeleteIds, () => {
+                        syncChatQueueFromPersistentStore();
+                        chatBackgroundQueue = chatBackgroundQueue.filter((item) => !toDeleteSet.has(item.id));
+                        persistChatQueueToGlobalStore();
+                        selectedQueueIds.clear();
+                        renderQueueItems();
+                    });
                 });
             }
             if (queueListEl) {
@@ -5440,11 +5536,13 @@
                         return;
                     }
                     if (action === "delete") {
-                        const ok = removeChatQueueItemById(queueId);
-                        if (!ok) {
-                            alert("删除失败，请重试。");
-                        }
-                        renderQueueItems();
+                        animateQueueItemRemoval([queueId], () => {
+                            const ok = removeChatQueueItemById(queueId);
+                            if (!ok) {
+                                alert("删除失败，请重试。");
+                            }
+                            renderQueueItems();
+                        });
                     }
                 });
             }
@@ -9029,6 +9127,7 @@
         streamTextBuffer = chatDisplayBuffer;
         lastRenderedText = "";
         renderContent();
+        queueCurrentChatSessionToBackground();
         autoExpandChatIfEnabled(actionToken);
     }
 
@@ -9065,6 +9164,7 @@
         streamTextBuffer = chatDisplayBuffer;
         lastRenderedText = "";
         renderContent();
+        queueCurrentChatSessionToBackground();
     }
 
     function normalizeHtmlForMarkdown(html) {
@@ -11606,6 +11706,7 @@
         });
         const userMessage = buildProviderMessage(providerTemplate, "user", messageText, hasImage ? chatCapturedImageBase64 : "");
         if (userMessage) chatMessages.push(userMessage);
+        queueCurrentChatSessionToBackground();
 
         chatInput.value = "";
         chatCapturedImageBase64 = "";
