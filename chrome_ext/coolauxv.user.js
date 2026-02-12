@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.2
+// @version      v15.3
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -96,6 +96,16 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v15.3 更新日志
+        ## ✨ 功能改进
+        *   顶部内容输入区现在支持粘贴或选择本地图片，与连续对话区域行为一致
+        *   聊天会话的重命名结果持久生效，关闭窗口进入后台队列后名称保持不变
+        ## 🐛 问题修复
+        *   修复顶部内容输入区无法粘贴/选择图片的问题
+        ## 🎨 界面优化
+        *   顶部区域为未发送的截屏结果增加清除按钮
+        *   清除按钮的显示/消失动画与连续对话按钮区域动画一致，提升视觉连贯性
+        ---
         v15.2 更新日志
         ## 💬 自动聊天会话创建
         *   开始连续对话时会自动创建新的聊天会话，无需手动关闭
@@ -2822,6 +2832,8 @@
                 capturedImageBase64 = "";
                 const btnPreview = popup.querySelector("#coolauxv-btn-preview");
                 if (btnPreview) btnPreview.style.display = "none";
+                const btnMainClear = popup.querySelector("#coolauxv-btn-clear-shot");
+                setAnimatedVisibility(btnMainClear, false);
 
                 cursorBtn.style.display = "none";
                 isIconDismissed = true;
@@ -3053,12 +3065,16 @@
 
                       <button id="coolauxv-btn-stop" class="coolauxv-action-btn" style="display:none; flex:0.6; background:#fee2e2; color:#b91c1c; border-color:#fecaca;" title="打断当前输出">⏹ 停止</button>
 
+                      <button id="coolauxv-btn-image-file" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.45; white-space:nowrap;" title="选择本地图片">🖼 本地</button>
+
                       <!-- 识屏按钮：蓝色风格 -->
                       <button id="coolauxv-btn-screenshot" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
 
                       <!-- 预览按钮：默认风格 -->
                       <button id="coolauxv-btn-preview" class="coolauxv-action-btn" style="display:none; flex:0.3; font-size:14px;" title="预览截图">🔍</button>
+                      <button id="coolauxv-btn-clear-shot" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="清除识屏">🗑 清除</button>
                   </div>
+                  <input type="file" id="coolauxv-input-image-file" accept="image/*" style="display:none;">
                   </div>
 
                   <div id="coolauxv-content-container">
@@ -3340,6 +3356,7 @@
 
                 // 绑定预览按钮事件
                 const btnPreview = popup.querySelector("#coolauxv-btn-preview");
+                const btnMainClear = popup.querySelector("#coolauxv-btn-clear-shot");
                 const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
                 const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
                 const previewOverlay = document.querySelector("#coolauxv-img-preview-overlay");
@@ -3350,6 +3367,13 @@
                             previewImg.src = capturedImageBase64;
                             previewOverlay.style.display = "flex";
                         }
+                    };
+                }
+                if (btnMainClear) {
+                    btnMainClear.onclick = () => {
+                        capturedImageBase64 = "";
+                        if (btnPreview) btnPreview.style.display = "none";
+                        setAnimatedVisibility(btnMainClear, false);
                     };
                 }
                 if (btnChatPreview && previewOverlay && previewImg) {
@@ -3696,13 +3720,22 @@
             const updatedAtRaw = String(item.updatedAt || item.modifiedAt || item.createdAt || "").trim();
             const createdAt = createdAtRaw || updatedAtRaw || nowIso;
             const updatedAt = updatedAtRaw || createdAtRaw || nowIso;
+            const autoTitle = formatChatQueueTitle(payload);
             const title = String(item.title || "").trim();
+            const titleNameRaw = item.chatName || item.customTitle || item.renamedTitle || "";
+            let chatName = String(titleNameRaw || "").trim();
+            let storedTitle = title || autoTitle;
+            if (!chatName && title && autoTitle && title !== autoTitle) {
+                chatName = title;
+                storedTitle = autoTitle;
+            }
             return {
                 id: id,
                 version: CHAT_QUEUE_VERSION,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
-                title: title,
+                title: storedTitle || "连续对话",
+                chatName: chatName,
                 payload: payload
             };
         };
@@ -3810,6 +3843,15 @@
             return compact.length > 24 ? `${compact.slice(0, 24)}...` : compact;
         };
 
+        const getChatQueueDisplayTitle = (item) => {
+            if (!item || typeof item !== "object") return "连续对话";
+            const customName = String(item.chatName || "").trim();
+            if (customName) return customName;
+            const title = String(item.title || "").trim();
+            if (title) return title;
+            return formatChatQueueTitle(item.payload);
+        };
+
         const enqueueChatPayloadToQueue = (payload, options = {}) => {
             if (!isChatHistoryQueueFeatureEnabled()) return null;
             const normalizedPayload = normalizeChatHistoryPayload(payload);
@@ -3819,11 +3861,14 @@
             syncChatQueueFromPersistentStore();
             const existingItem = chatBackgroundQueue.find((item) => item.id === queueId);
             const updatedAt = String(options.updatedAt || "").trim() || new Date().toISOString();
+            const autoTitle = String(options.title || "").trim() || formatChatQueueTitle(normalizedPayload);
+            const chatName = String(options.chatName || (existingItem && existingItem.chatName) || "").trim();
             const queuedItem = normalizeChatQueueItem({
                 id: queueId,
                 createdAt: (existingItem && existingItem.createdAt) || options.createdAt || updatedAt,
                 updatedAt: updatedAt,
-                title: options.title || formatChatQueueTitle(normalizedPayload),
+                title: autoTitle,
+                chatName: chatName,
                 payload: normalizedPayload
             });
             if (!queuedItem) return null;
@@ -3856,12 +3901,14 @@
             const current = chatBackgroundQueue[index];
             const normalizedTitle = String(nextTitle || "").trim();
             const fallbackTitle = formatChatQueueTitle(current.payload);
-            const resolvedTitle = normalizedTitle || fallbackTitle;
-            if (resolvedTitle === String(current.title || "").trim()) {
+            const currentChatName = String(current.chatName || "").trim();
+            const currentStoredTitle = String(current.title || "").trim() || fallbackTitle;
+            if (normalizedTitle === currentChatName && currentStoredTitle === fallbackTitle) {
                 return current;
             }
             const renamed = normalizeChatQueueItem(Object.assign({}, current, {
-                title: resolvedTitle,
+                title: fallbackTitle,
+                chatName: normalizedTitle,
                 updatedAt: new Date().toISOString()
             }));
             if (!renamed) return null;
@@ -5127,7 +5174,7 @@
                                 <input type="checkbox" data-queue-select="${item.id}" ${selectedQueueIds.has(item.id) ? "checked" : ""}>
                             </label>
                             <div style="flex:1; min-width:0;">
-                                <div style="font-size:13px; font-weight:700; color:#111827; margin-bottom:4px; word-break:break-word;">${escapeQueueText(item.title || "连续对话")}</div>
+                                <div style="font-size:13px; font-weight:700; color:#111827; margin-bottom:4px; word-break:break-word;">${escapeQueueText(getChatQueueDisplayTitle(item))}</div>
                                 <div style="font-size:11px; color:#6b7280; margin-bottom:8px; word-break:break-word;">${escapeQueueText(buildQueueMetaText(item))}</div>
                             </div>
                         </div>
@@ -5263,7 +5310,7 @@
                         return;
                     }
                     if (action === "rename") {
-                        const currentTitle = String(item.title || formatChatQueueTitle(item.payload) || "连续对话").trim();
+                        const currentTitle = String(getChatQueueDisplayTitle(item) || "连续对话").trim();
                         const nextTitleRaw = prompt("请输入新的会话名称（留空则自动命名）：", currentTitle);
                         if (nextTitleRaw === null) return;
                         const renamed = renameChatQueueItemById(queueId, nextTitleRaw);
@@ -8903,6 +8950,8 @@
         const supportsVision = !!(template && template.supportsVision);
         const btnShotMain = popup.querySelector("#coolauxv-btn-screenshot");
         const btnShotChat = popup.querySelector("#coolauxv-btn-screenshot-chat");
+        const btnMainImageFile = popup.querySelector("#coolauxv-btn-image-file");
+        const btnMainClear = popup.querySelector("#coolauxv-btn-clear-shot");
         const btnChatImageFile = popup.querySelector("#coolauxv-btn-chat-image-file");
         const btnPreview = popup.querySelector("#coolauxv-btn-preview");
         const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
@@ -8910,16 +8959,19 @@
 
         if (btnShotMain) btnShotMain.style.display = supportsVision ? "" : "none";
         if (btnShotChat) btnShotChat.style.display = supportsVision ? "" : "none";
+        if (btnMainImageFile) btnMainImageFile.style.display = supportsVision ? "" : "none";
         if (btnChatImageFile) btnChatImageFile.style.display = supportsVision ? "" : "none";
 
         if (!supportsVision) {
             capturedImageBase64 = "";
             if (btnPreview) btnPreview.style.display = "none";
+            setAnimatedVisibility(btnMainClear, false);
             chatCapturedImageBase64 = "";
             setAnimatedVisibility(btnChatPreview, false);
             setAnimatedVisibility(btnChatClear, false);
         } else {
             if (btnPreview) btnPreview.style.display = capturedImageBase64 ? "inline-block" : "none";
+            setAnimatedVisibility(btnMainClear, !!capturedImageBase64);
             setAnimatedVisibility(btnChatPreview, !!chatCapturedImageBase64);
             setAnimatedVisibility(btnChatClear, !!chatCapturedImageBase64);
         }
@@ -8935,6 +8987,47 @@
         reader.onerror = () => reject(new Error("read image failed"));
         reader.readAsDataURL(file);
     });
+
+    const applyMainImageCapture = (dataUrl) => {
+        const imageUrl = String(dataUrl || "").trim();
+        if (!imageUrl) return false;
+        const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), getProviderTemplates());
+        const providerTemplate = getProviderTemplateSafe(providerId);
+        if (!(providerTemplate && providerTemplate.supportsVision)) {
+            alert("当前提供商不支持识图，无法插入图片。");
+            return false;
+        }
+        capturedImageBase64 = imageUrl;
+        const btnPreview = popup ? popup.querySelector("#coolauxv-btn-preview") : null;
+        const btnMainClear = popup ? popup.querySelector("#coolauxv-btn-clear-shot") : null;
+        if (btnPreview) btnPreview.style.display = "inline-block";
+        setAnimatedVisibility(btnMainClear, true);
+        const input = popup ? popup.querySelector("#coolauxv-input") : null;
+        if (input && !input.value.trim()) {
+            const config = getActiveConfig();
+            input.value = config.promptVision || "";
+        }
+        return true;
+    };
+
+    const loadMainImageFromFile = async (file) => {
+        if (!file) return false;
+        if (!String(file.type || "").startsWith("image/")) {
+            alert("仅支持图片文件。");
+            return false;
+        }
+        try {
+            const dataUrl = await readImageFileAsDataUrl(file);
+            if (!dataUrl) {
+                alert("读取图片失败，请重试。");
+                return false;
+            }
+            return applyMainImageCapture(dataUrl);
+        } catch (e) {
+            alert("读取图片失败，请重试。");
+            return false;
+        }
+    };
 
     const applyChatImageCapture = (dataUrl) => {
         const imageUrl = String(dataUrl || "").trim();
@@ -9138,6 +9231,8 @@
         // 3. 隐藏预览按钮
         const btnPreview = popup.querySelector("#coolauxv-btn-preview");
         if (btnPreview) btnPreview.style.display = "none";
+        const btnMainClear = popup.querySelector("#coolauxv-btn-clear-shot");
+        setAnimatedVisibility(btnMainClear, false);
         const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
         setAnimatedVisibility(btnChatPreview, false);
         const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
@@ -9212,6 +9307,8 @@
         const btnChatSend = popup.querySelector("#coolauxv-btn-chat-send");
         const btnChatStop = popup.querySelector("#coolauxv-btn-chat-stop");
         const btnChatEditCancel = popup.querySelector("#coolauxv-btn-chat-edit-cancel");
+        const btnMainImageFile = popup.querySelector("#coolauxv-btn-image-file");
+        const inputMainImageFile = popup.querySelector("#coolauxv-input-image-file");
         const btnChatImageFile = popup.querySelector("#coolauxv-btn-chat-image-file");
         const inputChatImageFile = popup.querySelector("#coolauxv-input-chat-image-file");
         const chatInput = popup.querySelector("#coolauxv-chat-input");
@@ -9261,6 +9358,17 @@
         if (btnChatEditCancel) btnChatEditCancel.onclick = () => {
             exitChatEditMode();
         };
+        if (btnMainImageFile && inputMainImageFile) {
+            btnMainImageFile.onclick = () => {
+                inputMainImageFile.value = "";
+                inputMainImageFile.click();
+            };
+            inputMainImageFile.addEventListener("change", async () => {
+                const file = inputMainImageFile.files && inputMainImageFile.files[0] ? inputMainImageFile.files[0] : null;
+                if (!file) return;
+                await loadMainImageFromFile(file);
+            });
+        }
         if (btnChatImageFile && inputChatImageFile) {
             btnChatImageFile.onclick = () => {
                 inputChatImageFile.value = "";
@@ -9411,6 +9519,20 @@
                     alert("无法读取剪贴板，请检查浏览器权限或手动粘贴。");
                 }
             };
+        }
+
+        if (input) {
+            input.addEventListener("paste", async (e) => {
+                const clipboard = e.clipboardData;
+                if (!clipboard || !clipboard.items) return;
+                const items = Array.from(clipboard.items);
+                const imageItem = items.find((item) => item && item.kind === "file" && String(item.type || "").startsWith("image/"));
+                if (!imageItem) return;
+                const file = imageItem.getAsFile();
+                if (!file) return;
+                e.preventDefault();
+                await loadMainImageFromFile(file);
+            });
         }
     }
 
@@ -11129,7 +11251,9 @@
 
                     capturedImageBase64 = newCaptured;
                     const btnPreview = popup.querySelector("#coolauxv-btn-preview");
+                    const btnMainClear = popup.querySelector("#coolauxv-btn-clear-shot");
                     if (btnPreview) btnPreview.style.display = "inline-block";
+                    setAnimatedVisibility(btnMainClear, true);
                     resetScreenshotUI();
                     popup.style.display = "flex";
 
