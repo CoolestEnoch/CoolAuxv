@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.3
+// @version      v15.4
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -215,6 +215,19 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v15.4 更新日志
+        ## ✨ 功能改进
+        *   支持不同模态的模型共享聊天记录接著连续对话了。
+        *   支持删除/编辑AI的聊天记录，为了更好的让下一个模型来连续对话。
+        ## 🐛 问题修复
+        *   修复顶部区域收起时，鼠标移开展开按钮后临时展开区域不收起的问题
+        *   修复不勾选“聊天记录持久化”但依旧保存聊天记录的问题
+        ## 🎨 界面优化
+        *   降低翻译/解读/识屏/本地文件按钮行的高度，节省垂直空间
+        *   为聊天记录弹窗添加淡入动画，与已有的淡出动画匹配
+        *   首页连续对话区的聊天记录按钮仅当勾选持久化后显示
+        *   设置的“清空所有聊天记录”按钮旁新增聊天记录管理入口
+        ---
         v15.3 更新日志
         ## ✨ 功能改进
         *   顶部内容输入区现在支持粘贴或选择本地图片，与连续对话区域行为一致
@@ -1922,15 +1935,54 @@
         background: #d1fae5;
         border-color: rgba(16,185,129,0.55);
     }
+    .coolauxv-chat-delete-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 600;
+        border: 1px solid rgba(239,68,68,0.35);
+        background: #fef2f2;
+        color: #991b1b;
+        vertical-align: middle;
+        margin-left: 6px;
+    }
+    .coolauxv-chat-delete-btn:hover {
+        background: #fee2e2;
+        border-color: rgba(239,68,68,0.55);
+    }
+    .coolauxv-chat-strip-media-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 600;
+        border: 1px solid rgba(59,130,246,0.35);
+        background: #eff6ff;
+        color: #1d4ed8;
+        vertical-align: middle;
+        margin-left: 6px;
+    }
+    .coolauxv-chat-strip-media-btn:hover {
+        background: #dbeafe;
+        border-color: rgba(59,130,246,0.55);
+    }
 
     /* ============================
        统一按钮风格 (Action Buttons)
        ============================ */
     .coolauxv-action-btn {
         display: flex; align-items: center; justify-content: center;
-        padding: 8px 12px; border-radius: 8px;
+        padding: 6px 10px; border-radius: 8px;
         cursor: pointer; user-select: none;
-        font-size: 13px; font-weight: 600;
+        font-size: 12px; font-weight: 600;
+        line-height: 1.2;
         transition: all 0.2s cubic-bezier(0.2, 0, 0, 1);
         border: 1px solid rgba(0,0,0,0.1);
         background: #f9fafb; color: #374151;
@@ -1967,6 +2019,28 @@
 
     .coolauxv-btn-blue { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
     .coolauxv-btn-blue:hover { background: #bfdbfe; }
+
+    #coolauxv-btn-trans,
+    #coolauxv-btn-explain,
+    #coolauxv-btn-stop,
+    #coolauxv-btn-image-file,
+    #coolauxv-btn-screenshot,
+    #coolauxv-btn-preview,
+    #coolauxv-btn-clear-shot {
+        padding-top: 5px !important;
+        padding-bottom: 5px !important;
+        min-height: 30px;
+    }
+    #coolauxv-btn-preview,
+    #coolauxv-btn-clear-shot,
+    #coolauxv-btn-preview-chat,
+    #coolauxv-btn-clear-chat-shot {
+        width: 36px;
+        min-width: 36px;
+        flex: 0 0 36px !important;
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
 
     /* 连续对话按钮显隐动画 (Animated Visibility) */
     .coolauxv-animated-visibility {
@@ -3029,6 +3103,8 @@
     let chatPendingAssistantPrefix = "";
     let chatAssistantLabel = "";
     let chatEditingTurnId = "";
+    let chatEditingRecordId = "";
+    let chatEditingRole = "";
     let isChatCollapsed = true;
     let isTopSectionCollapsed = false;
     let updateChatCollapseUI = () => { };
@@ -3303,8 +3379,8 @@
                       <button id="coolauxv-btn-screenshot" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
 
                       <!-- 预览按钮：默认风格 -->
-                      <button id="coolauxv-btn-preview" class="coolauxv-action-btn" style="display:none; flex:0.3; font-size:14px;" title="预览截图">🔍</button>
-                      <button id="coolauxv-btn-clear-shot" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="清除识屏">🗑 清除</button>
+                      <button id="coolauxv-btn-preview" class="coolauxv-action-btn" style="display:none; font-size:14px;" title="预览截图">🔍</button>
+                      <button id="coolauxv-btn-clear-shot" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; font-size:14px;" title="清除识屏">🗑</button>
                   </div>
                   <input type="file" id="coolauxv-input-image-file" accept="image/*" style="display:none;">
                   </div>
@@ -3337,8 +3413,8 @@
                           <div id="coolauxv-chat-actions">
                               <button id="coolauxv-btn-chat-image-file" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.45; white-space:nowrap;" title="选择本地图片">🖼 本地</button>
                               <button id="coolauxv-btn-screenshot-chat" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
-                              <button id="coolauxv-btn-preview-chat" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="预览截图">🔍</button>
-                              <button id="coolauxv-btn-clear-chat-shot" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.3; font-size:14px;" title="清除识屏">🗑 清除</button>
+                              <button id="coolauxv-btn-preview-chat" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; font-size:14px;" title="预览截图">🔍</button>
+                              <button id="coolauxv-btn-clear-chat-shot" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; font-size:14px;" title="清除识屏">🗑</button>
                               <button id="coolauxv-btn-chat-stop" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.5; background:#fee2e2; color:#b91c1c; border-color:#fecaca;" title="打断当前输出">⏹ 停止</button>
                               <button id="coolauxv-btn-chat-edit-cancel" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.5;" title="退出编辑模式">取消编辑</button>
                               <button id="coolauxv-btn-chat-send" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">发送</button>
@@ -3536,6 +3612,7 @@
                             <div class="coolauxv-settings-item-hint">连续对话过程中实时入后台队列；开启后支持跨标签页同步</div>
                             <div style="margin-top:4px;">
                                 <button type="button" id="coolauxv-btn-clear-chat-persist" class="coolauxv-link-btn" style="border-color:#fecaca; color:#b91c1c; background:#fff1f2;">🧹 清空持久化聊天记录</button>
+                                <button type="button" id="coolauxv-btn-manage-chat-persist" class="coolauxv-link-btn">💬 聊天记录管理</button>
                             </div>
                         </div>
                         <div class="coolauxv-settings-item">
@@ -3785,6 +3862,7 @@
         const inputContinuousChat = popup.querySelector("#coolauxv-cfg-continuous-chat");
         const inputChatHistoryPersist = popup.querySelector("#coolauxv-cfg-chat-history-persist");
         const btnClearChatPersist = popup.querySelector("#coolauxv-btn-clear-chat-persist");
+        const btnManageChatPersist = popup.querySelector("#coolauxv-btn-manage-chat-persist");
         const inputChatEnterSend = popup.querySelector("#coolauxv-cfg-chat-enter-send");
         const inputBasicAnim = popup.querySelector("#coolauxv-cfg-basic-anim");
         const inputMinimizeAnim = popup.querySelector("#coolauxv-cfg-minimize-anim");
@@ -3794,6 +3872,7 @@
         const chatToggleBtn = popup.querySelector("#coolauxv-chat-toggle");
         const chatInput = popup.querySelector("#coolauxv-chat-input");
         const topSection = popup.querySelector("#coolauxv-main-top-section");
+        const headerBar = popup.querySelector("#coolauxv-header");
         const topSectionToggleBtn = popup.querySelector("#coolauxv-top-collapse-btn");
 
         const CONFIG_KEYS = [
@@ -3896,6 +3975,7 @@
             const role = String(record.role || "").trim();
             if (!["system", "user", "assistant"].includes(role)) return null;
             return {
+                recordId: typeof record.recordId === "string" ? record.recordId : "",
                 role: role,
                 text: typeof record.text === "string" ? record.text : "",
                 imageBase64: typeof record.imageBase64 === "string" ? record.imageBase64 : "",
@@ -4622,9 +4702,12 @@
 
             overlay.appendChild(box);
             document.body.appendChild(overlay);
+            void overlay.offsetWidth;
             requestAnimationFrame(() => {
-                overlay.style.opacity = "1";
-                box.style.transform = "scale(1)";
+                requestAnimationFrame(() => {
+                    overlay.style.opacity = "1";
+                    box.style.transform = "scale(1)";
+                });
             });
 
             const closeModal = () => {
@@ -5603,6 +5686,7 @@
 
         queueCurrentChatSessionToBackground = () => {
             if (!isChatHistoryQueueFeatureEnabled()) return false;
+            if (!isChatHistoryQueuePersistenceEnabled()) return false;
             const payload = buildChatHistoryExportPayload();
             if (!payload) return false;
             const queued = enqueueChatPayloadToQueue(payload, { createdAt: new Date().toISOString() });
@@ -7641,10 +7725,26 @@
         };
 
         let isTopSectionHoverPreviewing = false;
+        let topSectionHoverLeaveTimer = 0;
+        const clearTopSectionHoverLeaveTimer = () => {
+            if (topSectionHoverLeaveTimer) {
+                clearTimeout(topSectionHoverLeaveTimer);
+                topSectionHoverLeaveTimer = 0;
+            }
+        };
+        const scheduleTopSectionHoverLeave = () => {
+            clearTopSectionHoverLeaveTimer();
+            topSectionHoverLeaveTimer = window.setTimeout(() => {
+                topSectionHoverLeaveTimer = 0;
+                if (!isTopSectionCollapsed || !isTopSectionHoverPreviewing) return;
+                stopTopSectionHoverPreview();
+            }, 50);
+        };
 
         const startTopSectionHoverPreview = () => {
             if (!topSection || !isTopSectionCollapsed) return;
             if (isTopSectionHoverPreviewing) return;
+            clearTopSectionHoverLeaveTimer();
             isTopSectionHoverPreviewing = true;
             if (!isBasicAnimEnabled()) {
                 topSection.style.overflow = "visible";
@@ -7687,6 +7787,7 @@
 
         const stopTopSectionHoverPreview = () => {
             if (!topSection || !isTopSectionHoverPreviewing) return;
+            clearTopSectionHoverLeaveTimer();
             isTopSectionHoverPreviewing = false;
             topSection.style.overflow = "hidden";
             if (topSection.style.maxHeight === "none") {
@@ -7697,8 +7798,27 @@
             topSection.style.maxHeight = "0px";
         };
 
+        const stopTopSectionHoverPreviewIfPointerOutside = (clientX, clientY) => {
+            if (!topSection || !isTopSectionCollapsed || !isTopSectionHoverPreviewing) return;
+            const isInsideRect = (rect) => (
+                clientX >= rect.left &&
+                clientX <= rect.right &&
+                clientY >= rect.top &&
+                clientY <= rect.bottom
+            );
+            const isInsideElement = (el) => !!(el && isInsideRect(el.getBoundingClientRect()));
+            const insideTopSection = isInsideElement(topSection);
+            const insideHeaderBar = isInsideElement(headerBar);
+            if (!insideTopSection && !insideHeaderBar) {
+                scheduleTopSectionHoverLeave();
+                return;
+            }
+            clearTopSectionHoverLeaveTimer();
+        };
+
         updateTopSectionCollapseUI = () => {
             if (!topSection || !topSectionToggleBtn) return;
+            clearTopSectionHoverLeaveTimer();
             if (isTopSectionHoverPreviewing) {
                 isTopSectionHoverPreviewing = false;
             }
@@ -7856,7 +7976,15 @@
                 if (!isTopSectionCollapsed) return;
                 startTopSectionHoverPreview();
             });
-            topSectionToggleBtn.addEventListener("mouseleave", () => {
+            document.addEventListener("mousemove", (e) => {
+                stopTopSectionHoverPreviewIfPointerOutside(e.clientX, e.clientY);
+            });
+            window.addEventListener("mouseout", (e) => {
+                if (e.relatedTarget) return;
+                if (!isTopSectionCollapsed) return;
+                stopTopSectionHoverPreview();
+            });
+            window.addEventListener("blur", () => {
                 if (!isTopSectionCollapsed) return;
                 stopTopSectionHoverPreview();
             });
@@ -8208,6 +8336,7 @@
                     syncChatQueueFromPersistentStore();
                     persistChatQueueToGlobalStore();
                 }
+                updateProviderFeatureVisibility();
             });
         }
         if (btnClearChatPersist) {
@@ -8222,6 +8351,11 @@
                     chatQueuePersistBootstrapped = false;
                 }
                 alert("已清空持久化聊天记录。");
+            });
+        }
+        if (btnManageChatPersist) {
+            btnManageChatPersist.addEventListener("click", () => {
+                openChatHistoryManager();
             });
         }
         if (inputChatEnterSend) {
@@ -8528,9 +8662,14 @@
         }
 
         const chatBar = popup.querySelector("#coolauxv-chat-bar");
+        const btnChatHistory = popup.querySelector("#coolauxv-chat-history-btn");
         if (chatBar) {
             const shouldShowChat = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT) && supportsContinuousChat;
+            const persistEnabled = GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST);
             chatBar.style.display = shouldShowChat ? "flex" : "none";
+            if (btnChatHistory) {
+                btnChatHistory.style.display = shouldShowChat && persistEnabled ? "inline-block" : "none";
+            }
             if (!shouldShowChat) {
                 isChatCollapsed = true;
             }
@@ -8843,9 +8982,23 @@
         return buildProviderPayload(template, model, messages);
     }
 
+    function generateChatRecordId() {
+        return `rec-${generateMessageId()}`;
+    }
+
+    function ensureChatRecordId(record) {
+        if (!record || typeof record !== "object") return "";
+        const existing = String(record.recordId || "").trim();
+        if (existing) return existing;
+        const nextId = generateChatRecordId();
+        record.recordId = nextId;
+        return nextId;
+    }
+
     function appendChatHistoryRecord(role, text, imageBase64, meta = {}) {
         if (!role) return;
         chatHistoryRecords.push({
+            recordId: typeof meta.recordId === "string" ? meta.recordId : generateChatRecordId(),
             role: role,
             text: text || "",
             imageBase64: imageBase64 || "",
@@ -8855,17 +9008,57 @@
         });
     }
 
-    function buildChatMessagesForProvider(providerId) {
+    function resolveChatRecordMessage(record, template, options = {}) {
+        const preferImageOnlyForMixed = !!(options && options.preferImageOnlyForMixed);
+        if (!record || !template) return null;
+        if (record.role !== "user") {
+            return {
+                role: record.role,
+                text: record.text || "",
+                imageBase64: ""
+            };
+        }
+        const hasImage = !!record.imageBase64;
+        if (!hasImage) {
+            return {
+                role: "user",
+                text: record.text || "",
+                imageBase64: ""
+            };
+        }
+        if (template.supportsVision) {
+            const hasMixedTextImage = !!String(record.displayText || "").trim();
+            const textForVision = (preferImageOnlyForMixed && hasMixedTextImage) ? "" : (record.text || "");
+            return {
+                role: "user",
+                text: textForVision,
+                imageBase64: record.imageBase64
+            };
+        }
+        const textOnly = String(record.displayText || "").trim();
+        if (!textOnly) return null;
+        return {
+            role: "user",
+            text: textOnly,
+            imageBase64: ""
+        };
+    }
+
+    function buildChatMessagesForProvider(providerId, options = {}) {
         const template = getProviderTemplateSafe(providerId);
+        if (!template) return [];
         const messages = [];
         if (template && template.type === "chat-parts") {
             const systemTexts = [];
             chatHistoryRecords.forEach((record) => {
+                ensureChatRecordId(record);
                 if (record.role === "system") {
                     if (record.text) systemTexts.push(record.text);
                     return;
                 }
-                const message = buildProviderMessage(template, record.role, record.text, record.imageBase64);
+                const normalized = resolveChatRecordMessage(record, template, options);
+                if (!normalized) return;
+                const message = buildProviderMessage(template, normalized.role, normalized.text, normalized.imageBase64);
                 if (message) messages.push(message);
             });
             if (systemTexts.length) {
@@ -8875,7 +9068,10 @@
             return messages;
         }
         chatHistoryRecords.forEach((record) => {
-            const message = buildProviderMessage(template, record.role, record.text, record.imageBase64);
+            ensureChatRecordId(record);
+            const normalized = resolveChatRecordMessage(record, template, options);
+            if (!normalized) return;
+            const message = buildProviderMessage(template, normalized.role, normalized.text, normalized.imageBase64);
             if (message) messages.push(message);
         });
         return messages;
@@ -8885,21 +9081,28 @@
         if (!chatSessionStarted) return;
         const targetProvider = resolveProviderId(providerId || DEFAULT_PROVIDER, getProviderTemplates());
         if (chatProvider === targetProvider && chatMessages.length) return;
+        const switchedProvider = !!chatProvider && chatProvider !== targetProvider;
         chatProvider = targetProvider;
-        chatMessages = buildChatMessagesForProvider(targetProvider);
+        chatMessages = buildChatMessagesForProvider(targetProvider, { preferImageOnlyForMixed: switchedProvider });
     }
 
-    function formatChatUserBlock(userText, imageId, isFirst, turnId) {
+    function formatChatUserBlock(userText, imageId, isFirst, turnId, recordId) {
         const safeText = userText ? userText : (imageId ? "（仅识屏）" : "");
         const refreshBtn = turnId
             ? ` <button type="button" class="coolauxv-chat-refresh-btn" data-chat-turn-id="${turnId}" title="重新生成本轮输出">↻ 重新回答</button>`
             : "";
-        const editBtn = turnId
-            ? ` <button type="button" class="coolauxv-chat-edit-btn" data-chat-turn-id="${turnId}" title="编辑本轮消息">✎ 编辑</button>`
+        const editBtn = recordId
+            ? ` <button type="button" class="coolauxv-chat-edit-btn" data-chat-record-id="${recordId}" title="编辑该条用户消息">✎ 编辑</button>`
+            : "";
+        const deleteBtn = recordId
+            ? ` <button type="button" class="coolauxv-chat-delete-btn" data-chat-record-id="${recordId}" title="删除该条用户消息">🗑 删除</button>`
+            : "";
+        const stripMediaBtn = (recordId && imageId)
+            ? ` <button type="button" class="coolauxv-chat-strip-media-btn" data-chat-record-id="${recordId}" title="仅删除该条消息中的图片">🧹 删图片</button>`
             : "";
         let block = "";
         if (!isFirst) block += "\n\n---\n\n";
-        block += `**👤 用户：**${refreshBtn}${editBtn}\n${safeText}\n`;
+        block += `**👤 用户：**${refreshBtn}${editBtn}${deleteBtn}${stripMediaBtn}\n${safeText}\n`;
         if (imageId) {
             block += `\n<button type="button" class="coolauxv-chat-preview-btn" data-chat-img-id="${imageId}">🔍 预览识屏</button>\n`;
         }
@@ -8914,14 +9117,20 @@
         return providerLabel;
     }
 
-    function getChatAssistantPrefix(label) {
+    function getChatAssistantPrefix(label, recordId) {
         const info = label || chatAssistantLabel;
         const suffix = info ? ` (${info})` : "";
-        return `\n\n**🤖 AI${suffix}：**\n`;
+        const editBtn = recordId
+            ? ` <button type="button" class="coolauxv-chat-edit-btn" data-chat-record-id="${recordId}" title="编辑该条 AI 消息">✎ 编辑</button>`
+            : "";
+        const deleteBtn = recordId
+            ? ` <button type="button" class="coolauxv-chat-delete-btn" data-chat-record-id="${recordId}" title="删除该条 AI 消息">🗑 删除</button>`
+            : "";
+        return `\n\n**🤖 AI${suffix}：**${editBtn}${deleteBtn}\n`;
     }
 
-    function buildChatAssistantBlock(text, label) {
-        return getChatAssistantPrefix(label) + (text || "");
+    function buildChatAssistantBlock(text, label, recordId) {
+        return getChatAssistantPrefix(label, recordId) + (text || "");
     }
 
     function generateChatTurnId() {
@@ -8932,10 +9141,12 @@
         if (!popup) return;
         const btnChatSend = popup.querySelector("#coolauxv-btn-chat-send");
         const btnChatEditCancel = popup.querySelector("#coolauxv-btn-chat-edit-cancel");
-        const isEditing = !!chatEditingTurnId;
+        const isEditing = !!chatEditingRecordId;
         if (btnChatSend) {
             btnChatSend.textContent = isEditing ? "确认编辑" : "发送";
-            btnChatSend.title = isEditing ? "确认编辑并重新生成本轮" : "发送";
+            btnChatSend.title = isEditing
+                ? (chatEditingRole === "user" ? "确认编辑并重新生成本轮" : "确认编辑消息")
+                : "发送";
         }
         if (btnChatEditCancel) {
             setAnimatedVisibility(btnChatEditCancel, isEditing);
@@ -8944,38 +9155,45 @@
 
     function exitChatEditMode() {
         chatEditingTurnId = "";
+        chatEditingRecordId = "";
+        chatEditingRole = "";
         updateChatEditModeUI();
     }
 
-    function enterChatEditMode(turnId) {
-        if (!turnId || !popup) return;
+    function enterChatEditMode(recordId) {
+        if (!recordId || !popup) return;
         if (isRendering) {
             alert("当前正在生成内容，请稍候再试。");
             return;
         }
         startChatSessionIfNeeded();
-        const targetRecord = chatHistoryRecords.find((record) => record.role === "user" && record.turnId === turnId);
+        const targetRecord = chatHistoryRecords.find((record) => ensureChatRecordId(record) === recordId);
         if (!targetRecord) {
-            alert("未找到对应的连续对话轮次，无法编辑。");
+            alert("未找到对应的连续对话消息，无法编辑。");
             return;
         }
         const chatInput = popup.querySelector("#coolauxv-chat-input");
         if (!chatInput) return;
 
-        chatEditingTurnId = turnId;
+        chatEditingRecordId = recordId;
+        chatEditingRole = targetRecord.role || "";
+        chatEditingTurnId = targetRecord.role === "user" ? (targetRecord.turnId || "") : "";
         updateChatEditModeUI();
 
         const imageBase64 = targetRecord.imageBase64 || "";
-        const inputText = targetRecord.displayText
-            ? targetRecord.displayText
-            : (imageBase64 ? "" : (targetRecord.text || ""));
+        const inputText = targetRecord.role === "assistant"
+            ? (targetRecord.text || "")
+            : (targetRecord.displayText
+                ? targetRecord.displayText
+                : (imageBase64 ? "" : (targetRecord.text || "")));
         chatInput.value = inputText;
-        chatCapturedImageBase64 = imageBase64;
+        chatCapturedImageBase64 = targetRecord.role === "user" ? imageBase64 : "";
 
         const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
         const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
-        setAnimatedVisibility(btnChatPreview, !!imageBase64);
-        setAnimatedVisibility(btnChatClear, !!imageBase64);
+        const showImageTools = targetRecord.role === "user" && !!imageBase64;
+        setAnimatedVisibility(btnChatPreview, showImageTools);
+        setAnimatedVisibility(btnChatClear, showImageTools);
 
         chatInput.focus();
         try {
@@ -8983,11 +9201,105 @@
         } catch (e) { }
     }
 
+    function applyChatHistoryMutation() {
+        rebuildChatDisplayFromHistory(chatAssistantLabel);
+        const config = getActiveConfig();
+        const provider = resolveProviderId((chatProvider || config.provider || DEFAULT_PROVIDER), getProviderTemplates());
+        chatProvider = provider;
+        chatMessages = buildChatMessagesForProvider(provider);
+        renderContent();
+        queueCurrentChatSessionToBackground();
+    }
+
+    function deleteChatRecord(recordId) {
+        if (!recordId) return;
+        if (isRendering) {
+            alert("当前正在生成内容，请稍候再试。");
+            return;
+        }
+        startChatSessionIfNeeded();
+        const targetIndex = chatHistoryRecords.findIndex((record) => ensureChatRecordId(record) === recordId);
+        if (targetIndex < 0) {
+            alert("未找到对应的连续对话消息，无法删除。");
+            return;
+        }
+        const targetRecord = chatHistoryRecords[targetIndex];
+        const roleLabel = targetRecord.role === "assistant" ? "AI" : (targetRecord.role === "system" ? "系统" : "用户");
+        if (!confirm(`确定删除这条${roleLabel}消息吗？`)) return;
+        chatHistoryRecords.splice(targetIndex, 1);
+        if (chatEditingRecordId === recordId) {
+            exitChatEditMode();
+            const chatInput = popup.querySelector("#coolauxv-chat-input");
+            if (chatInput) chatInput.value = "";
+            chatCapturedImageBase64 = "";
+            const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
+            const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
+            setAnimatedVisibility(btnChatPreview, false);
+            setAnimatedVisibility(btnChatClear, false);
+        }
+        applyChatHistoryMutation();
+    }
+
+    function stripChatRecordMedia(recordId) {
+        if (!recordId) return;
+        if (isRendering) {
+            alert("当前正在生成内容，请稍候再试。");
+            return;
+        }
+        startChatSessionIfNeeded();
+        const targetRecord = chatHistoryRecords.find((record) => ensureChatRecordId(record) === recordId);
+        if (!targetRecord || targetRecord.role !== "user") {
+            alert("仅支持删除用户消息中的图片。");
+            return;
+        }
+        if (!targetRecord.imageBase64) return;
+        const textOnly = String(targetRecord.displayText || "").trim();
+        if (!textOnly) {
+            deleteChatRecord(recordId);
+            return;
+        }
+        targetRecord.imageBase64 = "";
+        targetRecord.displayText = textOnly;
+        targetRecord.text = textOnly;
+        if (chatEditingRecordId === recordId) {
+            chatCapturedImageBase64 = "";
+            const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
+            const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
+            setAnimatedVisibility(btnChatPreview, false);
+            setAnimatedVisibility(btnChatClear, false);
+        }
+        applyChatHistoryMutation();
+    }
+
     async function confirmChatEditSend() {
-        if (!chatEditingTurnId) return false;
+        if (!chatEditingRecordId) return false;
         if (!popup) return true;
         const chatInput = popup.querySelector("#coolauxv-chat-input");
         if (!chatInput) return true;
+
+        startChatSessionIfNeeded();
+        const targetIndex = chatHistoryRecords.findIndex((record) => ensureChatRecordId(record) === chatEditingRecordId);
+        if (targetIndex < 0) {
+            alert("未找到对应的连续对话消息，无法编辑。");
+            exitChatEditMode();
+            return true;
+        }
+        const targetRecord = chatHistoryRecords[targetIndex];
+        const role = targetRecord.role;
+
+        if (role === "assistant") {
+            const aiText = chatInput.value.trim();
+            if (!aiText) {
+                appendChatError("⚠️ AI 消息不能为空。");
+                return true;
+            }
+            targetRecord.text = aiText;
+            targetRecord.imageBase64 = "";
+            targetRecord.displayText = "";
+            exitChatEditMode();
+            applyChatHistoryMutation();
+            return true;
+        }
 
         const userText = chatInput.value.trim();
         const imageBase64 = chatCapturedImageBase64 || "";
@@ -8997,16 +9309,7 @@
             return true;
         }
 
-        startChatSessionIfNeeded();
-        const targetIndex = chatHistoryRecords.findIndex((record) => record.role === "user" && record.turnId === chatEditingTurnId);
-        if (targetIndex < 0) {
-            alert("未找到对应的连续对话轮次，无法编辑。");
-            exitChatEditMode();
-            return true;
-        }
-
         const config = getActiveConfig();
-        const targetRecord = chatHistoryRecords[targetIndex];
         const turnId = targetRecord.turnId || chatEditingTurnId || generateChatTurnId();
         targetRecord.turnId = turnId;
         targetRecord.imageBase64 = imageBase64;
@@ -9026,9 +9329,10 @@
 
         chatHistoryRecords.forEach((record) => {
             if (!record || !record.role) return;
+            const recordId = ensureChatRecordId(record);
             if (record.role === "user") {
                 const isFirstRenderedUser = chatDisplayBuffer.length === 0;
-                const turnId = isFirstRenderedUser ? "" : (record.turnId || generateChatTurnId());
+                const turnId = record.turnId || generateChatTurnId();
                 record.turnId = turnId;
                 let imageId = null;
                 if (record.imageBase64) {
@@ -9038,12 +9342,12 @@
                 const displayText = record.displayText
                     ? record.displayText
                     : (record.text || (imageId ? "（仅识屏）" : ""));
-                chatDisplayBuffer += formatChatUserBlock(displayText, imageId, chatDisplayBuffer.length === 0, turnId);
+                chatDisplayBuffer += formatChatUserBlock(displayText, imageId, chatDisplayBuffer.length === 0, turnId, recordId);
                 return;
             }
             if (record.role === "assistant") {
                 const assistantLabel = record.assistantLabel || defaultAssistantLabel;
-                const assistantBlock = buildChatAssistantBlock(record.text || "", assistantLabel);
+                const assistantBlock = buildChatAssistantBlock(record.text || "", assistantLabel, recordId);
                 if (chatDisplayBuffer) {
                     chatDisplayBuffer += assistantBlock;
                 } else {
@@ -9064,7 +9368,7 @@
             alert("当前正在生成内容，请稍候再试。");
             return;
         }
-        if (chatEditingTurnId) {
+        if (chatEditingRecordId) {
             exitChatEditMode();
         }
         startChatSessionIfNeeded();
@@ -9139,21 +9443,9 @@
                     : baseChatLabel;
                 appendChatHistoryRecord("assistant", entry.assistantText, "", { assistantLabel: entryLabel });
             }
-
-            let imageId = null;
-            if (entry.imageBase64) {
-                imageId = `chat-img-${++chatImageCounter}`;
-                chatImageStore[imageId] = entry.imageBase64;
-            }
-            const isFirst = chatDisplayBuffer.length === 0;
-            chatDisplayBuffer += formatChatUserBlock(displayText, imageId, isFirst, isFirst ? "" : turnId);
-            if (entry.assistantText) {
-                const entryLabel = (entry && entry.provider && entry.model)
-                    ? formatChatModelLabel(entry.provider, entry.model)
-                    : baseChatLabel;
-                chatDisplayBuffer += buildChatAssistantBlock(entry.assistantText, entryLabel);
-            }
         });
+
+        rebuildChatDisplayFromHistory(baseChatLabel);
 
         chatSystemPrompt = (config.promptContinuousChat || "").trim();
         if (chatSystemPrompt) {
@@ -9211,8 +9503,12 @@
             logAiResponse(provider, config.modelVision, "chat", chatAssistantBuffer);
             const assistantMessage = buildProviderMessage(config.template, "assistant", chatAssistantBuffer, "");
             if (assistantMessage) chatMessages.push(assistantMessage);
-            appendChatHistoryRecord("assistant", chatAssistantBuffer, "", { assistantLabel: chatAssistantLabel });
-            chatDisplayBuffer += chatPendingAssistantPrefix + chatAssistantBuffer;
+            const assistantRecordId = generateChatRecordId();
+            appendChatHistoryRecord("assistant", chatAssistantBuffer, "", {
+                assistantLabel: chatAssistantLabel,
+                recordId: assistantRecordId
+            });
+            chatDisplayBuffer += buildChatAssistantBlock(chatAssistantBuffer, chatAssistantLabel, assistantRecordId);
         }
         chatAssistantBuffer = "";
         chatPendingAssistantPrefix = "";
@@ -9285,6 +9581,8 @@
         chatProvider = "";
         chatSystemPrompt = "";
         chatEditingTurnId = "";
+        chatEditingRecordId = "";
+        chatEditingRole = "";
         streamMode = "single";
         streamTextBuffer = "";
         lastRenderedText = "";
@@ -9305,6 +9603,8 @@
         chatProvider = "";
         chatSystemPrompt = "";
         chatEditingTurnId = "";
+        chatEditingRecordId = "";
+        chatEditingRole = "";
         streamMode = "single";
         streamTextBuffer = "";
         streamReasoningBuffer = "";
@@ -9510,6 +9810,17 @@
             element.removeEventListener("transitionend", onEnd);
         };
         element.addEventListener("transitionend", onEnd);
+        setTimeout(() => {
+            if (!element.classList.contains("coolauxv-visible")) {
+                element.style.display = "none";
+            }
+        }, 260);
+    }
+
+    function forceHideAnimatedElement(element) {
+        if (!element) return;
+        element.classList.remove("coolauxv-visible");
+        element.style.display = "none";
     }
 
     function updateInterruptButtons() {
@@ -9693,6 +10004,7 @@
         setAnimatedVisibility(btnChatPreview, false);
         const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
         setAnimatedVisibility(btnChatClear, false);
+        popup.querySelectorAll(".coolauxv-animated-visibility").forEach((el) => forceHideAnimatedElement(el));
 
         // 4. 清空输出区
         const resultDiv = popup.querySelector("#coolauxv-result");
@@ -9884,8 +10196,26 @@
                 }
                 const editBtn = e.target.closest(".coolauxv-chat-edit-btn");
                 if (editBtn) {
-                    const turnId = editBtn.dataset.chatTurnId || "";
-                    enterChatEditMode(turnId);
+                    const recordId = editBtn.dataset.chatRecordId || "";
+                    if (recordId) {
+                        enterChatEditMode(recordId);
+                    } else {
+                        const turnId = editBtn.dataset.chatTurnId || "";
+                        const fallbackRecord = chatHistoryRecords.find((record) => record.role === "user" && record.turnId === turnId);
+                        if (fallbackRecord) enterChatEditMode(ensureChatRecordId(fallbackRecord));
+                    }
+                    return;
+                }
+                const deleteBtn = e.target.closest(".coolauxv-chat-delete-btn");
+                if (deleteBtn) {
+                    const recordId = deleteBtn.dataset.chatRecordId || "";
+                    deleteChatRecord(recordId);
+                    return;
+                }
+                const stripMediaBtn = e.target.closest(".coolauxv-chat-strip-media-btn");
+                if (stripMediaBtn) {
+                    const recordId = stripMediaBtn.dataset.chatRecordId || "";
+                    stripChatRecordMedia(recordId);
                     return;
                 }
                 const btn = e.target.closest(".coolauxv-chat-preview-btn");
@@ -11781,7 +12111,7 @@
         const resultDiv = popup.querySelector("#coolauxv-result");
         if (!chatInput || !resultDiv) return;
 
-        if (chatEditingTurnId) {
+        if (chatEditingRecordId) {
             const handled = await confirmChatEditSend();
             if (handled) return;
         }
@@ -11814,7 +12144,8 @@
 
         const displayText = userText || (imageId ? "（仅识屏）" : "");
         const turnId = generateChatTurnId();
-        chatDisplayBuffer += formatChatUserBlock(displayText, imageId, chatDisplayBuffer.length === 0, turnId);
+        const userRecordId = generateChatRecordId();
+        chatDisplayBuffer += formatChatUserBlock(displayText, imageId, chatDisplayBuffer.length === 0, turnId, userRecordId);
         chatAssistantLabel = formatChatModelLabel(provider, config.modelVision);
         chatPendingAssistantPrefix = getChatAssistantPrefix(chatAssistantLabel);
         chatAssistantBuffer = "";
@@ -11825,7 +12156,8 @@
         const messageText = userText || (hasImage ? config.promptVision : "");
         appendChatHistoryRecord("user", messageText, hasImage ? chatCapturedImageBase64 : "", {
             displayText: displayText,
-            turnId: turnId
+            turnId: turnId,
+            recordId: userRecordId
         });
         const userMessage = buildProviderMessage(providerTemplate, "user", messageText, hasImage ? chatCapturedImageBase64 : "");
         if (userMessage) chatMessages.push(userMessage);
