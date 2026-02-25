@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.4
+// @version      v15.5
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -10336,11 +10336,13 @@
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder("utf-8");
                 let buffer = "";
+                let rawText = "";
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
                     const chunk = decoder.decode(value, { stream: true });
+                    rawText += chunk;
                     buffer += chunk;
                     const lines = buffer.split(/\r?\n/);
                     buffer = lines.pop();
@@ -10353,6 +10355,21 @@
                 if (buffer && buffer.trim()) {
                     processStreamLine(providerTemplate, buffer);
                 }
+                if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
+                    const fallback = extractNonStreamResult(providerTemplate, rawText);
+                    if (fallback && fallback.error) {
+                        stopRenderLoop();
+                        if (!shouldSuppressResultError()) {
+                            resultDiv.innerHTML = buildApiErrorHtml(provider, fallback.error);
+                        }
+                        autoExpandChatIfEnabled(actionToken);
+                        return;
+                    }
+                    if (fallback && fallback.text) {
+                        streamTextBuffer = String(fallback.text);
+                        renderContent();
+                    }
+                }
                 stopRenderLoop();
                 historyEntry.assistantText = streamTextBuffer;
                 logAiResponse(provider, config.modelName, mode, streamTextBuffer);
@@ -10364,9 +10381,7 @@
                 Logger.warn("Fetch 失败/跨域，准备降级。", err);
                 if (err.message === "AUTH_INVALID") {
                     if (!shouldSuppressResultError()) {
-                        const apiErr = parseApiError(res.responseText);
-                        const err = apiErr || { type: "auth_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
-                        showInvalidKeyError(resultDiv, provider, err);
+                        showInvalidKeyError(resultDiv, provider, { type: "auth_error", message: "HTTP 401/403" });
                     }
                     autoExpandChatIfEnabled(actionToken);
                     return;
@@ -10982,16 +10997,27 @@
         return "";
     }
 
+    function stripResponseStats(rawText) {
+        if (typeof rawText !== "string") return "";
+        return rawText.replace(/<\|stats\|>[\s\S]*?<\|\/stats\|>\s*%?/g, "").trim();
+    }
+
+    function normalizeNonStreamText(rawText) {
+        if (rawText === null || rawText === undefined) return "";
+        return stripResponseStats(String(rawText));
+    }
+
     function extractNonStreamResult(template, payload) {
         if (payload === null || payload === undefined) return null;
         let data = payload;
         if (typeof payload === "string") {
             const trimmed = payload.trim();
             if (!trimmed) return null;
+            const cleaned = stripResponseStats(trimmed);
             try {
-                data = JSON.parse(trimmed);
+                data = JSON.parse(cleaned || trimmed);
             } catch (e) {
-                return { text: trimmed };
+                return cleaned ? { text: cleaned } : null;
             }
         }
         if (!data || typeof data !== "object") return null;
@@ -11000,11 +11026,11 @@
 
         const parser = template && template.stream ? template.stream.parser : "";
         if (parser === "openai-responses") {
-            const text = extractOpenaiOutputText(data);
+            const text = normalizeNonStreamText(extractOpenaiOutputText(data));
             if (text) return { text };
         }
         if (parser === "chat-parts") {
-            const text = extractChatPartsOutputText(data);
+            const text = normalizeNonStreamText(extractChatPartsOutputText(data));
             if (text) return { text };
         }
 
@@ -11036,7 +11062,8 @@
         if (!text && typeof data.message === "string") text = data.message;
         if (!text && typeof data.text === "string") text = data.text;
 
-        return text ? { text } : null;
+        const normalizedText = normalizeNonStreamText(text);
+        return normalizedText ? { text: normalizedText } : null;
     }
 
     function processChatPartsStreamLine(template, line) {

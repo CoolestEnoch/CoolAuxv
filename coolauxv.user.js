@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.4
+// @version      v15.5
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -215,6 +215,10 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v15.5 更新日志
+        ## 🐛 问题修复
+        *   修复当API返回内容包含 <|stats|>...</|stats|> 标记时，脚本无任何输出的问题
+        ---
         v15.4 更新日志
         ## ✨ 功能改进
         *   支持不同模态的模型共享聊天记录接著连续对话了。
@@ -10752,11 +10756,13 @@
             const reader = response.body.getReader();
             const decoder = new TextDecoder("utf-8");
             let buffer = "";
+            let rawText = "";
 
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
                 const chunk = decoder.decode(value, { stream: true });
+                rawText += chunk;
                 buffer += chunk;
                 const lines = buffer.split(/\r?\n/);
                 buffer = lines.pop();
@@ -10768,6 +10774,21 @@
             }
             if (buffer && buffer.trim()) {
                 processStreamLine(providerTemplate, buffer);
+            }
+            if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
+                const fallback = extractNonStreamResult(providerTemplate, rawText);
+                if (fallback && fallback.error) {
+                    stopRenderLoop();
+                    if (!shouldSuppressResultError()) {
+                        resultDiv.innerHTML = buildApiErrorHtml(provider, fallback.error);
+                    }
+                    autoExpandChatIfEnabled(actionToken);
+                    return;
+                }
+                if (fallback && fallback.text) {
+                    streamTextBuffer = String(fallback.text);
+                    renderContent();
+                }
             }
             stopRenderLoop();
             historyEntry.assistantText = streamTextBuffer;
@@ -10792,6 +10813,7 @@
         Logger.info(`GM_xmlhttpRequest ${provider} Model: ${config.modelName}`);
 
         let gmStreamBuffer = "";
+        let gmRawText = "";
         let isStreamModeActive = false;
 
         gmRequest = GM_xmlhttpRequest({
@@ -10815,6 +10837,7 @@
                                 const { done, value } = await reader.read();
                                 if (done) break;
                                 const chunk = decoder.decode(value, { stream: true });
+                                gmRawText += chunk;
                                 gmStreamBuffer += chunk;
                                 const lines = gmStreamBuffer.split(/\r?\n/);
                                 gmStreamBuffer = lines.pop();
@@ -10829,6 +10852,17 @@
                             }
                             if (gmStreamBuffer && gmStreamBuffer.trim()) {
                                 processStreamLine(providerTemplate, gmStreamBuffer);
+                            }
+                            if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
+                                const fallback = extractNonStreamResult(providerTemplate, gmRawText);
+                                if (fallback && fallback.error) {
+                                    handleApiError(provider, fallback.error);
+                                    return;
+                                }
+                                if (fallback && fallback.text) {
+                                    streamTextBuffer = String(fallback.text);
+                                    renderContent();
+                                }
                             }
                             stopRenderLoop();
                             historyEntry.assistantText = streamTextBuffer;
@@ -10881,6 +10915,19 @@
                     if (fullText) {
                         const lines = fullText.split(/\r?\n/);
                         for (const line of lines) processStreamLine(providerTemplate, line);
+                        if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
+                            const fallback = extractNonStreamResult(providerTemplate, fullText);
+                            if (fallback && fallback.error) {
+                                if (!shouldSuppressResultError()) {
+                                    resultDiv.innerHTML = buildApiErrorHtml(provider, fallback.error);
+                                }
+                                autoExpandChatIfEnabled(actionToken);
+                                return;
+                            }
+                            if (fallback && fallback.text) {
+                                streamTextBuffer = String(fallback.text);
+                            }
+                        }
                         renderContent();
                         historyEntry.assistantText = streamTextBuffer;
                         logAiResponse(provider, config.modelName, mode, streamTextBuffer);
@@ -11294,6 +11341,75 @@
             }
         }
         return "";
+    }
+
+    function stripResponseStats(rawText) {
+        if (typeof rawText !== "string") return "";
+        return rawText.replace(/<\|stats\|>[\s\S]*?<\|\/stats\|>\s*%?/g, "").trim();
+    }
+
+    function normalizeNonStreamText(rawText) {
+        if (rawText === null || rawText === undefined) return "";
+        return stripResponseStats(String(rawText));
+    }
+
+    function extractNonStreamResult(template, payload) {
+        if (payload === null || payload === undefined) return null;
+        let data = payload;
+        if (typeof payload === "string") {
+            const trimmed = payload.trim();
+            if (!trimmed) return null;
+            const cleaned = stripResponseStats(trimmed);
+            try {
+                data = JSON.parse(cleaned || trimmed);
+            } catch (e) {
+                return cleaned ? { text: cleaned } : null;
+            }
+        }
+        if (!data || typeof data !== "object") return null;
+        const apiErr = parseApiError(data);
+        if (apiErr) return { error: apiErr };
+
+        const parser = template && template.stream ? template.stream.parser : "";
+        if (parser === "openai-responses") {
+            const text = normalizeNonStreamText(extractOpenaiOutputText(data));
+            if (text) return { text };
+        }
+        if (parser === "chat-parts") {
+            const text = normalizeNonStreamText(extractChatPartsOutputText(data));
+            if (text) return { text };
+        }
+
+        let text = "";
+        if (Array.isArray(data.choices) && data.choices.length) {
+            const choice = data.choices[0] || {};
+            if (choice.message && typeof choice.message.content === "string") {
+                text = choice.message.content;
+            } else if (typeof choice.text === "string") {
+                text = choice.text;
+            }
+        }
+
+        if (!text) {
+            const deltaPath = template && template.stream && template.stream.deltaPath
+                ? template.stream.deltaPath
+                : "";
+            if (deltaPath && deltaPath.includes(".delta.")) {
+                const fullPath = deltaPath.replace(".delta.", ".message.");
+                const candidate = getValueByPath(data, fullPath);
+                if (typeof candidate === "string") {
+                    text = candidate;
+                }
+            }
+        }
+
+        if (!text && typeof data.output_text === "string") text = data.output_text;
+        if (!text && typeof data.result === "string") text = data.result;
+        if (!text && typeof data.message === "string") text = data.message;
+        if (!text && typeof data.text === "string") text = data.text;
+
+        const normalizedText = normalizeNonStreamText(text);
+        return normalizedText ? { text: normalizedText } : null;
     }
 
     function processChatPartsStreamLine(template, line) {
@@ -12027,6 +12143,7 @@
                     const reader = res.response.getReader();
                     const decoder = new TextDecoder("utf-8");
                     let buffer = "";
+                    let rawText = "";
 
                     (async function readStream() {
                         try {
@@ -12034,6 +12151,7 @@
                                 const { done, value } = await reader.read();
                                 if (done) break;
                                 const chunk = decoder.decode(value, { stream: true });
+                                rawText += chunk;
                                 buffer += chunk;
                                 const lines = buffer.split(/\r?\n/);
                                 buffer = lines.pop();
@@ -12051,6 +12169,17 @@
                             }
                             if (buffer && buffer.trim()) {
                                 processStreamLine(providerTemplate, buffer);
+                            }
+                            if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
+                                const fallback = extractNonStreamResult(providerTemplate, rawText);
+                                if (fallback && fallback.error) {
+                                    handleApiError(provider, fallback.error);
+                                    return;
+                                }
+                                if (fallback && fallback.text) {
+                                    streamTextBuffer = String(fallback.text);
+                                    renderContent();
+                                }
                             }
                             stopRenderLoop();
                             historyEntry.assistantText = streamTextBuffer;
@@ -12245,6 +12374,7 @@
             }
 
             startRenderLoop();
+            let rawText = "";
             if (response.body && response.body.getReader) {
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder("utf-8");
@@ -12253,6 +12383,7 @@
                     const { done, value } = await reader.read();
                     if (done) break;
                     const chunk = decoder.decode(value, { stream: true });
+                    rawText += chunk;
                     buffer += chunk;
                     const lines = buffer.split(/\r?\n/);
                     buffer = lines.pop();
@@ -12267,9 +12398,24 @@
                 }
             } else {
                 const fullText = await response.text();
+                rawText = fullText || "";
                 if (fullText) {
                     const lines = fullText.split(/\r?\n/);
                     for (const line of lines) processStreamLine(providerTemplate, line);
+                }
+            }
+            if (!chatAssistantBuffer.trim()) {
+                const fallback = extractNonStreamResult(providerTemplate, rawText);
+                if (fallback && fallback.error) {
+                    stopRenderLoop();
+                    finalizeChatResponse(actionToken);
+                    appendChatError(buildApiErrorHtml(provider, fallback.error), { allowHtml: true });
+                    return;
+                }
+                if (fallback && fallback.text) {
+                    chatAssistantBuffer = String(fallback.text);
+                    updateChatStreamText();
+                    renderContent();
                 }
             }
             stopRenderLoop();
@@ -12297,6 +12443,7 @@
                     const reader = res.response.getReader();
                     const decoder = new TextDecoder("utf-8");
                     let buffer = "";
+                    let rawText = "";
 
                     (async function readStream() {
                         let streamErr = "";
@@ -12305,6 +12452,7 @@
                                 const { done, value } = await reader.read();
                                 if (done) break;
                                 const chunk = decoder.decode(value, { stream: true });
+                                rawText += chunk;
                                 buffer += chunk;
                                 const lines = buffer.split(/\r?\n/);
                                 buffer = lines.pop();
@@ -12320,6 +12468,18 @@
                             }
                             if (buffer && buffer.trim()) {
                                 processStreamLine(providerTemplate, buffer);
+                            }
+                            if (!chatAssistantBuffer.trim()) {
+                                const fallback = extractNonStreamResult(providerTemplate, rawText);
+                                if (fallback && fallback.error) {
+                                    handleApiError(provider, fallback.error);
+                                    return;
+                                }
+                                if (fallback && fallback.text) {
+                                    chatAssistantBuffer = String(fallback.text);
+                                    updateChatStreamText();
+                                    renderContent();
+                                }
                             }
                             stopRenderLoop();
                             finalizeChatResponse(actionToken);
