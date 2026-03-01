@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.5
+// @version      v15.5.1
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -96,6 +96,11 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v15.5.1 更新日志
+        ## 🐛 问题修复
+        *   修复当基础动画关闭时，顶部区域的“收起”按钮、查看原文复选框、显示推理复选框仍有动画的问题
+        *   修复用户上次使用收起顶部区域并缩小到悬浮球后，重新选择文本点击“译”时顶部区域不自动展开的问题
+        ---
         v15.5 更新日志
         ## 🐛 问题修复
         *   修复当API返回内容包含 <|stats|>...</|stats|> 标记时，脚本无任何输出的问题
@@ -972,6 +977,7 @@
         opacity: 0;
         pointer-events: none;
     }
+    #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-header-main-controls,
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-main-top-section,
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-chat-body,
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-reasoning-wrapper {
@@ -2295,6 +2301,20 @@
         if (!popup) return;
         const controls = popup.querySelector("#coolauxv-header-main-controls");
         if (!controls) return;
+        if (!isBasicAnimEnabled()) {
+            if (visible) {
+                controls.style.display = "flex";
+                controls.style.overflow = "visible";
+                controls.style.maxWidth = "none";
+                controls.classList.remove("coolauxv-header-controls-collapsed");
+            } else {
+                controls.style.overflow = "hidden";
+                controls.style.maxWidth = "0px";
+                controls.classList.add("coolauxv-header-controls-collapsed");
+                controls.style.display = "none";
+            }
+            return;
+        }
 
         if (visible) {
             if (controls.style.display === "flex" && !controls.classList.contains("coolauxv-header-controls-collapsed")) {
@@ -2938,7 +2958,7 @@
                     }
                 }
 
-                setViewImmediate("main");
+                resetMainViewLayoutBySettings();
 
                 // 点击图标默认执行文本翻译
                 doAction("translate");
@@ -9081,6 +9101,25 @@
         }
     }
 
+    function resetMainViewLayoutBySettings() {
+        setViewImmediate("main");
+        isTopSectionCollapsed = false;
+        updateTopSectionCollapseUI();
+
+        const continuousChatEnabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+        const chatBar = popup.querySelector("#coolauxv-chat-bar");
+        if (chatBar) {
+            chatBar.style.display = continuousChatEnabled ? "flex" : "none";
+        }
+        const btnChatHistory = popup.querySelector("#coolauxv-chat-history-btn");
+        if (btnChatHistory) {
+            const persistEnabled = GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST);
+            btnChatHistory.style.display = continuousChatEnabled && persistEnabled ? "inline-block" : "none";
+        }
+        isChatCollapsed = !continuousChatEnabled;
+        updateChatCollapseUI();
+    }
+
     function updateScroll(element, newContentHTML, isRaw) {
         const isNearBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= 30;
 
@@ -9560,11 +9599,8 @@
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
         if (reasoningDiv) reasoningDiv.innerHTML = "";
 
-        // 5. 收起连续对话，展开顶部区域
-        isChatCollapsed = true;
-        updateChatCollapseUI();
-        isTopSectionCollapsed = false;
-        updateTopSectionCollapseUI();
+        // 5. 重置主页布局（与“译”悬浮球激活逻辑复用）
+        resetMainViewLayoutBySettings();
 
         queueCurrentChatSessionToBackground();
         clearConversationState();
