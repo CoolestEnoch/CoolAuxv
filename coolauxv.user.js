@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.5.1
+// @version      v15.6
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -205,6 +205,7 @@
     const DEFAULT_USE_NEW_SCREENSHOT = "v1"; // 默认使用老逻辑截图
     const DEFAULT_ENABLE_BASIC_ANIM = true; // 默认开启基础动画（折叠/展开）
     const DEFAULT_ENABLE_MINIMIZE_ANIM = false; // 默认关闭收起动画
+    const DEFAULT_SELECTION_ICON_ACTION = "translate";
     const POPUP_ANIM_EASING = "cubic-bezier(0.2, 0, 0, 1)";
     const POPUP_ANIM_EASE_IN = "cubic-bezier(0.4, 0, 1, 1)";
     const POPUP_ANIM_EASE_OUT = "cubic-bezier(0, 0, 0.2, 1)";
@@ -215,6 +216,16 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v15.6 更新日志
+        ## ✨ 功能改进
+        *   设置中新增默认操作选项（实验性功能），可选择点击“译”悬浮球后默认执行翻译或解读
+        ## 🐛 问题修复
+        *   修复在设置中切换提供商后，新提供商的模型选择区无法点击的问题
+        *   修复发送消息后AI回复期间，原本的“AI思考中...”提示不显示的问题
+        *   修复停止AI输出按钮的动画不受设置控制的问题
+        ## 🎨 界面优化
+        *   主区域向上滚动不在底部时，右下角添加“回到底部”按钮，点击可滚动至最底部
+        ---
         v15.5.1 更新日志
         ## 🐛 问题修复
         *   修复当基础动画关闭时，顶部区域的“收起”按钮、查看原文复选框、显示推理复选框仍有动画的问题
@@ -1199,7 +1210,9 @@
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-header-main-controls,
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-main-top-section,
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-chat-body,
-    #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-reasoning-wrapper {
+    #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-reasoning-wrapper,
+    #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-btn-scroll-bottom,
+    #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-btn-scroll-bottom .coolauxv-scroll-bottom-text {
         transition: none !important;
     }
 
@@ -1752,6 +1765,61 @@
         font-size: 15px; line-height: 1.6; padding: 12px;
         flex: 1; overflow-y: auto; height: 100%;
         text-align: left !important; text-indent: 0 !important; /* 强制左对齐 */
+    }
+    #coolauxv-btn-scroll-bottom {
+        position: absolute;
+        right: 10px;
+        bottom: 10px;
+        z-index: 11;
+        display: inline-flex;
+        align-items: center;
+        justify-content: flex-start;
+        width: 30px;
+        min-width: 30px;
+        max-width: 108px;
+        overflow: hidden;
+        padding: 6px 8px;
+        min-height: 28px;
+        font-size: 12px;
+        border-radius: 999px;
+        white-space: nowrap;
+        transform-origin: left center;
+        transition: width 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    padding 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+        box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+    }
+    #coolauxv-btn-scroll-bottom .coolauxv-scroll-bottom-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 14px;
+        flex: 0 0 14px;
+    }
+    #coolauxv-btn-scroll-bottom .coolauxv-scroll-bottom-text {
+        max-width: 0;
+        margin-left: 0;
+        opacity: 0;
+        overflow: hidden;
+        transition: max-width 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    margin-left 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1);
+    }
+    #coolauxv-btn-scroll-bottom:hover {
+        width: 92px;
+        padding-right: 10px;
+    }
+    #coolauxv-btn-scroll-bottom:hover .coolauxv-scroll-bottom-text {
+        max-width: 60px;
+        margin-left: 6px;
+        opacity: 1;
+    }
+    #coolauxv-btn-scroll-bottom.coolauxv-animated-visibility {
+        transform: translateY(4px) scale(0.98);
+    }
+    #coolauxv-btn-scroll-bottom.coolauxv-animated-visibility.coolauxv-visible {
+        transform: translateY(0) scale(1);
     }
 
     .coolauxv-copy-btn {
@@ -3144,6 +3212,10 @@
     let isWindowDragging = false;
     let isSplitterDragging = false;
     let activeActionToken = 0;
+    const normalizeSelectionIconAction = (mode) => (mode === "explain" ? "explain" : "translate");
+    const getSelectionIconAction = () => normalizeSelectionIconAction(
+        GM_getValue("coolauxv_selection_icon_action", DEFAULT_SELECTION_ICON_ACTION)
+    );
 
     function initUI() {
         try {
@@ -3163,7 +3235,7 @@
                 // 每次点击浮窗图标（重新激活），清空截图和预览状态，回归文本模式
                 capturedImageBase64 = "";
                 const btnPreview = popup.querySelector("#coolauxv-btn-preview");
-                if (btnPreview) btnPreview.style.display = "none";
+                setAnimatedVisibility(btnPreview, false);
                 const btnMainClear = popup.querySelector("#coolauxv-btn-clear-shot");
                 setAnimatedVisibility(btnMainClear, false);
 
@@ -3192,8 +3264,8 @@
 
                 resetMainViewLayoutBySettings();
 
-                // 点击图标默认执行文本翻译
-                doAction("translate");
+                // 点击图标按设置执行默认操作（翻译/解读）
+                doAction(getSelectionIconAction());
             };
             cursorBtn.addEventListener("touchend", onIconClick);
             cursorBtn.onclick = onIconClick;
@@ -3395,7 +3467,7 @@
                       <!-- 解读按钮：紫色风格 -->
                       <button id="coolauxv-btn-explain" class="coolauxv-action-btn coolauxv-btn-purple" style="flex:1;">解读</button>
 
-                      <button id="coolauxv-btn-stop" class="coolauxv-action-btn" style="display:none; flex:0.6; background:#fee2e2; color:#b91c1c; border-color:#fecaca;" title="打断当前输出">⏹ 停止</button>
+                      <button id="coolauxv-btn-stop" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.6; background:#fee2e2; color:#b91c1c; border-color:#fecaca;" title="打断当前输出">⏹ 停止</button>
 
                       <button id="coolauxv-btn-image-file" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.45; white-space:nowrap;" title="选择本地图片">🖼 本地</button>
 
@@ -3403,7 +3475,7 @@
                       <button id="coolauxv-btn-screenshot" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
 
                       <!-- 预览按钮：默认风格 -->
-                      <button id="coolauxv-btn-preview" class="coolauxv-action-btn" style="display:none; font-size:14px;" title="预览截图">🔍</button>
+                      <button id="coolauxv-btn-preview" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; font-size:14px;" title="预览截图">🔍</button>
                       <button id="coolauxv-btn-clear-shot" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; font-size:14px;" title="清除识屏">🗑</button>
                   </div>
                   <input type="file" id="coolauxv-input-image-file" accept="image/*" style="display:none;">
@@ -3420,6 +3492,10 @@
                       <div id="coolauxv-result-wrapper" class="coolauxv-box-wrapper" style="flex:1;">
                           <span id="coolauxv-clear-result" class="coolauxv-copy-btn coolauxv-clear-btn" title="清空输出">🧹</span>
                           <span class="coolauxv-copy-btn" data-type="result" title="复制结果">📋</span>
+                          <button id="coolauxv-btn-scroll-bottom" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none;" aria-label="回到底部">
+                              <span class="coolauxv-scroll-bottom-icon">↓</span>
+                              <span class="coolauxv-scroll-bottom-text">回到底部</span>
+                          </button>
                           <div id="coolauxv-result" class="coolauxv-scroll-box"></div>
                       </div>
                   </div>
@@ -3623,6 +3699,22 @@
                             </div>
                             <div class="coolauxv-settings-item-hint">v1: 兼容性最好; v2: 修复错位; v3: 更通用，但Android可能不能用</div>
                         </div>
+                        <div class="coolauxv-settings-item coolauxv-settings-item-wide">
+                            <div class="coolauxv-settings-item-head">
+                                <span style="font-size:13px; color:#555;">“译”悬浮球默认操作</span>
+                            </div>
+                            <div class="coolauxv-radio-group" style="margin-top:0;">
+                                <label class="coolauxv-radio-label">
+                                    <input type="radio" name="coolauxv_selection_icon_action_radio" value="translate">
+                                    <span class="coolauxv-radio-text">翻译</span>
+                                </label>
+                                <label class="coolauxv-radio-label">
+                                    <input type="radio" name="coolauxv_selection_icon_action_radio" value="explain">
+                                    <span class="coolauxv-radio-text">解读</span>
+                                </label>
+                            </div>
+                            <div class="coolauxv-settings-item-hint">点击“译”悬浮球时默认触发对应按钮事件</div>
+                        </div>
                         <div class="coolauxv-settings-item">
                             <label class="coolauxv-toggle-label">
                                 <input type="checkbox" id="coolauxv-cfg-continuous-chat"> 连续对话
@@ -3726,7 +3818,7 @@
                 if (btnMainClear) {
                     btnMainClear.onclick = () => {
                         capturedImageBase64 = "";
-                        if (btnPreview) btnPreview.style.display = "none";
+                        setAnimatedVisibility(btnPreview, false);
                         setAnimatedVisibility(btnMainClear, false);
                     };
                 }
@@ -3882,6 +3974,7 @@
         const inputPersistentBall = popup.querySelector("#coolauxv-cfg-persistent-ball");
         const inputDraggableBall = popup.querySelector("#coolauxv-cfg-draggable-ball");
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
+        const selectionIconActionRadios = popup.querySelectorAll('input[name="coolauxv_selection_icon_action_radio"]');
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
         const inputContinuousChat = popup.querySelector("#coolauxv-cfg-continuous-chat");
         const inputChatHistoryPersist = popup.querySelector("#coolauxv-cfg-chat-history-persist");
@@ -3930,7 +4023,8 @@
             "coolauxv_anim_speed",
             "coolauxv_enable_blur_glass",
             "coolauxv_persistent_ball",
-            "coolauxv_draggable_ball"
+            "coolauxv_draggable_ball",
+            "coolauxv_selection_icon_action"
         ];
         const LEGACY_CONFIG_KEYS = [
             "coolauxv_api_key",
@@ -6020,6 +6114,12 @@
                 showModal("提示", "反馈bug需启用详细日志");
             });
         }
+        selectionIconActionRadios.forEach((radio) => {
+            radio.addEventListener("change", (e) => {
+                if (!e.target.checked) return;
+                GM_setValue("coolauxv_selection_icon_action", normalizeSelectionIconAction(e.target.value));
+            });
+        });
 
         const saveConfig = (key, value) => {
             const val = value.trim();
@@ -7199,6 +7299,7 @@
             if (visible) {
                 if (section.classList.contains("coolauxv-model-visible") && section.style.display !== "none") return;
                 section.style.display = "block";
+                section.style.pointerEvents = "auto";
                 section.style.maxHeight = "0px";
                 section.style.opacity = "0";
                 section.style.transform = "translateY(-4px)";
@@ -7232,6 +7333,7 @@
             section.style.maxHeight = "0px";
             section.style.opacity = "0";
             section.style.transform = "translateY(-4px)";
+            section.style.pointerEvents = "none";
             const onEnd = (e) => {
                 if (e.propertyName !== "max-height") return;
                 if (!section.classList.contains("coolauxv-model-visible")) {
@@ -7982,6 +8084,7 @@
                     scrollIfPinned();
                 }, 320);
             }
+            updateResultScrollBottomButton();
         };
 
         if (chatToggleBtn) {
@@ -8050,6 +8153,9 @@
             const currentLevel = GM_getValue("coolauxv_log_level", DEFAULT_LOG_LEVEL);
             const targetRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="${currentLevel}"]`);
             if (targetRadio) targetRadio.checked = true;
+            const selectionIconAction = getSelectionIconAction();
+            const targetSelectionActionRadio = popup.querySelector(`input[name="coolauxv_selection_icon_action_radio"][value="${selectionIconAction}"]`);
+            if (targetSelectionActionRadio) targetSelectionActionRadio.checked = true;
 
             if (inputBlurGlass) {
                 inputBlurGlass.checked = GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS);
@@ -8138,6 +8244,9 @@
             if (inputChatEnterSend) {
                 inputChatEnterSend.checked = GM_getValue("coolauxv_chat_enter_send", DEFAULT_CHAT_ENTER_SEND);
             }
+            const selectionIconAction = getSelectionIconAction();
+            const targetSelectionActionRadio = popup.querySelector(`input[name="coolauxv_selection_icon_action_radio"][value="${selectionIconAction}"]`);
+            if (targetSelectionActionRadio) targetSelectionActionRadio.checked = true;
         };
 
         const buildExportSnapshot = (includePrivacy) => {
@@ -8674,12 +8783,12 @@
         if (!supportsVision) {
             capturedImageBase64 = "";
             chatCapturedImageBase64 = "";
-            if (btnPreview) btnPreview.style.display = "none";
+            setAnimatedVisibility(btnPreview, false);
             setAnimatedVisibility(btnMainClear, false);
             setAnimatedVisibility(btnChatPreview, false);
             setAnimatedVisibility(btnChatClear, false);
         } else {
-            if (btnPreview) btnPreview.style.display = capturedImageBase64 ? "inline-block" : "none";
+            setAnimatedVisibility(btnPreview, !!capturedImageBase64);
             setAnimatedVisibility(btnMainClear, !!capturedImageBase64);
             setAnimatedVisibility(btnChatPreview, !!chatCapturedImageBase64);
             setAnimatedVisibility(btnChatClear, !!chatCapturedImageBase64);
@@ -8723,7 +8832,7 @@
         capturedImageBase64 = imageUrl;
         const btnPreview = popup ? popup.querySelector("#coolauxv-btn-preview") : null;
         const btnMainClear = popup ? popup.querySelector("#coolauxv-btn-clear-shot") : null;
-        if (btnPreview) btnPreview.style.display = "inline-block";
+        setAnimatedVisibility(btnPreview, true);
         setAnimatedVisibility(btnMainClear, true);
         const input = popup ? popup.querySelector("#coolauxv-input") : null;
         if (input && !input.value.trim()) {
@@ -9152,6 +9261,9 @@
             : "";
         return `\n\n**🤖 AI${suffix}：**${editBtn}${deleteBtn}\n`;
     }
+    function getChatAssistantThinkingPrefix(label) {
+        return `${getChatAssistantPrefix(label)}<span style="color:#888; display:inline-flex; align-items:center; gap:6px;">⏳ <span class="coolauxv-pulse">AI 思考中...</span></span>\n`;
+    }
 
     function buildChatAssistantBlock(text, label, recordId) {
         return getChatAssistantPrefix(label, recordId) + (text || "");
@@ -9481,9 +9593,9 @@
 
     function updateChatStreamText() {
         if (chatAssistantBuffer) {
-            streamTextBuffer = chatDisplayBuffer + chatPendingAssistantPrefix + chatAssistantBuffer;
+            streamTextBuffer = chatDisplayBuffer + getChatAssistantPrefix(chatAssistantLabel) + chatAssistantBuffer;
         } else {
-            streamTextBuffer = chatDisplayBuffer;
+            streamTextBuffer = chatDisplayBuffer + chatPendingAssistantPrefix;
         }
     }
 
@@ -9808,6 +9920,34 @@
                 resultDiv.innerHTML = "<span style='color:#888'>⏳ AI 思考中...</span>";
             }
         }
+        updateResultScrollBottomButton();
+    }
+
+    function scrollResultToBottom(smooth = false) {
+        if (!popup) return;
+        const resultDiv = popup.querySelector("#coolauxv-result");
+        if (!resultDiv) return;
+        if (smooth && typeof resultDiv.scrollTo === "function") {
+            resultDiv.scrollTo({ top: resultDiv.scrollHeight, behavior: "smooth" });
+            return;
+        }
+        resultDiv.scrollTop = resultDiv.scrollHeight;
+    }
+
+    function updateResultScrollBottomButton() {
+        if (!popup) return;
+        const resultDiv = popup.querySelector("#coolauxv-result");
+        const btnScrollBottom = popup.querySelector("#coolauxv-btn-scroll-bottom");
+        if (!resultDiv || !btnScrollBottom) return;
+        const canScroll = resultDiv.scrollHeight - resultDiv.clientHeight > 8;
+        const isNearBottom = resultDiv.scrollHeight - resultDiv.scrollTop - resultDiv.clientHeight <= 30;
+        const shouldShow = canScroll && !isNearBottom;
+        if (!isBasicAnimEnabled()) {
+            btnScrollBottom.classList.toggle("coolauxv-visible", shouldShow);
+            btnScrollBottom.style.display = shouldShow ? "flex" : "none";
+            return;
+        }
+        setAnimatedVisibility(btnScrollBottom, shouldShow);
     }
 
     function startRenderLoop() {
@@ -9832,18 +9972,44 @@
         renderContent();
     }
 
+    const MAIN_BUTTON_ADV_ANIM_IDS = new Set([
+        "coolauxv-btn-stop",
+        "coolauxv-btn-preview",
+        "coolauxv-btn-clear-shot",
+        "coolauxv-btn-scroll-bottom"
+    ]);
+
+    function shouldAnimateButtonVisibility(element) {
+        if (!element) return false;
+        if (!isBasicAnimEnabled()) return false;
+        if (MAIN_BUTTON_ADV_ANIM_IDS.has(element.id)) {
+            return isMinimizeAnimEnabled();
+        }
+        return true;
+    }
+
     function setAnimatedVisibility(element, visible) {
         if (!element) return;
+        const animateEnabled = shouldAnimateButtonVisibility(element);
         const isVisible = element.classList.contains("coolauxv-visible");
         if (visible) {
             if (isVisible) return;
             element.style.display = "flex";
+            if (!animateEnabled) {
+                element.classList.add("coolauxv-visible");
+                return;
+            }
             void element.offsetWidth;
             element.classList.add("coolauxv-visible");
             return;
         }
 
         if (!isVisible && element.style.display === "none") return;
+        if (!animateEnabled) {
+            element.classList.remove("coolauxv-visible");
+            element.style.display = "none";
+            return;
+        }
         element.classList.remove("coolauxv-visible");
         const onEnd = (e) => {
             if (e.propertyName !== "opacity") return;
@@ -9871,7 +10037,7 @@
         const btnStop = popup.querySelector("#coolauxv-btn-stop");
         const btnChatStop = popup.querySelector("#coolauxv-btn-chat-stop");
         const visible = !!isRendering;
-        if (btnStop) btnStop.style.display = visible ? "flex" : "none";
+        if (btnStop) setAnimatedVisibility(btnStop, visible);
         if (btnChatStop) setAnimatedVisibility(btnChatStop, visible);
     }
 
@@ -10040,7 +10206,7 @@
 
         // 3. 隐藏预览按钮
         const btnPreview = popup.querySelector("#coolauxv-btn-preview");
-        if (btnPreview) btnPreview.style.display = "none";
+        setAnimatedVisibility(btnPreview, false);
         const btnMainClear = popup.querySelector("#coolauxv-btn-clear-shot");
         setAnimatedVisibility(btnMainClear, false);
         const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
@@ -10115,11 +10281,13 @@
         const btnChatSend = popup.querySelector("#coolauxv-btn-chat-send");
         const btnChatStop = popup.querySelector("#coolauxv-btn-chat-stop");
         const btnChatEditCancel = popup.querySelector("#coolauxv-btn-chat-edit-cancel");
+        const btnScrollBottom = popup.querySelector("#coolauxv-btn-scroll-bottom");
         const btnMainImageFile = popup.querySelector("#coolauxv-btn-image-file");
         const inputMainImageFile = popup.querySelector("#coolauxv-input-image-file");
         const btnChatImageFile = popup.querySelector("#coolauxv-btn-chat-image-file");
         const inputChatImageFile = popup.querySelector("#coolauxv-input-chat-image-file");
         const chatInput = popup.querySelector("#coolauxv-chat-input");
+        const resultScrollDiv = popup.querySelector("#coolauxv-result");
 
         if (minBtn) minBtn.onclick = minimizeWindow;
         if (closeBtn) closeBtn.onclick = closeWindow;
@@ -10163,9 +10331,14 @@
         if (btnChatHistory) btnChatHistory.onclick = () => openChatHistoryManager();
         if (btnChatSend) btnChatSend.onclick = () => doChatSend();
         if (btnChatStop) btnChatStop.onclick = () => interruptActiveOutput();
+        if (btnScrollBottom) btnScrollBottom.onclick = () => scrollResultToBottom(true);
         if (btnChatEditCancel) btnChatEditCancel.onclick = () => {
             exitChatEditMode();
         };
+        if (resultScrollDiv) {
+            resultScrollDiv.addEventListener("scroll", () => updateResultScrollBottomButton());
+            updateResultScrollBottomButton();
+        }
         if (btnMainImageFile && inputMainImageFile) {
             btnMainImageFile.onclick = () => {
                 inputMainImageFile.value = "";
@@ -11993,7 +12166,7 @@
                     capturedImageBase64 = newCaptured;
                     const btnPreview = popup.querySelector("#coolauxv-btn-preview");
                     const btnMainClear = popup.querySelector("#coolauxv-btn-clear-shot");
-                    if (btnPreview) btnPreview.style.display = "inline-block";
+                    setAnimatedVisibility(btnPreview, true);
                     setAnimatedVisibility(btnMainClear, true);
                     resetScreenshotUI();
                     popup.style.display = "flex";
@@ -12312,7 +12485,7 @@
         const userRecordId = generateChatRecordId();
         chatDisplayBuffer += formatChatUserBlock(displayText, imageId, chatDisplayBuffer.length === 0, turnId, userRecordId);
         chatAssistantLabel = formatChatModelLabel(provider, config.modelVision);
-        chatPendingAssistantPrefix = getChatAssistantPrefix(chatAssistantLabel);
+        chatPendingAssistantPrefix = getChatAssistantThinkingPrefix(chatAssistantLabel);
         chatAssistantBuffer = "";
         updateChatStreamText();
         lastRenderedText = "";
