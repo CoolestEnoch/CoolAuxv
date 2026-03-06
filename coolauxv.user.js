@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.7.1
+// @version      v15.7.2
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -217,6 +217,10 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v15.7.2 更新日志
+        ## 🐛 问题修复
+        *   修复pdfjs预览器里可能出现两个分数缩放输入框的问题
+        ---
         v15.7.1 更新日志
         ## 🐛 问题修复
         *   修复pdfjs预览器里偶发的没法分数缩放问题
@@ -1300,6 +1304,7 @@
     const PDFJS_CUSTOM_SCALE_MAX = 10;
     const PDFJS_CUSTOM_SCALE_INIT_FLAG = "__coolauxv_pdfjs_custom_scale_init";
     const PDFJS_CUSTOM_SCALE_BOUND_ATTR = "data-coolauxv-pdfjs-custom-scale-bound";
+    const PDFJS_CUSTOM_SCALE_EVENTBUS_BOUND_ATTR = "data-coolauxv-pdfjs-eventbus-bound";
 
     const getPdfjsViewerApplication = () => {
         const app = (globalThis && globalThis.PDFViewerApplication)
@@ -1497,13 +1502,41 @@
             syncFromViewer();
         });
 
-        const app = getPdfjsViewerApplication();
-        if (app && app.eventBus && typeof app.eventBus.on === "function") {
+        const bindEventBusListener = () => {
+            if (scaleSelect.getAttribute(PDFJS_CUSTOM_SCALE_EVENTBUS_BOUND_ATTR) === "1") return true;
+            const app = getPdfjsViewerApplication();
+            if (!(app && app.eventBus && typeof app.eventBus.on === "function")) return false;
             app.eventBus.on("scalechanging", () => {
                 if (document.activeElement === input) return;
                 syncFromViewer();
             });
+            scaleSelect.setAttribute(PDFJS_CUSTOM_SCALE_EVENTBUS_BOUND_ATTR, "1");
+            Logger.debug("[PDF.js] 已绑定 eventBus.scalechanging 同步");
+            return true;
+        };
+
+        if (!bindEventBusListener()) {
+            let bindTryCount = 0;
+            const bindTimer = setInterval(() => {
+                bindTryCount += 1;
+                if (bindEventBusListener() || bindTryCount >= 40) {
+                    clearInterval(bindTimer);
+                }
+            }, 250);
         }
+
+        const scaleMutationObserver = new MutationObserver(() => {
+            if (document.activeElement === input) return;
+            syncFromViewer();
+        });
+        scaleMutationObserver.observe(scaleSelect, {
+            subtree: true,
+            childList: true,
+            characterData: true,
+            attributes: true,
+            attributeFilter: ["value", "aria-valuetext", "data-l10n-args"]
+        });
+        container.__coolauxvScaleMutationObserver = scaleMutationObserver;
 
         scaleSelectContainer.insertAdjacentElement("afterend", container);
         scaleSelect.setAttribute(PDFJS_CUSTOM_SCALE_BOUND_ATTR, "1");
