@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.7-dev4
+// @version      v15.7-dev5
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -4191,7 +4191,7 @@
             }, 0);
 
         } catch (e) {
-            console.error("初始化失败:", e);
+            Logger.error("初始化失败:", e);
         }
     }
 
@@ -10012,7 +10012,7 @@
                     });
                 }
             } catch (e) {
-                console.error("Render Error:", e);
+                Logger.error("Render Error:", e);
                 element.innerText = newContentHTML;
             }
         }
@@ -10854,7 +10854,7 @@
                     btn.innerText = "✅";
                     setTimeout(() => { btn.innerText = originalText; }, 1500);
                 } catch (e) {
-                    console.error("复制失败", e);
+                    Logger.error("复制失败", e);
                     btn.innerText = "❌";
                     setTimeout(() => { btn.innerText = "📋"; }, 1500);
                 }
@@ -11022,7 +11022,7 @@
     // ============================
     function showModal(title, content) {
         if (!title && !content) {
-            console.warn("[CoolAuxv] showModal: Title and content cannot both be empty.");
+            Logger.warn("[CoolAuxv] showModal: Title and content cannot both be empty.");
             return;
         }
 
@@ -12281,7 +12281,7 @@
                             overlay.style.backgroundColor = "rgba(0,0,0,0.8)";
 
                         } catch (err) {
-                            console.warn("v3 screen share error:", err);
+                            Logger.warn("v3 screen share error:", err);
 
                             // 先恢复界面状态
                             resetScreenshotUI();
@@ -12361,7 +12361,7 @@
                     document.body.style.cursor = "crosshair";
 
                 } catch (err) {
-                    console.error("识屏初始化失败:", err);
+                    Logger.error("识屏初始化失败:", err);
                     alert("识屏初始化失败: " + err.message);
                     resetScreenshotUI();
                     popup.style.display = "flex";
@@ -12578,7 +12578,7 @@
                     doImageAnalysis('vision');
 
                 } catch (err) {
-                    console.error("截图处理失败:", err);
+                    Logger.error("截图处理失败:", err);
                     alert("截图失败: " + err.message);
                     resetScreenshotUI();
                     popup.style.display = "flex";
