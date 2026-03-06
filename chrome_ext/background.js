@@ -7,11 +7,32 @@ const DNR_RULE_ID_LIMIT = 500;
 
 const isOurViewer = (url) => typeof url === "string" && url.startsWith(VIEWER_URL);
 
-const looksLikePdf = (url) => {
-  if (!url) {
-    return false;
+const normalizePdfUrlCandidate = (value) => {
+  if (!value) {
+    return null;
   }
-  return /\.pdf($|[?#])/i.test(url);
+  const raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+  const candidates = [raw];
+  try {
+    candidates.push(decodeURIComponent(raw));
+  } catch (err) {
+    // ignore decode error
+  }
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === "file:" || parsed.protocol === "http:" || parsed.protocol === "https:") {
+        return parsed.href;
+      }
+    } catch (err) {
+      // keep trying
+    }
+  }
+  return null;
 };
 
 const extractPdfUrl = (rawUrl) => {
@@ -21,13 +42,18 @@ const extractPdfUrl = (rawUrl) => {
   try {
     const url = new URL(rawUrl);
     if (url.protocol === "chrome-extension:" && url.host === BUILTIN_PDF_VIEWER_ID) {
-      const fileParam = url.searchParams.get("file");
-      return fileParam || null;
-    }
-    if (url.protocol === "file:" || url.protocol === "http:" || url.protocol === "https:") {
-      if (looksLikePdf(url.href)) {
-        return url.href;
+      const candidateParams = [
+        url.searchParams.get("file"),
+        url.searchParams.get("src"),
+        url.searchParams.get("url")
+      ];
+      for (const param of candidateParams) {
+        const normalized = normalizePdfUrlCandidate(param);
+        if (normalized) {
+          return normalized;
+        }
       }
+      return null;
     }
   } catch (err) {
     return null;
@@ -59,6 +85,31 @@ const serializeError = (err) => {
     name: err.name || "Error",
     message: err.message || String(err)
   };
+};
+
+const getHeaderValue = (responseHeaders, headerName) => {
+  if (!Array.isArray(responseHeaders) || !headerName) {
+    return "";
+  }
+  const target = String(headerName).toLowerCase();
+  for (const header of responseHeaders) {
+    if (!header || !header.name) continue;
+    if (String(header.name).toLowerCase() !== target) continue;
+    return String(header.value || "");
+  }
+  return "";
+};
+
+const isPdfResponseByHeaders = (responseHeaders) => {
+  const contentType = getHeaderValue(responseHeaders, "content-type").toLowerCase();
+  if (contentType.includes("application/pdf")) {
+    return true;
+  }
+  const disposition = getHeaderValue(responseHeaders, "content-disposition").toLowerCase();
+  if (disposition.includes(".pdf")) {
+    return true;
+  }
+  return false;
 };
 
 const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3, none: 4 };
@@ -246,7 +297,7 @@ const scheduleOriginStripRuleUpdate = () => {
   }, 200);
 };
 
-const maybeRedirect = (tabId, url) => {
+const maybeRedirectBuiltinViewer = (tabId, url) => {
   if (!url || isOurViewer(url)) {
     return;
   }
@@ -259,11 +310,11 @@ const maybeRedirect = (tabId, url) => {
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo && changeInfo.url) {
-    maybeRedirect(tabId, changeInfo.url);
+    maybeRedirectBuiltinViewer(tabId, changeInfo.url);
     return;
   }
   if (changeInfo && changeInfo.status === "complete" && tab && tab.url) {
-    maybeRedirect(tabId, tab.url);
+    maybeRedirectBuiltinViewer(tabId, tab.url);
   }
 });
 
@@ -271,8 +322,37 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) {
     return;
   }
-  maybeRedirect(details.tabId, details.url);
+  maybeRedirectBuiltinViewer(details.tabId, details.url);
 });
+
+const handlePdfMainFrameHeaders = (details) => {
+  if (!details || details.tabId < 0) {
+    return;
+  }
+  if (details.frameId !== 0 || details.type !== "main_frame") {
+    return;
+  }
+  if (isOurViewer(details.url)) {
+    return;
+  }
+  if (!isPdfResponseByHeaders(details.responseHeaders)) {
+    return;
+  }
+  log("info", "Detected PDF main-frame response by headers, redirecting to CoolAuxv viewer", {
+    tabId: details.tabId,
+    statusCode: details.statusCode,
+    url: details.url
+  });
+  redirectToViewer(details.tabId, details.url);
+};
+
+if (chrome.webRequest && chrome.webRequest.onHeadersReceived) {
+  chrome.webRequest.onHeadersReceived.addListener(
+    handlePdfMainFrameHeaders,
+    { urls: ["<all_urls>"], types: ["main_frame"] },
+    ["responseHeaders", "extraHeaders"]
+  );
+}
 
 chrome.runtime.onConnect.addListener((port) => {
   if (!port || port.name !== "coolauxv-gm-xhr") {
