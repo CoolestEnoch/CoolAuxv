@@ -2843,6 +2843,27 @@ body {
   background-color: var(--toolbar-icon-hover-bg-color);
 }
 
+#coolauxvCustomScaleContainer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-inline-start: 4px;
+}
+
+#coolauxvCustomScaleInput {
+  width: 56px;
+  text-align: end;
+  padding: 4px 4px;
+  margin: 3px 0;
+}
+
+#coolauxvCustomScaleSuffix {
+  min-width: 12px;
+  font-size: 12px;
+  color: var(--main-color);
+  user-select: none;
+}
+
 .toolbarButton::before {
   opacity: var(--toolbar-icon-opacity);
   top: 6px;
@@ -3523,6 +3544,9 @@ dialog :link {
 
 @media all and (max-width: 560px) {
   #scaleSelectContainer {
+    display: none;
+  }
+  #coolauxvCustomScaleContainer {
     display: none;
   }
 }
