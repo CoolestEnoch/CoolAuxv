@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.7-dev1
+// @version      v15.7-dev2
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -19,6 +19,7 @@
 // @require      https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js
 // @require      https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js
 // @require      https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js
+// @require      https://cdn.jsdelivr.net/npm/mermaid@9.4.3/dist/mermaid.min.js
 // @resource     katexCSS https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css
 // @connect      open.bigmodel.cn
 // @connect      api.openai.com
@@ -333,6 +334,153 @@
     };
 
     let providerTemplatesCache = null;
+    const MERMAID_RENDER_FAILED = Symbol("coolauxv_mermaid_render_failed");
+    const chatMermaidSvgCache = new Map();
+    const chatMermaidRenderPending = new Map();
+    let chatMermaidCacheVersion = 0;
+    let mermaidLocalRendererInitialized = false;
+
+    const normalizeMermaidCode = (code) => String(code || "").replace(/\r\n?/g, "\n").trim();
+
+    const getLocalMermaidRenderer = () => {
+        if (typeof mermaid !== "undefined" && mermaid) {
+            return mermaid;
+        }
+        if (globalThis && globalThis.mermaid) {
+            return globalThis.mermaid;
+        }
+        return null;
+    };
+
+    const initLocalMermaidRendererIfNeeded = (renderer) => {
+        if (!renderer || mermaidLocalRendererInitialized) return;
+        if (typeof renderer.initialize === "function") {
+            renderer.initialize({
+                startOnLoad: false,
+                securityLevel: "strict",
+                theme: "default"
+            });
+            mermaidLocalRendererInitialized = true;
+            return;
+        }
+        if (renderer.mermaidAPI && typeof renderer.mermaidAPI.initialize === "function") {
+            renderer.mermaidAPI.initialize({
+                startOnLoad: false,
+                securityLevel: "strict",
+                theme: "default"
+            });
+            mermaidLocalRendererInitialized = true;
+        }
+    };
+
+    const requestMermaidSvgByLocal = (code) => {
+        return new Promise((resolve, reject) => {
+            const renderer = getLocalMermaidRenderer();
+            if (!renderer) {
+                reject(new Error("Mermaid local renderer unavailable"));
+                return;
+            }
+            try {
+                initLocalMermaidRendererIfNeeded(renderer);
+            } catch (err) {
+                reject(err);
+                return;
+            }
+            const renderApi = renderer.mermaidAPI && typeof renderer.mermaidAPI.render === "function"
+                ? renderer.mermaidAPI
+                : renderer;
+            if (!renderApi || typeof renderApi.render !== "function") {
+                reject(new Error("Mermaid render API unavailable"));
+                return;
+            }
+            const renderId = `coolauxv-mermaid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+            const resolveSvg = (value) => {
+                let svgText = "";
+                if (typeof value === "string") {
+                    svgText = value;
+                } else if (value && typeof value.svg === "string") {
+                    svgText = value.svg;
+                }
+                if (svgText && svgText.includes("<svg")) {
+                    resolve(svgText);
+                    return;
+                }
+                reject(new Error("Mermaid local render returned invalid svg"));
+            };
+            try {
+                if (renderApi.render.length >= 3) {
+                    renderApi.render(renderId, code, (svgCode) => {
+                        resolveSvg(svgCode);
+                    });
+                    return;
+                }
+                const renderResult = renderApi.render(renderId, code);
+                if (renderResult && typeof renderResult.then === "function") {
+                    renderResult.then((output) => {
+                        resolveSvg(output);
+                    }).catch((err) => reject(err));
+                    return;
+                }
+                resolveSvg(renderResult);
+            } catch (err) {
+                reject(err);
+            }
+        });
+    };
+
+    const clearMermaidSvgCache = () => {
+        chatMermaidCacheVersion += 1;
+        chatMermaidSvgCache.clear();
+        chatMermaidRenderPending.clear();
+    };
+
+    const getCachedMermaidSvg = (code) => {
+        const normalized = normalizeMermaidCode(code);
+        if (!normalized) return "";
+        const cached = chatMermaidSvgCache.get(normalized);
+        return typeof cached === "string" ? cached : "";
+    };
+
+    const isMermaidRenderFailed = (code) => {
+        const normalized = normalizeMermaidCode(code);
+        if (!normalized) return false;
+        return chatMermaidSvgCache.get(normalized) === MERMAID_RENDER_FAILED;
+    };
+
+    const ensureMermaidSvgCached = (code) => {
+        const normalized = normalizeMermaidCode(code);
+        if (!normalized) return Promise.resolve("");
+        if (chatMermaidSvgCache.has(normalized)) {
+            const cached = chatMermaidSvgCache.get(normalized);
+            return Promise.resolve(typeof cached === "string" ? cached : "");
+        }
+        if (chatMermaidRenderPending.has(normalized)) {
+            return chatMermaidRenderPending.get(normalized);
+        }
+        const requestVersion = chatMermaidCacheVersion;
+        const task = requestMermaidSvgByLocal(normalized)
+            .then((svgText) => {
+                if (requestVersion !== chatMermaidCacheVersion) return "";
+                if (svgText) {
+                    chatMermaidSvgCache.set(normalized, svgText);
+                    return svgText;
+                }
+                chatMermaidSvgCache.set(normalized, MERMAID_RENDER_FAILED);
+                return "";
+            })
+            .catch((err) => {
+                if (requestVersion === chatMermaidCacheVersion) {
+                    chatMermaidSvgCache.set(normalized, MERMAID_RENDER_FAILED);
+                    console.warn("CoolAuxv Mermaid 渲染失败:", err);
+                }
+                return "";
+            })
+            .finally(() => {
+                chatMermaidRenderPending.delete(normalized);
+            });
+        chatMermaidRenderPending.set(normalized, task);
+        return task;
+    };
 
     const cloneDeep = (obj) => JSON.parse(JSON.stringify(obj));
 
@@ -2197,6 +2345,9 @@
     .coolauxv-markdown h1, .coolauxv-markdown h2, .coolauxv-markdown h3 { font-weight: bold; margin: 15px 0 8px 0; color: #1f2937; line-height: 1.4; text-align: left !important; }
     .coolauxv-markdown code { background-color: #f3f4f6; color: #c2410c; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
     .coolauxv-markdown pre { background-color: #1f2937; color: #f9fafb; padding: 10px; border-radius: 6px; overflow-x: auto; margin: 10px 0; text-align: left !important; }
+    .coolauxv-mermaid-rendered { margin: 10px 0; padding: 8px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; overflow-x: auto; }
+    .coolauxv-mermaid-rendered svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .coolauxv-mermaid-fallback { margin: 10px 0; }
     .coolauxv-raw-text { white-space: pre-wrap; font-family: monospace; color: #444; }
 
     /* 原始错误信息展开/收起 */
@@ -9801,6 +9952,7 @@
 
     function clearChatSessionState() {
         clearChatInlineNotice();
+        clearMermaidSvgCache();
         chatMessages = [];
         chatHistoryRecords = [];
         chatDisplayBuffer = "";
@@ -9823,6 +9975,7 @@
 
     function clearConversationState() {
         clearChatInlineNotice();
+        clearMermaidSvgCache();
         historyRecords = [];
         chatMessages = [];
         chatHistoryRecords = [];
@@ -9914,11 +10067,18 @@
         } else {
             try {
                 // === 核心渲染逻辑 ===
+                const mermaidBlocks = [];
+                const mermaidProtectedText = String(newContentHTML || "").replace(/```[ \t]*mermaid(?:[^\n\r]*)\r?\n([\s\S]*?)```/gi, (match, code) => {
+                    const normalizedCode = normalizeMermaidCode(code);
+                    if (!normalizedCode) return match;
+                    mermaidBlocks.push({ code: normalizedCode });
+                    return `MERMAIDBLOCK${mermaidBlocks.length - 1}END`;
+                });
 
                 // 1. 数学公式保护 (Math Protection)
                 // 使用纯字母数字的占位符 (如 KATEXBLOCK0END)，避免 Markdown 解析器将其识别为粗体/斜体
                 const mathBlocks = [];
-                let protectedText = newContentHTML
+                let protectedText = mermaidProtectedText
                     // 保护 $$...$$ 和 \[...\] (块级公式，支持换行)
                     .replace(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\])/g, (match) => {
                         mathBlocks.push(match);
@@ -9948,9 +10108,27 @@
                     return mathBlocks[index];
                 });
 
+                // 4. Mermaid 代码块替换（仅已闭合 fenced block）
+                htmlContent = htmlContent.replace(/MERMAIDBLOCK(\d+)END/g, (match, index) => {
+                    const block = mermaidBlocks[Number(index)];
+                    if (!block) return match;
+                    const fallbackHtml = `<pre><code class="language-mermaid">${escapeHTML(block.code)}</code></pre>`;
+                    const cachedSvg = getCachedMermaidSvg(block.code);
+                    if (cachedSvg) {
+                        return `<div class="coolauxv-mermaid-rendered">${cachedSvg}</div>`;
+                    }
+                    if (isRendering && !isMermaidRenderFailed(block.code)) {
+                        ensureMermaidSvgCached(block.code).then((svgText) => {
+                            if (!svgText || !popup || !popup.isConnected) return;
+                            renderContent();
+                        });
+                    }
+                    return `<div class="coolauxv-mermaid-fallback">${fallbackHtml}</div>`;
+                });
+
                 element.innerHTML = htmlContent;
 
-                // 4. KaTeX 公式渲染
+                // 5. KaTeX 公式渲染
                 if (typeof renderMathInElement !== 'undefined') {
                     renderMathInElement(element, {
                         delimiters: [

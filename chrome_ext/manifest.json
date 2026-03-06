@@ -17,6 +17,7 @@
         "vendor/html2canvas.min.js",
         "vendor/katex.min.js",
         "vendor/auto-render.min.js",
+        "vendor/mermaid.min.js",
         "coolauxv.user.js"
       ],
       "run_at": "document_idle",
