@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.6
+// @version      v15.7-dev1
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -1717,6 +1717,7 @@
         display: flex;
         flex-direction: column;
         gap: 8px;
+        position: relative;
         overflow: hidden;
         max-height: none;
         opacity: 1;
@@ -1735,6 +1736,51 @@
     #coolauxv-chat-actions { display: flex; }
     #coolauxv-chat-actions > .coolauxv-action-btn { margin-right: 10px; }
     #coolauxv-chat-actions > .coolauxv-action-btn:last-child { margin-right: 0; }
+    #coolauxv-chat-inline-notice {
+        position: absolute;
+        left: 8px;
+        right: 8px;
+        bottom: 48px;
+        z-index: 18;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 7px 10px;
+        border-radius: 8px;
+        border: 1px solid #fecaca;
+        background: #fff1f2;
+        color: #b91c1c;
+        font-size: 12px;
+        line-height: 1.4;
+        box-shadow: 0 8px 20px rgba(185, 28, 28, 0.12);
+    }
+    #coolauxv-chat-inline-notice-text {
+        min-width: 0;
+        word-break: break-word;
+    }
+    #coolauxv-chat-inline-notice-close {
+        border: none;
+        background: transparent;
+        color: #b91c1c;
+        font-size: 16px;
+        font-weight: 700;
+        line-height: 1;
+        cursor: pointer;
+        padding: 0 2px;
+        flex: 0 0 auto;
+    }
+    #coolauxv-chat-inline-notice-close:hover {
+        color: #991b1b;
+    }
+    #coolauxv-chat-inline-notice.coolauxv-animated-visibility {
+        max-width: none;
+        padding: 7px 10px;
+        transform: translateY(4px) scale(0.98);
+    }
+    #coolauxv-chat-inline-notice.coolauxv-animated-visibility.coolauxv-visible {
+        transform: translateY(0) scale(1);
+    }
     .coolauxv-chat-preview-btn {
         display: inline-flex;
         align-items: center;
@@ -2981,6 +3027,7 @@
     let isRendering = false;
 
     let selectionTimer = null;
+    let chatInlineNoticeTimer = null;
     let isWindowDragging = false;
     let isSplitterDragging = false;
     let activeActionToken = 0;
@@ -8574,13 +8621,15 @@
             imageBase64: imageBase64 || "",
             displayText: typeof meta.displayText === "string" ? meta.displayText : "",
             turnId: typeof meta.turnId === "string" ? meta.turnId : "",
-            assistantLabel: typeof meta.assistantLabel === "string" ? meta.assistantLabel : ""
+            assistantLabel: typeof meta.assistantLabel === "string" ? meta.assistantLabel : "",
+            localOnly: !!meta.localOnly
         });
     }
 
     function resolveChatRecordMessage(record, template, options = {}) {
         const preferImageOnlyForMixed = !!(options && options.preferImageOnlyForMixed);
         if (!record || !template) return null;
+        if (record.localOnly) return null;
         if (record.role !== "user") {
             return {
                 role: record.role,
@@ -8863,9 +8912,10 @@
         if (role === "assistant") {
             const aiText = chatInput.value.trim();
             if (!aiText) {
-                appendChatError("⚠️ AI 消息不能为空。");
+                showChatInlineNotice("⚠️ AI 消息不能为空。");
                 return true;
             }
+            clearChatInlineNotice();
             targetRecord.text = aiText;
             targetRecord.imageBase64 = "";
             targetRecord.displayText = "";
@@ -8878,9 +8928,10 @@
         const imageBase64 = chatCapturedImageBase64 || "";
         const hasImage = !!imageBase64;
         if (!userText && !hasImage) {
-            appendChatError("⚠️ 请输入内容或识屏。");
+            showChatInlineNotice("⚠️ 请输入内容或识屏。");
             return true;
         }
+        clearChatInlineNotice();
 
         const config = getActiveConfig();
         const turnId = targetRecord.turnId || chatEditingTurnId || generateChatTurnId();
@@ -9102,32 +9153,91 @@
         return hasChatOutput();
     }
 
-    const CHAT_429_HISTORY_TEXT = "429 Error Occured";
+    function clearChatInlineNotice() {
+        if (chatInlineNoticeTimer) {
+            clearTimeout(chatInlineNoticeTimer);
+            chatInlineNoticeTimer = null;
+        }
+        if (!popup) return;
+        const notice = popup.querySelector("#coolauxv-chat-inline-notice");
+        if (!notice) return;
+        setAnimatedVisibility(notice, false);
+    }
+
+    function showChatInlineNotice(message, options = {}) {
+        if (!popup) return;
+        const chatBody = popup.querySelector("#coolauxv-chat-body");
+        if (!chatBody) return;
+
+        const { autoHideMs = 2800 } = options;
+        let notice = popup.querySelector("#coolauxv-chat-inline-notice");
+        if (!notice) {
+            notice = document.createElement("div");
+            notice.id = "coolauxv-chat-inline-notice";
+            notice.className = "coolauxv-animated-visibility";
+            notice.style.display = "none";
+            notice.innerHTML = `
+                <span id="coolauxv-chat-inline-notice-text"></span>
+                <button type="button" id="coolauxv-chat-inline-notice-close" title="关闭提示">×</button>
+            `;
+            chatBody.appendChild(notice);
+            const closeBtn = notice.querySelector("#coolauxv-chat-inline-notice-close");
+            if (closeBtn) closeBtn.addEventListener("click", clearChatInlineNotice);
+        }
+
+        const textEl = notice.querySelector("#coolauxv-chat-inline-notice-text");
+        if (textEl) textEl.textContent = message || "请输入内容。";
+
+        if (chatInlineNoticeTimer) clearTimeout(chatInlineNoticeTimer);
+        chatInlineNoticeTimer = null;
+        setAnimatedVisibility(notice, true);
+        if (autoHideMs > 0) {
+            chatInlineNoticeTimer = setTimeout(() => {
+                clearChatInlineNotice();
+            }, autoHideMs);
+        }
+    }
 
     function appendChatError(message, options = {}) {
-        const { allowHtml = false, recordAsAssistant = false, recordContent = CHAT_429_HISTORY_TEXT } = options;
+        const { allowHtml = false } = options;
         startChatSessionIfNeeded();
         const safeMessage = message || "请求失败";
-        const errorContent = allowHtml ? safeMessage : `<span style="color:red">${safeMessage}</span>`;
-        const assistantBlock = buildChatAssistantBlock(errorContent, chatAssistantLabel);
+        const htmlMessage = allowHtml ? normalizeHtmlForMarkdown(safeMessage) : safeMessage;
+        const errorContent = allowHtml ? htmlMessage : `<span style="color:red">${safeMessage}</span>`;
+        const assistantRecordId = generateChatRecordId();
+        const assistantBlock = buildChatAssistantBlock(errorContent, chatAssistantLabel, assistantRecordId);
         if (chatDisplayBuffer) {
             chatDisplayBuffer += assistantBlock;
         } else {
             chatDisplayBuffer = assistantBlock.replace(/^\n+/, "");
         }
-        if (recordAsAssistant) {
-            const config = getActiveConfig();
-            const assistantMessage = buildProviderMessage(config.template, "assistant", recordContent, "");
-            if (assistantMessage) chatMessages.push(assistantMessage);
-            appendChatHistoryRecord("assistant", recordContent, "", { assistantLabel: chatAssistantLabel });
-        }
+        const historyText = allowHtml ? htmlMessage : errorContent;
+        appendChatHistoryRecord("assistant", historyText, "", {
+            assistantLabel: chatAssistantLabel,
+            recordId: assistantRecordId,
+            localOnly: true
+        });
         streamTextBuffer = chatDisplayBuffer;
         lastRenderedText = "";
         renderContent();
         queueCurrentChatSessionToBackground();
     }
 
+    function normalizeHtmlForMarkdown(html) {
+        if (!html) return "";
+        const lines = String(html).replace(/\r/g, "").split("\n");
+        let inPre = false;
+        const normalized = lines.map((line) => {
+            const output = inPre ? line : line.replace(/^\s+/, "");
+            if (!inPre && line.includes("<pre")) inPre = true;
+            if (inPre && line.includes("</pre>")) inPre = false;
+            return output;
+        });
+        return normalized.join("\n").trim();
+    }
+
     function clearChatSessionState() {
+        clearChatInlineNotice();
         chatMessages = [];
         chatHistoryRecords = [];
         chatDisplayBuffer = "";
@@ -9149,6 +9259,7 @@
     }
 
     function clearConversationState() {
+        clearChatInlineNotice();
         historyRecords = [];
         chatMessages = [];
         chatHistoryRecords = [];
@@ -12117,9 +12228,10 @@
         const hasImage = !!chatCapturedImageBase64;
 
         if (!userText && !hasImage) {
-            appendChatError("⚠️ 请输入内容或识屏。");
+            showChatInlineNotice("⚠️ 请输入内容或识屏。");
             return;
         }
+        clearChatInlineNotice();
 
         const config = getActiveConfig();
         const provider = config.provider;
@@ -12265,6 +12377,8 @@
                     const apiErr = parseApiError(res.responseText);
                     const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
                     streamErrorHandled = true;
+                    stopRenderLoop();
+                    finalizeChatResponse(actionToken);
                     appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
                     return;
                 }
