@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.7
+// @version      v15.7.1
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -217,6 +217,10 @@
     const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
 
     const LATEST_CHANGELOG = `
+        v15.7.1 更新日志
+        ## 🐛 问题修复
+        *   修复pdfjs预览器里偶发的没法分数缩放问题
+        ---
         v15.7 更新日志
         ## ✨ 新功能
         *   **Mermaid 图表渲染**：支持在对话中渲染流程图、时序图、甘特图等 Mermaid 图表
@@ -1289,6 +1293,294 @@
         });
         // return;
     }
+
+    const PDFJS_CUSTOM_SCALE_CONTAINER_ID = "coolauxv-pdfjs-custom-scale-container";
+    const PDFJS_CUSTOM_SCALE_INPUT_ID = "coolauxv-pdfjs-custom-scale-input";
+    const PDFJS_CUSTOM_SCALE_MIN = 0.1;
+    const PDFJS_CUSTOM_SCALE_MAX = 10;
+    const PDFJS_CUSTOM_SCALE_INIT_FLAG = "__coolauxv_pdfjs_custom_scale_init";
+    const PDFJS_CUSTOM_SCALE_BOUND_ATTR = "data-coolauxv-pdfjs-custom-scale-bound";
+
+    const getPdfjsViewerApplication = () => {
+        const app = (globalThis && globalThis.PDFViewerApplication)
+            || (typeof unsafeWindow !== "undefined" && unsafeWindow && unsafeWindow.PDFViewerApplication)
+            || null;
+        return app && typeof app === "object" ? app : null;
+    };
+
+    const clampPdfjsScale = (value) => {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return NaN;
+        return Math.min(PDFJS_CUSTOM_SCALE_MAX, Math.max(PDFJS_CUSTOM_SCALE_MIN, numeric));
+    };
+
+    const parsePdfjsScaleFromInput = (raw) => {
+        const cleaned = String(raw || "")
+            .replace(/[%\s]/g, "")
+            .replace(/,/g, ".")
+            .trim();
+        const percent = Number.parseFloat(cleaned);
+        if (!Number.isFinite(percent)) return NaN;
+        return clampPdfjsScale(percent / 100);
+    };
+
+    const parsePdfjsScaleFromSelect = (scaleSelect) => {
+        if (!scaleSelect) return NaN;
+        const numeric = Number.parseFloat(String(scaleSelect.value || "").trim());
+        if (Number.isFinite(numeric) && numeric > 0) {
+            return clampPdfjsScale(numeric);
+        }
+        const customScaleOption = scaleSelect.querySelector("#customScaleOption") || document.getElementById("customScaleOption");
+        if (!customScaleOption) return NaN;
+        const text = String(customScaleOption.textContent || "");
+        const matched = text.match(/([0-9]+(?:[.,][0-9]+)?)/);
+        if (!matched) return NaN;
+        const percent = Number.parseFloat(matched[1].replace(",", "."));
+        if (!Number.isFinite(percent)) return NaN;
+        return clampPdfjsScale(percent / 100);
+    };
+
+    const readCurrentPdfjsScale = (scaleSelect) => {
+        const app = getPdfjsViewerApplication();
+        if (app && app.pdfViewer) {
+            const currentScale = Number(app.pdfViewer.currentScale);
+            if (Number.isFinite(currentScale) && currentScale > 0) {
+                return clampPdfjsScale(currentScale);
+            }
+        }
+        const fallbackScale = parsePdfjsScaleFromSelect(scaleSelect);
+        if (Number.isFinite(fallbackScale) && fallbackScale > 0) {
+            return fallbackScale;
+        }
+        return 1;
+    };
+
+    const formatPdfjsScalePercent = (scale) => {
+        const percent = Math.round(Number(scale) * 1000) / 10;
+        if (!Number.isFinite(percent)) return "100";
+        return Number.isInteger(percent) ? String(percent.toFixed(0)) : String(percent);
+    };
+
+    const applyPdfjsScale = (scale, scaleSelect) => {
+        const nextScale = clampPdfjsScale(scale);
+        if (!Number.isFinite(nextScale)) return false;
+
+        const app = getPdfjsViewerApplication();
+        if (app && app.pdfViewer) {
+            try {
+                app.pdfViewer.currentScaleValue = String(nextScale);
+                return true;
+            } catch (err) {
+                Logger.debug("[PDF.js] 设置 currentScaleValue 失败:", err && (err.message || String(err)));
+            }
+        }
+        if (!scaleSelect) return false;
+        try {
+            scaleSelect.value = String(nextScale);
+            scaleSelect.dispatchEvent(new Event("change", { bubbles: true }));
+            return true;
+        } catch (err) {
+            Logger.debug("[PDF.js] 触发 scaleSelect change 失败:", err && (err.message || String(err)));
+            return false;
+        }
+    };
+
+    const stylePdfjsCustomScaleInput = (container, input, suffix) => {
+        Object.assign(container.style, {
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            marginInlineStart: "8px",
+            padding: "0 6px",
+            minHeight: "30px",
+            border: "1px solid rgba(120, 120, 120, 0.35)",
+            borderRadius: "6px",
+            background: "rgba(255, 255, 255, 0.88)",
+            boxSizing: "border-box"
+        });
+        Object.assign(input.style, {
+            width: "58px",
+            height: "24px",
+            border: "none",
+            outline: "none",
+            background: "transparent",
+            fontSize: "12px",
+            lineHeight: "1.2",
+            textAlign: "right",
+            padding: "0",
+            margin: "0",
+            boxSizing: "border-box"
+        });
+        Object.assign(suffix.style, {
+            fontSize: "12px",
+            lineHeight: "1",
+            opacity: "0.75",
+            userSelect: "none"
+        });
+    };
+
+    const installPdfjsCustomScaleControl = () => {
+        const scaleSelect = document.getElementById("scaleSelect");
+        const scaleSelectContainer = document.getElementById("scaleSelectContainer");
+        if (!scaleSelect || !scaleSelectContainer) return false;
+
+        const existing = document.getElementById(PDFJS_CUSTOM_SCALE_CONTAINER_ID);
+        if (existing && existing.isConnected && scaleSelect.getAttribute(PDFJS_CUSTOM_SCALE_BOUND_ATTR) === "1") {
+            return true;
+        }
+        if (existing && existing.parentNode) {
+            existing.parentNode.removeChild(existing);
+        }
+
+        const container = document.createElement("span");
+        container.id = PDFJS_CUSTOM_SCALE_CONTAINER_ID;
+        const input = document.createElement("input");
+        input.id = PDFJS_CUSTOM_SCALE_INPUT_ID;
+        input.type = "text";
+        input.inputMode = "decimal";
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        input.setAttribute("aria-label", "Custom zoom percentage");
+        input.placeholder = "100";
+        const suffix = document.createElement("span");
+        suffix.textContent = "%";
+        stylePdfjsCustomScaleInput(container, input, suffix);
+        container.appendChild(input);
+        container.appendChild(suffix);
+
+        let syncing = false;
+        const syncFromViewer = () => {
+            if (syncing) return;
+            const scale = readCurrentPdfjsScale(scaleSelect);
+            if (!Number.isFinite(scale) || scale <= 0) return;
+            input.value = formatPdfjsScalePercent(scale);
+        };
+
+        const commitInputScale = () => {
+            const parsed = parsePdfjsScaleFromInput(input.value);
+            if (!Number.isFinite(parsed)) {
+                syncFromViewer();
+                return;
+            }
+            syncing = true;
+            const applied = applyPdfjsScale(parsed, scaleSelect);
+            syncing = false;
+            if (!applied) {
+                syncFromViewer();
+                return;
+            }
+            setTimeout(syncFromViewer, 40);
+        };
+
+        input.addEventListener("focus", () => {
+            input.select();
+        });
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                commitInputScale();
+                input.blur();
+                return;
+            }
+            if (event.key === "Escape") {
+                event.preventDefault();
+                syncFromViewer();
+                input.blur();
+            }
+        });
+        input.addEventListener("blur", () => {
+            commitInputScale();
+        });
+
+        scaleSelect.addEventListener("change", () => {
+            if (document.activeElement === input) return;
+            syncFromViewer();
+        });
+
+        const app = getPdfjsViewerApplication();
+        if (app && app.eventBus && typeof app.eventBus.on === "function") {
+            app.eventBus.on("scalechanging", () => {
+                if (document.activeElement === input) return;
+                syncFromViewer();
+            });
+        }
+
+        scaleSelectContainer.insertAdjacentElement("afterend", container);
+        scaleSelect.setAttribute(PDFJS_CUSTOM_SCALE_BOUND_ATTR, "1");
+        syncFromViewer();
+        Logger.debug("[PDF.js] 已注入自定义缩放输入框");
+        return true;
+    };
+
+    const initPdfjsCustomScaleEnhancer = () => {
+        if (globalThis[PDFJS_CUSTOM_SCALE_INIT_FLAG]) return;
+        globalThis[PDFJS_CUSTOM_SCALE_INIT_FLAG] = true;
+
+        let retryTimer = null;
+        let retryCount = 0;
+        let observer = null;
+        let unloaded = false;
+
+        const hasPdfjsSignals = () => {
+            return !!(
+                document.getElementById("scaleSelect")
+                || document.getElementById("scaleSelectContainer")
+                || document.getElementById("viewerContainer")
+                || document.getElementById("zoomIn")
+                || document.getElementById(PDFJS_CUSTOM_SCALE_CONTAINER_ID)
+            );
+        };
+
+        const ensureInstalled = () => {
+            if (unloaded) return false;
+            if (!hasPdfjsSignals()) return false;
+            return installPdfjsCustomScaleControl();
+        };
+
+        const startObserverIfNeeded = () => {
+            if (observer || !document.documentElement) return;
+            observer = new MutationObserver(() => {
+                if (unloaded) return;
+                const input = document.getElementById(PDFJS_CUSTOM_SCALE_INPUT_ID);
+                const scaleSelect = document.getElementById("scaleSelect");
+                if (input && scaleSelect && scaleSelect.getAttribute(PDFJS_CUSTOM_SCALE_BOUND_ATTR) === "1" && document.contains(input)) return;
+                ensureInstalled();
+            });
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+        };
+
+        if (ensureInstalled()) {
+            startObserverIfNeeded();
+        } else {
+            retryTimer = setInterval(() => {
+                retryCount += 1;
+                if (ensureInstalled()) {
+                    if (retryTimer) {
+                        clearInterval(retryTimer);
+                        retryTimer = null;
+                    }
+                    startObserverIfNeeded();
+                    return;
+                }
+                if (retryCount >= 60 && retryTimer) {
+                    clearInterval(retryTimer);
+                    retryTimer = null;
+                }
+            }, 500);
+        }
+
+        window.addEventListener("beforeunload", () => {
+            unloaded = true;
+            if (retryTimer) {
+                clearInterval(retryTimer);
+                retryTimer = null;
+            }
+            if (observer) {
+                observer.disconnect();
+                observer = null;
+            }
+        }, { once: true });
+    };
 
 
 
@@ -13434,6 +13726,7 @@
             return;
         }
         uiStarted = true;
+        initPdfjsCustomScaleEnhancer();
         ensureStyles();
         initPdfReceiver();
         if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initUI);
