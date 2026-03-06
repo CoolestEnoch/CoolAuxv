@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.7-dev6
+// @version      v15.7-dev7
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -91,6 +91,44 @@
     const POPUP_ANIM_EASE_IN = "cubic-bezier(0.4, 0, 1, 1)";
     const POPUP_ANIM_EASE_OUT = "cubic-bezier(0, 0, 0.2, 1)";
     const DEFAULT_ANIM_SPEED = 1;
+    const PDF_VIEWER_PATH_RE = /\/pdfjs\/web\/viewer\.html$/i;
+
+    const normalizePdfSourceUrl = (value) => {
+        if (!value) return "";
+        const raw = String(value).trim();
+        if (!raw) return "";
+        const candidates = [raw];
+        try {
+            candidates.push(decodeURIComponent(raw));
+        } catch (e) { }
+        for (const candidate of candidates) {
+            try {
+                const parsed = new URL(candidate);
+                if (["http:", "https:", "file:"].includes(parsed.protocol)) {
+                    return parsed.href;
+                }
+            } catch (e) { }
+        }
+        return "";
+    };
+
+    const getHijackedPdfSourceUrl = () => {
+        try {
+            if (!(globalThis.chrome && chrome.runtime && chrome.runtime.id)) return "";
+            const current = new URL(location.href);
+            if (current.protocol !== "chrome-extension:") return "";
+            if (current.host !== chrome.runtime.id) return "";
+            if (!PDF_VIEWER_PATH_RE.test(current.pathname || "")) return "";
+            const source = current.searchParams.get("file")
+                || current.searchParams.get("src")
+                || current.searchParams.get("url")
+                || "";
+            return normalizePdfSourceUrl(source);
+        } catch (e) {
+            return "";
+        }
+    };
+    const HIJACKED_PDF_SOURCE_URL = getHijackedPdfSourceUrl();
 
 
     const DEFAULT_PROMPT_TRANSLATE = "你是一个翻译引擎。将用户输入直接翻译成中文。如果输入是中文则译为英文。不要输出任何多余的解释。";
@@ -1267,6 +1305,26 @@
     .coolauxv-ctrl-btn { padding: 0 4px; font-size: 18px; color: #666; cursor: pointer; transition: color 0.2s; line-height: 1; }
     .coolauxv-ctrl-btn:hover { color: #3b82f6; }
     #coolauxv-quit:hover { color: #ef4444; }
+    #coolauxv-pdf-origin-info {
+        display: none;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 1px solid #cbd5e1;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1;
+        color: #475569;
+        background: #fff;
+        padding: 0;
+    }
+    #coolauxv-pdf-origin-info:hover {
+        color: #1d4ed8;
+        border-color: #93c5fd;
+        background: #eff6ff;
+    }
     #coolauxv-settings-btn {
         display: inline-flex;
         align-items: center;
@@ -3804,6 +3862,7 @@
                 </div>
               </div>
               <div style="display:flex; gap:6px; align-items:center;">
+                <span id="coolauxv-pdf-origin-info" class="coolauxv-ctrl-btn" title="点击复制原 PDF 链接">i</span>
                 <span id="coolauxv-quit" class="coolauxv-ctrl-btn" title="退出">⏻</span>
                 <span id="coolauxv-min" class="coolauxv-ctrl-btn" title="最小化">－</span>
                 <span id="coolauxv-close" class="coolauxv-ctrl-btn" title="关闭">×</span>
@@ -10538,6 +10597,7 @@
         const minBtn = popup.querySelector("#coolauxv-min");
         const closeBtn = popup.querySelector("#coolauxv-close");
         const quitBtn = popup.querySelector("#coolauxv-quit");
+        const pdfOriginInfoBtn = popup.querySelector("#coolauxv-pdf-origin-info");
         const rawToggle = popup.querySelector("#coolauxv-raw-toggle");
         const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle");
         const btnTrans = popup.querySelector("#coolauxv-btn-trans");
@@ -10558,6 +10618,35 @@
         if (minBtn) minBtn.onclick = minimizeWindow;
         if (closeBtn) closeBtn.onclick = closeWindow;
         if (quitBtn) quitBtn.onclick = quitScript;
+        if (pdfOriginInfoBtn) {
+            if (HIJACKED_PDF_SOURCE_URL) {
+                pdfOriginInfoBtn.style.display = "inline-flex";
+                pdfOriginInfoBtn.title = `原 PDF 链接：${HIJACKED_PDF_SOURCE_URL}\n点击复制`;
+                pdfOriginInfoBtn.onclick = async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    let copied = false;
+                    try {
+                        if (typeof GM_setClipboard === "function") {
+                            GM_setClipboard(HIJACKED_PDF_SOURCE_URL, "text");
+                            copied = true;
+                        } else if (navigator.clipboard && navigator.clipboard.writeText) {
+                            await navigator.clipboard.writeText(HIJACKED_PDF_SOURCE_URL);
+                            copied = true;
+                        }
+                    } catch (err) {
+                        Logger.error("复制原 PDF 链接失败:", err);
+                    }
+                    const originalText = pdfOriginInfoBtn.textContent || "i";
+                    pdfOriginInfoBtn.textContent = copied ? "✓" : "!";
+                    setTimeout(() => {
+                        pdfOriginInfoBtn.textContent = originalText;
+                    }, 1200);
+                };
+            } else {
+                pdfOriginInfoBtn.style.display = "none";
+            }
+        }
 
         if (rawToggle) rawToggle.onchange = (e) => {
             isShowRaw = e.target.checked;

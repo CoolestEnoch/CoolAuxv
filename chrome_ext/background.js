@@ -77,6 +77,30 @@ const headersToString = (headers) => {
   return lines.join("\r\n");
 };
 
+const normalizePdfFilePath = (pathname) => {
+  if (!pathname) return "";
+  const raw = String(pathname);
+  try {
+    return decodeURIComponent(raw);
+  } catch (err) {
+    return raw;
+  }
+};
+
+const isLocalPdfFileUrl = (url) => {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "file:") {
+      return false;
+    }
+    const path = normalizePdfFilePath(parsed.pathname || "");
+    return /\.pdf$/i.test(path);
+  } catch (err) {
+    return false;
+  }
+};
+
 const serializeError = (err) => {
   if (!err) {
     return { name: "Error", message: "unknown error" };
@@ -308,12 +332,25 @@ const maybeRedirectBuiltinViewer = (tabId, url) => {
   redirectToViewer(tabId, target);
 };
 
+const maybeRedirectLocalPdf = (tabId, url) => {
+  if (!url || isOurViewer(url)) {
+    return;
+  }
+  if (!isLocalPdfFileUrl(url)) {
+    return;
+  }
+  log("info", "Detected local PDF navigation, redirecting to CoolAuxv viewer", { tabId, url });
+  redirectToViewer(tabId, url);
+};
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo && changeInfo.url) {
+    maybeRedirectLocalPdf(tabId, changeInfo.url);
     maybeRedirectBuiltinViewer(tabId, changeInfo.url);
     return;
   }
   if (changeInfo && changeInfo.status === "complete" && tab && tab.url) {
+    maybeRedirectLocalPdf(tabId, tab.url);
     maybeRedirectBuiltinViewer(tabId, tab.url);
   }
 });
@@ -322,6 +359,7 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   if (details.frameId !== 0) {
     return;
   }
+  maybeRedirectLocalPdf(details.tabId, details.url);
   maybeRedirectBuiltinViewer(details.tabId, details.url);
 });
 
