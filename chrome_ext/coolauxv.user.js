@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.7-dev3
+// @version      v15.7-dev4
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -311,16 +311,20 @@
 
     const initLocalMermaidRendererIfNeeded = (renderer) => {
         if (!renderer || mermaidLocalRendererInitialized) return;
+        const mermaidInitConfig = {
+            startOnLoad: false,
+            securityLevel: "strict",
+            theme: "default",
+            flowchart: {
+                htmlLabels: false
+            }
+        };
         if (typeof renderer.initialize === "function") {
             Logger.debug("[Mermaid]", "init renderer via mermaid.initialize", {
                 version: renderer.version || "",
                 hasMermaidAPI: !!renderer.mermaidAPI
             });
-            renderer.initialize({
-                startOnLoad: false,
-                securityLevel: "strict",
-                theme: "default"
-            });
+            renderer.initialize(mermaidInitConfig);
             mermaidLocalRendererInitialized = true;
             return;
         }
@@ -329,11 +333,7 @@
                 version: renderer.version || "",
                 hasMermaidAPI: !!renderer.mermaidAPI
             });
-            renderer.mermaidAPI.initialize({
-                startOnLoad: false,
-                securityLevel: "strict",
-                theme: "default"
-            });
+            renderer.mermaidAPI.initialize(mermaidInitConfig);
             mermaidLocalRendererInitialized = true;
         }
     };
@@ -2285,7 +2285,7 @@
     .coolauxv-markdown code { background-color: #f3f4f6; color: #c2410c; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
     .coolauxv-markdown pre { background-color: #1f2937; color: #f9fafb; padding: 10px; border-radius: 6px; overflow-x: auto; margin: 10px 0; text-align: left !important; }
     .coolauxv-mermaid-rendered { margin: 10px 0; padding: 8px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; overflow-x: auto; }
-    .coolauxv-mermaid-rendered svg { display: block; max-width: 100%; height: auto; margin: 0 auto; }
+    .coolauxv-mermaid-rendered svg { display: block; max-width: 100%; height: auto; margin: 0 auto; cursor: zoom-in; }
     .coolauxv-mermaid-fallback { margin: 10px 0; }
     .coolauxv-raw-text { white-space: pre-wrap; font-family: monospace; color: #444; }
 
@@ -2591,6 +2591,43 @@
         box-shadow: 0 0 30px rgba(0,0,0,0.5);
         border-radius: 4px;
         object-fit: contain;
+    }
+    #coolauxv-mermaid-preview-overlay {
+        position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+        background: rgba(0, 0, 0, 0);
+        z-index: 2147483651;
+        display: none;
+        overflow: hidden;
+        cursor: grab;
+        opacity: 0;
+        backdrop-filter: blur(0px);
+        transition: opacity 0.22s cubic-bezier(0.2, 0, 0, 1),
+                    background-color 0.22s cubic-bezier(0.2, 0, 0, 1),
+                    backdrop-filter 0.22s cubic-bezier(0.2, 0, 0, 1);
+    }
+    #coolauxv-mermaid-preview-overlay.coolauxv-visible {
+        opacity: 1;
+        background: rgba(0, 0, 0, 0.88);
+        backdrop-filter: blur(6px);
+    }
+    #coolauxv-mermaid-preview-overlay.coolauxv-no-anim {
+        transition: none !important;
+    }
+    #coolauxv-mermaid-preview-stage {
+        position: absolute;
+        left: 0;
+        top: 0;
+        transform-origin: 0 0;
+    }
+    #coolauxv-mermaid-preview-stage svg {
+        display: block;
+        max-width: none !important;
+        max-height: none !important;
+        pointer-events: none;
+        user-select: none;
+        -webkit-user-select: none;
+        text-rendering: geometricPrecision;
+        shape-rendering: geometricPrecision;
     }
 
     /* 预览按钮 (透明背景，带边框) */
@@ -3341,6 +3378,208 @@
     let isWindowDragging = false;
     let isSplitterDragging = false;
     let activeActionToken = 0;
+    let mermaidPreviewOverlay = null;
+    let mermaidPreviewStage = null;
+    let mermaidPreviewCloseTimer = 0;
+    const mermaidPreviewState = {
+        active: false,
+        scale: 1,
+        tx: 0,
+        ty: 0,
+        minScale: 0.15,
+        maxScale: 10,
+        dragging: false,
+        startX: 0,
+        startY: 0,
+        originTx: 0,
+        originTy: 0,
+        moved: false,
+        ignoreClick: false
+    };
+
+    const clampMermaidPreviewValue = (value, min, max) => Math.min(max, Math.max(min, value));
+
+    const applyMermaidPreviewTransform = () => {
+        if (!mermaidPreviewStage) return;
+        mermaidPreviewStage.style.transform = `translate(${mermaidPreviewState.tx}px, ${mermaidPreviewState.ty}px) scale(${mermaidPreviewState.scale})`;
+    };
+
+    const syncMermaidPreviewAnimMode = () => {
+        if (!mermaidPreviewOverlay) return;
+        const useAnim = isMinimizeAnimEnabled();
+        mermaidPreviewOverlay.classList.toggle("coolauxv-no-anim", !useAnim);
+        return useAnim;
+    };
+
+    const finalizeMermaidPreviewClose = () => {
+        if (!mermaidPreviewOverlay || !mermaidPreviewStage) return;
+        mermaidPreviewOverlay.style.display = "none";
+        mermaidPreviewOverlay.classList.remove("coolauxv-visible");
+        mermaidPreviewOverlay.style.cursor = "grab";
+        mermaidPreviewStage.innerHTML = "";
+    };
+
+    const closeMermaidPreview = () => {
+        if (!mermaidPreviewOverlay || !mermaidPreviewStage) return;
+        if (mermaidPreviewCloseTimer) {
+            clearTimeout(mermaidPreviewCloseTimer);
+            mermaidPreviewCloseTimer = 0;
+        }
+        mermaidPreviewState.active = false;
+        mermaidPreviewState.dragging = false;
+        mermaidPreviewState.moved = false;
+        mermaidPreviewState.ignoreClick = false;
+        const useAnim = syncMermaidPreviewAnimMode();
+        if (!useAnim) {
+            finalizeMermaidPreviewClose();
+            return;
+        }
+        mermaidPreviewOverlay.classList.remove("coolauxv-visible");
+        mermaidPreviewCloseTimer = window.setTimeout(() => {
+            mermaidPreviewCloseTimer = 0;
+            if (mermaidPreviewState.active) return;
+            finalizeMermaidPreviewClose();
+        }, 240);
+    };
+
+    const openMermaidPreview = (sourceSvg, suppressNextOverlayClick = false) => {
+        if (!sourceSvg || !mermaidPreviewOverlay || !mermaidPreviewStage) return;
+        if (mermaidPreviewCloseTimer) {
+            clearTimeout(mermaidPreviewCloseTimer);
+            mermaidPreviewCloseTimer = 0;
+        }
+        const clone = sourceSvg.cloneNode(true);
+        clone.removeAttribute("style");
+        clone.style.display = "block";
+        clone.style.width = "auto";
+        clone.style.height = "auto";
+        clone.style.maxWidth = "none";
+        clone.style.maxHeight = "none";
+        clone.style.pointerEvents = "none";
+
+        const sourceRect = sourceSvg.getBoundingClientRect();
+        if (!clone.getAttribute("width") && sourceRect.width > 0) {
+            clone.setAttribute("width", String(Math.round(sourceRect.width)));
+        }
+        if (!clone.getAttribute("height") && sourceRect.height > 0) {
+            clone.setAttribute("height", String(Math.round(sourceRect.height)));
+        }
+
+        mermaidPreviewStage.innerHTML = "";
+        mermaidPreviewStage.appendChild(clone);
+        mermaidPreviewOverlay.style.display = "block";
+        mermaidPreviewOverlay.classList.remove("coolauxv-visible");
+        mermaidPreviewOverlay.style.cursor = "grab";
+        mermaidPreviewState.active = true;
+        mermaidPreviewState.dragging = false;
+        mermaidPreviewState.moved = false;
+        mermaidPreviewState.ignoreClick = !!suppressNextOverlayClick;
+        const useAnim = syncMermaidPreviewAnimMode();
+        if (useAnim) {
+            requestAnimationFrame(() => {
+                if (mermaidPreviewState.active) {
+                    mermaidPreviewOverlay.classList.add("coolauxv-visible");
+                }
+            });
+        } else {
+            mermaidPreviewOverlay.classList.add("coolauxv-visible");
+        }
+
+        const overlayRect = mermaidPreviewOverlay.getBoundingClientRect();
+        const cloneRect = clone.getBoundingClientRect();
+        let svgWidth = cloneRect.width || sourceRect.width;
+        let svgHeight = cloneRect.height || sourceRect.height;
+        if ((!svgWidth || !svgHeight) && clone.viewBox && clone.viewBox.baseVal) {
+            svgWidth = svgWidth || clone.viewBox.baseVal.width;
+            svgHeight = svgHeight || clone.viewBox.baseVal.height;
+        }
+        if (!svgWidth || !svgHeight) {
+            svgWidth = Math.max(overlayRect.width * 0.8, 320);
+            svgHeight = Math.max(overlayRect.height * 0.8, 240);
+        }
+
+        const fitScale = Math.min((overlayRect.width * 0.92) / svgWidth, (overlayRect.height * 0.92) / svgHeight);
+        mermaidPreviewState.scale = clampMermaidPreviewValue(Number.isFinite(fitScale) ? fitScale : 1, mermaidPreviewState.minScale, mermaidPreviewState.maxScale);
+        mermaidPreviewState.tx = (overlayRect.width - svgWidth * mermaidPreviewState.scale) / 2;
+        mermaidPreviewState.ty = (overlayRect.height - svgHeight * mermaidPreviewState.scale) / 2;
+        applyMermaidPreviewTransform();
+    };
+
+    const initMermaidPreviewEvents = () => {
+        if (!mermaidPreviewOverlay || !mermaidPreviewStage || mermaidPreviewOverlay.dataset.bound === "1") return;
+        mermaidPreviewOverlay.dataset.bound = "1";
+
+        const endDrag = () => {
+            if (!mermaidPreviewState.dragging) return;
+            mermaidPreviewState.dragging = false;
+            mermaidPreviewOverlay.style.cursor = "grab";
+            if (mermaidPreviewState.moved) {
+                mermaidPreviewState.ignoreClick = true;
+            }
+        };
+
+        mermaidPreviewOverlay.addEventListener("mousedown", (e) => {
+            if (!mermaidPreviewState.active || e.button !== 0) return;
+            mermaidPreviewState.dragging = true;
+            mermaidPreviewState.moved = false;
+            mermaidPreviewState.startX = e.clientX;
+            mermaidPreviewState.startY = e.clientY;
+            mermaidPreviewState.originTx = mermaidPreviewState.tx;
+            mermaidPreviewState.originTy = mermaidPreviewState.ty;
+            mermaidPreviewOverlay.style.cursor = "grabbing";
+            e.preventDefault();
+        });
+
+        window.addEventListener("mousemove", (e) => {
+            if (!mermaidPreviewState.active || !mermaidPreviewState.dragging) return;
+            const dx = e.clientX - mermaidPreviewState.startX;
+            const dy = e.clientY - mermaidPreviewState.startY;
+            if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+                mermaidPreviewState.moved = true;
+            }
+            mermaidPreviewState.tx = mermaidPreviewState.originTx + dx;
+            mermaidPreviewState.ty = mermaidPreviewState.originTy + dy;
+            applyMermaidPreviewTransform();
+        });
+
+        window.addEventListener("mouseup", endDrag);
+
+        mermaidPreviewOverlay.addEventListener("wheel", (e) => {
+            if (!mermaidPreviewState.active) return;
+            e.preventDefault();
+            const rect = mermaidPreviewOverlay.getBoundingClientRect();
+            const px = e.clientX - rect.left;
+            const py = e.clientY - rect.top;
+            const factor = Math.exp(-e.deltaY * 0.0015);
+            const nextScale = clampMermaidPreviewValue(mermaidPreviewState.scale * factor, mermaidPreviewState.minScale, mermaidPreviewState.maxScale);
+            if (Math.abs(nextScale - mermaidPreviewState.scale) < 0.0001) return;
+
+            const worldX = (px - mermaidPreviewState.tx) / mermaidPreviewState.scale;
+            const worldY = (py - mermaidPreviewState.ty) / mermaidPreviewState.scale;
+            mermaidPreviewState.scale = nextScale;
+            mermaidPreviewState.tx = px - worldX * nextScale;
+            mermaidPreviewState.ty = py - worldY * nextScale;
+            mermaidPreviewState.ignoreClick = true;
+            applyMermaidPreviewTransform();
+        }, { passive: false });
+
+        mermaidPreviewOverlay.addEventListener("click", () => {
+            if (!mermaidPreviewState.active) return;
+            if (mermaidPreviewState.ignoreClick) {
+                mermaidPreviewState.ignoreClick = false;
+                return;
+            }
+            closeMermaidPreview();
+        });
+
+        window.addEventListener("keydown", (e) => {
+            if (!mermaidPreviewState.active) return;
+            if (e.key !== "Escape") return;
+            e.preventDefault();
+            closeMermaidPreview();
+        });
+    };
+
     const normalizeSelectionIconAction = (mode) => (mode === "explain" ? "explain" : "translate");
     const getSelectionIconAction = () => normalizeSelectionIconAction(
         GM_getValue("coolauxv_selection_icon_action", DEFAULT_SELECTION_ICON_ACTION)
@@ -3894,6 +4133,14 @@
             previewLayer.innerHTML = `<img id="coolauxv-img-preview-el" src="">`;
             previewLayer.onclick = () => { previewLayer.style.display = "none"; };
             document.body.appendChild(previewLayer);
+
+            const mermaidPreviewLayer = document.createElement("div");
+            mermaidPreviewLayer.id = "coolauxv-mermaid-preview-overlay";
+            mermaidPreviewLayer.innerHTML = `<div id="coolauxv-mermaid-preview-stage"></div>`;
+            document.body.appendChild(mermaidPreviewLayer);
+            mermaidPreviewOverlay = mermaidPreviewLayer;
+            mermaidPreviewStage = mermaidPreviewLayer.querySelector("#coolauxv-mermaid-preview-stage");
+            initMermaidPreviewEvents();
 
             setTimeout(() => {
                 bindEvents();
@@ -10409,7 +10656,28 @@
         const previewOverlay = document.querySelector("#coolauxv-img-preview-overlay");
         const previewImg = document.querySelector("#coolauxv-img-preview-el");
         if (resultDiv && previewOverlay && previewImg) {
+            const tryOpenMermaidPreviewFromEvent = (event, suppressNextOverlayClick) => {
+                const target = event && event.target;
+                if (!target || typeof target.closest !== "function") return false;
+                const mermaidSvg = target.closest(".coolauxv-mermaid-rendered svg");
+                if (!mermaidSvg) return false;
+                openMermaidPreview(mermaidSvg, suppressNextOverlayClick);
+                return true;
+            };
+
+            resultDiv.addEventListener("pointerdown", (e) => {
+                if (e.button !== 0) return;
+                if (tryOpenMermaidPreviewFromEvent(e, true)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }, { capture: true });
+
             resultDiv.addEventListener("click", (e) => {
+                if (tryOpenMermaidPreviewFromEvent(e, false)) {
+                    e.preventDefault();
+                    return;
+                }
                 const toggleBtn = e.target.closest("[data-action=\"toggle-error-detail\"]");
                 if (toggleBtn) {
                     const container = toggleBtn.closest(".coolauxv-error-detail");
@@ -12068,6 +12336,7 @@
                                     id === "coolauxv-translate-popup" ||
                                     id === "coolauxv-translate-icon" ||
                                     id === "coolauxv-img-preview-overlay" ||
+                                    id === "coolauxv-mermaid-preview-overlay" ||
                                     id === "coolauxv-loading-toast";
                             }
                         });
@@ -12279,6 +12548,7 @@
                                     id === "coolauxv-translate-popup" ||
                                     id === "coolauxv-translate-icon" ||
                                     id === "coolauxv-img-preview-overlay" ||
+                                    id === "coolauxv-mermaid-preview-overlay" ||
                                     id === "coolauxv-loading-toast";
                             }
                         });
