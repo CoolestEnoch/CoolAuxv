@@ -24,6 +24,12 @@
       "match_origin_as_fallback": true
     }
   ],
+  "web_accessible_resources": [
+    {
+      "resources": ["vendor/mermaid.min.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "action": {
     "default_title": "CoolAuxv"
   }

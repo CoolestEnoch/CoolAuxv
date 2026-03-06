@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.7-dev2
+// @version      v15.7-dev3
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -218,22 +218,104 @@
     const chatMermaidRenderPending = new Map();
     let chatMermaidCacheVersion = 0;
     let mermaidLocalRendererInitialized = false;
+    let mermaidLoadPromise = null;
+    const MERMAID_RENDERER_UNAVAILABLE_CODE = "renderer_unavailable";
 
     const normalizeMermaidCode = (code) => String(code || "").replace(/\r\n?/g, "\n").trim();
 
+    const isMermaidRendererLike = (value) => {
+        if (!value) return false;
+        if (typeof value.render === "function") return true;
+        if (value.mermaidAPI && typeof value.mermaidAPI.render === "function") return true;
+        return false;
+    };
+
+    const unwrapMermaidRenderer = (value) => {
+        if (!value) return null;
+        if (isMermaidRendererLike(value)) return value;
+        if (value.default && isMermaidRendererLike(value.default)) return value.default;
+        return null;
+    };
+
     const getLocalMermaidRenderer = () => {
+        const candidates = [];
         if (typeof mermaid !== "undefined" && mermaid) {
-            return mermaid;
+            candidates.push(mermaid);
         }
         if (globalThis && globalThis.mermaid) {
-            return globalThis.mermaid;
+            candidates.push(globalThis.mermaid);
+        }
+        if (typeof module !== "undefined" && module && module.exports) {
+            candidates.push(module.exports);
+        }
+        if (typeof exports !== "undefined" && exports) {
+            candidates.push(exports);
+        }
+        for (let i = 0; i < candidates.length; i++) {
+            const resolved = unwrapMermaidRenderer(candidates[i]);
+            if (!resolved) continue;
+            if (globalThis && !globalThis.mermaid) {
+                try {
+                    globalThis.mermaid = resolved;
+                } catch (e) { }
+            }
+            return resolved;
         }
         return null;
+    };
+
+    const ensureMermaidRuntimeLoaded = async () => {
+        if (getLocalMermaidRenderer()) return true;
+        if (mermaidLoadPromise) return mermaidLoadPromise;
+        mermaidLoadPromise = (async () => {
+            if (!(globalThis.chrome && chrome.runtime && typeof chrome.runtime.getURL === "function")) {
+                Logger.debug("[Mermaid]", "runtime load skipped: chrome.runtime.getURL unavailable");
+                return false;
+            }
+            const url = chrome.runtime.getURL("vendor/mermaid.min.js");
+            Logger.debug("[Mermaid]", "runtime import mermaid from extension url", { url: url });
+            try {
+                await import(url);
+            } catch (err) {
+                Logger.debug("[Mermaid]", "runtime import failed", err && (err.message || String(err)));
+            }
+            let loaded = !!getLocalMermaidRenderer();
+            if (!loaded) {
+                Logger.debug("[Mermaid]", "runtime fallback: fetch + blob import", { url: url });
+                try {
+                    const resp = await fetch(url, { cache: "no-store" });
+                    if (!resp.ok) {
+                        throw new Error(`HTTP ${resp.status}`);
+                    }
+                    const source = await resp.text();
+                    const blobUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+                    try {
+                        await import(blobUrl);
+                    } finally {
+                        URL.revokeObjectURL(blobUrl);
+                    }
+                } catch (err) {
+                    Logger.debug("[Mermaid]", "runtime fallback import failed", err && (err.message || String(err)));
+                }
+            }
+            loaded = !!getLocalMermaidRenderer();
+            Logger.debug("[Mermaid]", "runtime import finished", { loaded: loaded });
+            return loaded;
+        })();
+        const ok = await mermaidLoadPromise;
+        if (!ok) {
+            mermaidLoadPromise = null;
+        }
+        return ok;
     };
 
     const initLocalMermaidRendererIfNeeded = (renderer) => {
         if (!renderer || mermaidLocalRendererInitialized) return;
         if (typeof renderer.initialize === "function") {
+            Logger.debug("[Mermaid]", "init renderer via mermaid.initialize", {
+                version: renderer.version || "",
+                hasMermaidAPI: !!renderer.mermaidAPI
+            });
             renderer.initialize({
                 startOnLoad: false,
                 securityLevel: "strict",
@@ -243,6 +325,10 @@
             return;
         }
         if (renderer.mermaidAPI && typeof renderer.mermaidAPI.initialize === "function") {
+            Logger.debug("[Mermaid]", "init renderer via mermaidAPI.initialize", {
+                version: renderer.version || "",
+                hasMermaidAPI: !!renderer.mermaidAPI
+            });
             renderer.mermaidAPI.initialize({
                 startOnLoad: false,
                 securityLevel: "strict",
@@ -252,16 +338,29 @@
         }
     };
 
-    const requestMermaidSvgByLocal = (code) => {
+    const requestMermaidSvgByLocal = async (code) => {
+        let renderer = getLocalMermaidRenderer();
+        if (!renderer) {
+            await ensureMermaidRuntimeLoaded();
+            renderer = getLocalMermaidRenderer();
+        }
         return new Promise((resolve, reject) => {
-            const renderer = getLocalMermaidRenderer();
             if (!renderer) {
-                reject(new Error("Mermaid local renderer unavailable"));
+                Logger.debug("[Mermaid]", "local renderer unavailable", {
+                    hasGlobalMermaid: !!(globalThis && globalThis.mermaid),
+                    typeofModule: typeof module,
+                    hasModuleExports: typeof module !== "undefined" && module && !!module.exports,
+                    hasExportsObj: typeof exports !== "undefined" && !!exports
+                });
+                const unavailableErr = new Error("Mermaid local renderer unavailable");
+                unavailableErr.code = MERMAID_RENDERER_UNAVAILABLE_CODE;
+                reject(unavailableErr);
                 return;
             }
             try {
                 initLocalMermaidRendererIfNeeded(renderer);
             } catch (err) {
+                Logger.debug("[Mermaid]", "renderer init failed", err && (err.message || String(err)));
                 reject(err);
                 return;
             }
@@ -269,10 +368,20 @@
                 ? renderer.mermaidAPI
                 : renderer;
             if (!renderApi || typeof renderApi.render !== "function") {
+                Logger.debug("[Mermaid]", "render api unavailable", {
+                    hasRendererRender: !!(renderer && renderer.render),
+                    hasMermaidApiRender: !!(renderer && renderer.mermaidAPI && renderer.mermaidAPI.render)
+                });
                 reject(new Error("Mermaid render API unavailable"));
                 return;
             }
             const renderId = `coolauxv-mermaid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+            Logger.debug("[Mermaid]", "start local render", {
+                renderId: renderId,
+                codeLength: code.length,
+                renderArity: renderApi.render.length,
+                version: renderer.version || ""
+            });
             const resolveSvg = (value) => {
                 let svgText = "";
                 if (typeof value === "string") {
@@ -281,9 +390,17 @@
                     svgText = value.svg;
                 }
                 if (svgText && svgText.includes("<svg")) {
+                    Logger.debug("[Mermaid]", "local render success", {
+                        renderId: renderId,
+                        svgLength: svgText.length
+                    });
                     resolve(svgText);
                     return;
                 }
+                Logger.debug("[Mermaid]", "local render invalid svg", {
+                    renderId: renderId,
+                    valueType: typeof value
+                });
                 reject(new Error("Mermaid local render returned invalid svg"));
             };
             try {
@@ -297,11 +414,21 @@
                 if (renderResult && typeof renderResult.then === "function") {
                     renderResult.then((output) => {
                         resolveSvg(output);
-                    }).catch((err) => reject(err));
+                    }).catch((err) => {
+                        Logger.debug("[Mermaid]", "local render promise rejected", {
+                            renderId: renderId,
+                            error: err && (err.message || String(err))
+                        });
+                        reject(err);
+                    });
                     return;
                 }
                 resolveSvg(renderResult);
             } catch (err) {
+                Logger.debug("[Mermaid]", "local render threw", {
+                    renderId: renderId,
+                    error: err && (err.message || String(err))
+                });
                 reject(err);
             }
         });
@@ -328,29 +455,66 @@
 
     const ensureMermaidSvgCached = (code) => {
         const normalized = normalizeMermaidCode(code);
-        if (!normalized) return Promise.resolve("");
+        if (!normalized) {
+            Logger.debug("[Mermaid]", "skip empty mermaid block");
+            return Promise.resolve("");
+        }
         if (chatMermaidSvgCache.has(normalized)) {
             const cached = chatMermaidSvgCache.get(normalized);
+            Logger.debug("[Mermaid]", "cache hit", {
+                codeLength: normalized.length,
+                cachedType: typeof cached
+            });
             return Promise.resolve(typeof cached === "string" ? cached : "");
         }
         if (chatMermaidRenderPending.has(normalized)) {
+            Logger.debug("[Mermaid]", "reuse pending render", {
+                codeLength: normalized.length
+            });
             return chatMermaidRenderPending.get(normalized);
         }
         const requestVersion = chatMermaidCacheVersion;
+        Logger.debug("[Mermaid]", "cache miss -> render", {
+            codeLength: normalized.length,
+            cacheVersion: requestVersion
+        });
         const task = requestMermaidSvgByLocal(normalized)
             .then((svgText) => {
                 if (requestVersion !== chatMermaidCacheVersion) return "";
                 if (svgText) {
                     chatMermaidSvgCache.set(normalized, svgText);
+                    Logger.debug("[Mermaid]", "cache store success", {
+                        codeLength: normalized.length,
+                        svgLength: svgText.length
+                    });
                     return svgText;
                 }
                 chatMermaidSvgCache.set(normalized, MERMAID_RENDER_FAILED);
+                Logger.debug("[Mermaid]", "cache store failed marker (empty svg)", {
+                    codeLength: normalized.length
+                });
                 return "";
             })
             .catch((err) => {
                 if (requestVersion === chatMermaidCacheVersion) {
-                    chatMermaidSvgCache.set(normalized, MERMAID_RENDER_FAILED);
-                    console.warn("CoolAuxv Mermaid 渲染失败:", err);
+                    const isTemporaryUnavailable = err && err.code === MERMAID_RENDERER_UNAVAILABLE_CODE;
+                    if (isTemporaryUnavailable) {
+                        Logger.debug("[Mermaid]", "render unavailable; keep codeblock and wait next chance", {
+                            codeLength: normalized.length,
+                            error: err && (err.message || String(err))
+                        });
+                    } else {
+                        chatMermaidSvgCache.set(normalized, MERMAID_RENDER_FAILED);
+                        Logger.debug("[Mermaid]", "cache store failed marker (error)", {
+                            codeLength: normalized.length,
+                            error: err && (err.message || String(err))
+                        });
+                    }
+                } else {
+                    Logger.debug("[Mermaid]", "skip cache write due cache version changed", {
+                        codeLength: normalized.length,
+                        error: err && (err.message || String(err))
+                    });
                 }
                 return "";
             })
@@ -1011,7 +1175,7 @@
             return targetVal >= currentVal;
         },
 
-        // 支持自定义 Tag，如果 tag 为空则使用默认值
+        // 统一使用默认 Tag（[CoolAuxv]）
         _print: (level, tag, args) => {
             if (Logger.shouldLog(level)) {
                 // 如果没有传入 tag，则使用默认的
@@ -1027,11 +1191,7 @@
         debug: (...args) => Logger._print('debug', null, args),
         info: (...args) => Logger._print('info', null, args),
         warn: (...args) => Logger._print('warn', null, args),
-        error: (...args) => Logger._print('error', null, args),
-
-        // 新代码如果需要自定义 Tag，调用这个方法
-        // 用法: Logger.custom("自定义标签", "info", "消息内容...")
-        custom: (tag, level, ...args) => Logger._print(level, tag, args)
+        error: (...args) => Logger._print('error', null, args)
     };
 
     // --- 1. 样式注入 ---
@@ -9510,6 +9670,13 @@
                     mermaidBlocks.push({ code: normalizedCode });
                     return `MERMAIDBLOCK${mermaidBlocks.length - 1}END`;
                 });
+                if (mermaidBlocks.length) {
+                    Logger.debug("[Mermaid]", "detected closed mermaid blocks in markdown", {
+                        blocks: mermaidBlocks.length,
+                        isRaw: !!isRaw,
+                        contentLength: String(newContentHTML || "").length
+                    });
+                }
 
                 // 1. 数学公式保护 (Math Protection)
                 // 使用纯字母数字的占位符 (如 KATEXBLOCK0END)，避免 Markdown 解析器将其识别为粗体/斜体
@@ -9551,12 +9718,32 @@
                     const fallbackHtml = `<pre><code class="language-mermaid">${escapeHTML(block.code)}</code></pre>`;
                     const cachedSvg = getCachedMermaidSvg(block.code);
                     if (cachedSvg) {
+                        Logger.debug("[Mermaid]", "render markdown with cached svg", {
+                            codeLength: block.code.length,
+                            svgLength: cachedSvg.length
+                        });
                         return `<div class="coolauxv-mermaid-rendered">${cachedSvg}</div>`;
                     }
-                    if (isRendering && !isMermaidRenderFailed(block.code)) {
+                    if (!isMermaidRenderFailed(block.code)) {
+                        Logger.debug("[Mermaid]", "render markdown with fallback codeblock; trigger async render", {
+                            codeLength: block.code.length
+                        });
                         ensureMermaidSvgCached(block.code).then((svgText) => {
-                            if (!svgText || !popup || !popup.isConnected) return;
+                            if (!svgText || !popup || !popup.isConnected) {
+                                Logger.debug("[Mermaid]", "async render resolved but skip rerender", {
+                                    hasSvg: !!svgText,
+                                    popupConnected: !!(popup && popup.isConnected)
+                                });
+                                return;
+                            }
+                            Logger.debug("[Mermaid]", "async render resolved; rerender content", {
+                                svgLength: svgText.length
+                            });
                             renderContent();
+                        });
+                    } else {
+                        Logger.debug("[Mermaid]", "render markdown with fallback codeblock; block marked failed", {
+                            codeLength: block.code.length
                         });
                     }
                     return `<div class="coolauxv-mermaid-fallback">${fallbackHtml}</div>`;

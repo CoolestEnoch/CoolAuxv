@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.7-dev2
+// @version      v15.7-dev3
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -342,12 +342,43 @@
 
     const normalizeMermaidCode = (code) => String(code || "").replace(/\r\n?/g, "\n").trim();
 
+    const isMermaidRendererLike = (value) => {
+        if (!value) return false;
+        if (typeof value.render === "function") return true;
+        if (value.mermaidAPI && typeof value.mermaidAPI.render === "function") return true;
+        return false;
+    };
+
+    const unwrapMermaidRenderer = (value) => {
+        if (!value) return null;
+        if (isMermaidRendererLike(value)) return value;
+        if (value.default && isMermaidRendererLike(value.default)) return value.default;
+        return null;
+    };
+
     const getLocalMermaidRenderer = () => {
+        const candidates = [];
         if (typeof mermaid !== "undefined" && mermaid) {
-            return mermaid;
+            candidates.push(mermaid);
         }
         if (globalThis && globalThis.mermaid) {
-            return globalThis.mermaid;
+            candidates.push(globalThis.mermaid);
+        }
+        if (typeof module !== "undefined" && module && module.exports) {
+            candidates.push(module.exports);
+        }
+        if (typeof exports !== "undefined" && exports) {
+            candidates.push(exports);
+        }
+        for (let i = 0; i < candidates.length; i++) {
+            const resolved = unwrapMermaidRenderer(candidates[i]);
+            if (!resolved) continue;
+            if (globalThis && !globalThis.mermaid) {
+                try {
+                    globalThis.mermaid = resolved;
+                } catch (e) { }
+            }
+            return resolved;
         }
         return null;
     };
@@ -1130,7 +1161,7 @@
             return targetVal >= currentVal;
         },
 
-        // 支持自定义 Tag，如果 tag 为空则使用默认值
+        // 统一使用默认 Tag（[CoolAuxv]）
         _print: (level, tag, args) => {
             if (Logger.shouldLog(level)) {
                 // 如果没有传入 tag，则使用默认的
@@ -1146,11 +1177,7 @@
         debug: (...args) => Logger._print('debug', null, args),
         info: (...args) => Logger._print('info', null, args),
         warn: (...args) => Logger._print('warn', null, args),
-        error: (...args) => Logger._print('error', null, args),
-
-        // 新代码如果需要自定义 Tag，调用这个方法
-        // 用法: Logger.custom("自定义标签", "info", "消息内容...")
-        custom: (tag, level, ...args) => Logger._print(level, tag, args)
+        error: (...args) => Logger._print('error', null, args)
     };
 
     // ========================================================================
@@ -10117,7 +10144,7 @@
                     if (cachedSvg) {
                         return `<div class="coolauxv-mermaid-rendered">${cachedSvg}</div>`;
                     }
-                    if (isRendering && !isMermaidRenderFailed(block.code)) {
+                    if (!isMermaidRenderFailed(block.code)) {
                         ensureMermaidSvgCached(block.code).then((svgText) => {
                             if (!svgText || !popup || !popup.isConnected) return;
                             renderContent();
