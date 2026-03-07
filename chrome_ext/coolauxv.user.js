@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v15.7.2
+// @version      v16.0
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -43,6 +43,8 @@
     const PROVIDER_TEMPLATE_STORAGE_KEY = "coolauxv_provider_templates_v1";
     const PROVIDER_SECRET_STORAGE_KEY = "coolauxv_provider_custom_secrets_v1";
     const PROVIDER_SHARE_VERSION = 1;
+    const ACTION_TEMPLATE_STORAGE_KEY = "coolauxv_action_templates_v1";
+    const ACTION_SHARE_VERSION = 1;
     const CHAT_HISTORY_SHARE_VERSION = 1;
     const CHAT_HISTORY_SHARE_TYPE = "coolauxv-chat-history";
     const CHAT_QUEUE_SHARE_VERSION = 1;
@@ -130,120 +132,27 @@
     };
     const HIJACKED_PDF_SOURCE_URL = getHijackedPdfSourceUrl();
 
-
-    const DEFAULT_PROMPT_TRANSLATE = "你是一个翻译引擎。将用户输入直接翻译成中文。如果输入是中文则译为英文。不要输出任何多余的解释。";
-    const DEFAULT_PROMPT_EXPLAIN = "用户输入文本后，先翻译全文：若非中文译成中文，若是中文译成英文，为英文简写用括号标注完整写法。用户是这个领域的新手，你是这个领域的资深专家兼大师，然后详细解读：用通俗中文解释所有专业概念，每个概念解释前先明确标注原术语（英文简写需同时给出全称）,如果有公式，请用latex格式输出。解读要详细全面，涵盖定义、背景、原理、应用和意义。输出为排版丰富的Markdown，除翻译外全文都用中文回答，不允许把全文都放在codeblock里。";
+    const DEFAULT_ACTION_TEMPLATE_BASE64_LIST = [
+        "eyJpZCI6InRyYW5zbGF0ZSIsImxhYmVsIjoi57+76K+RIiwic3lzdGVtUHJvbXB0Ijoi5L2g5piv5LiA5Liq57+76K+R5byV5pOO44CC5bCG55So5oi36L6T5YWl55u05o6l57+76K+R5oiQ5Lit5paH44CC5aaC5p6c6L6T5YWl5piv5Lit5paH5YiZ6K+R5Li66Iux5paH44CC5LiN6KaB6L6T5Ye65Lu75L2V5aSa5L2Z55qE6Kej6YeK44CCIiwiY29sb3IiOiJyZ2IoMjQ5LCAyNTAsIDI1MSkiLCJ2aXNpb25Qcm9tcHRPcmRlciI6ImFmdGVyIn0=",
+        "eyJpZCI6ImV4cGxhaW4iLCJsYWJlbCI6Iuino+ivuyIsInN5c3RlbVByb21wdCI6IueUqOaIt+i+k+WFpeaWh+acrOWQju+8jOWFiOe/u+ivkeWFqOaWh++8muiLpemdnuS4reaWh+ivkeaIkOS4reaWh++8jOiLpeaYr+S4reaWh+ivkeaIkOiLseaWh++8jOS4uuiLseaWh+eugOWGmeeUqOaLrOWPt+agh+azqOWujOaVtOWGmeazleOAgueUqOaIt+aYr+i/meS4qumihuWfn+eahOaWsOaJi++8jOS9oOaYr+i/meS4qumihuWfn+eahOi1hOa3seS4k+WutuWFvOWkp+W4iO+8jOeEtuWQjuivpue7huino+ivu++8mueUqOmAmuS/l+S4reaWh+ino+mHiuaJgOacieS4k+S4muamguW/te+8jOavj+S4quamguW/teino+mHiuWJjeWFiOaYjuehruagh+azqOWOn+acr+ivre+8iOiLseaWh+eugOWGmemcgOWQjOaXtue7meWHuuWFqOensO+8iSzlpoLmnpzmnInlhazlvI/vvIzor7fnlKhsYXRleOagvOW8j+i+k+WHuuOAguino+ivu+imgeivpue7huWFqOmdou+8jOa2teebluWumuS5ieOAgeiDjOaZr+OAgeWOn+eQhuOAgeW6lOeUqOWSjOaEj+S5ieOAgui+k+WHuuS4uuaOkueJiOS4sOWvjOeahE1hcmtkb3du77yM6Zmk57+76K+R5aSW5YWo5paH6YO955So5Lit5paH5Zue562U77yM5LiN5YWB6K645oqK5YWo5paH6YO95pS+5ZyoY29kZWJsb2Nr6YeM44CCIiwiY29sb3IiOiJyZ2IoMTA5LCA0MCwgMjE3KSIsInZpc2lvblByb21wdE9yZGVyIjoiYmVmb3JlIn0="
+    ];
 
     const LATEST_CHANGELOG = `
-        v15.7.2 更新日志
-        ## 🐛 问题修复
-        *   修复pdfjs预览器里可能出现两个分数缩放输入框的问题
-        ---
-        v15.7.1 更新日志
-        ## 🐛 问题修复
-        *   修复pdfjs预览器里偶发的没法分数缩放问题
-        ---
-        v15.7 更新日志
+        v16.0 更新日志
         ## ✨ 新功能
+        *   首页按钮“翻译”、“解读”按钮解耦，可自定义、可新增可删除。
+        *   大模型提供商、首页自定义按钮顺序可以自定义拖动排序了。
         *   **Mermaid 图表渲染**：支持在对话中渲染流程图、时序图、甘特图等 Mermaid 图表
         *   **PDF 阅读增强**：
             *   内置 PDF.js 查看器支持分数缩放，缩放更平滑
             *   自动将 arXiv 的 PDF 链接重定向到内置查看器，无需手动切换
         ## 🐛 问题修复
         *   修复偶发的本地 PDF 文件无法在内置 PDF.js 中预览的问题
+        *   修复pdfjs预览器里可能出现两个分数缩放输入框的问题
+        *   修复pdfjs预览器里偶发的没法分数缩放问题
         ## 🎨 界面优化
         *   错误提示信息增加“删除”按钮，可快速关闭
         *   空输入时的错误提示改为浮动显示，避免遮挡界面
-        ---
-        v15.6 更新日志
-        ## ✨ 功能改进
-        *   设置中新增默认操作选项（实验性功能），可选择点击“译”悬浮球后默认执行翻译或解读
-        ## 🐛 问题修复
-        *   修复在设置中切换提供商后，新提供商的模型选择区无法点击的问题
-        *   修复发送消息后AI回复期间，原本的“AI思考中...”提示不显示的问题
-        *   修复停止AI输出按钮的动画不受设置控制的问题
-        ## 🎨 界面优化
-        *   主区域向上滚动不在底部时，右下角添加“回到底部”按钮，点击可滚动至最底部
-        ---
-        v15.5.1 更新日志
-        ## 🐛 问题修复
-        *   修复当基础动画关闭时，顶部区域的“收起”按钮、查看原文复选框、显示推理复选框仍有动画的问题
-        *   修复用户上次使用收起顶部区域并缩小到悬浮球后，重新选择文本点击“译”时顶部区域不自动展开的问题
-        ---
-        v15.5 更新日志
-        ## 🐛 问题修复
-        *   修复当API返回内容包含 <|stats|>...</|stats|> 标记时，脚本无任何输出的问题
-        ---
-        v15.4 更新日志
-        ## ✨ 功能改进
-        *   支持不同模态的模型共享聊天记录接著连续对话了。
-        *   支持删除/编辑AI的聊天记录，为了更好的让下一个模型来连续对话。
-        ## 🐛 问题修复
-        *   修复顶部区域收起时，鼠标移开展开按钮后临时展开区域不收起的问题
-        *   修复不勾选“聊天记录持久化”但依旧保存聊天记录的问题
-        ## 🎨 界面优化
-        *   降低翻译/解读/识屏/本地文件按钮行的高度，节省垂直空间
-        *   为聊天记录弹窗添加淡入动画，与已有的淡出动画匹配
-        *   首页连续对话区的聊天记录按钮仅当勾选持久化后显示
-        *   设置的“清空所有聊天记录”按钮旁新增聊天记录管理入口
-        ---
-        v15.3 更新日志
-        ## ✨ 功能改进
-        *   顶部内容输入区现在支持粘贴或选择本地图片，与连续对话区域行为一致
-        *   聊天会话的重命名结果持久生效，关闭窗口进入后台队列后名称保持不变
-        ## 🐛 问题修复
-        *   修复顶部内容输入区无法粘贴/选择图片的问题
-        ## 🎨 界面优化
-        *   顶部区域为未发送的截屏结果增加清除按钮
-        *   清除按钮的显示/消失动画与连续对话按钮区域动画一致，提升视觉连贯性
-        ---
-        v15.2 更新日志
-        ## 💬 自动聊天会话创建
-        *   开始连续对话时会自动创建新的聊天会话，无需手动关闭
-        *   改进聊天会话管理流程，更符合用户使用习惯
-        ## 🎨 聊天记录界面增强
-        *   聊天记录管理页面支持流体玻璃特效（受流体玻璃开关控制）
-        *   删除聊天记录时增加收起动画（单独和批量删除都支持）
-        *   删除动画受高级动画开关控制
-        ## 🔄 用户体验优化
-        *   统一聊天记录界面与主界面的视觉风格
-        *   改进聊天历史管理的整体流畅性和一致性
-        ---
-        v15.1 更新日志
-        ## 🎨 聊天记录管理动画优化
-        *   聊天记录批量管理模式进入/退出时，工具栏和按钮增加展开/收起动画
-        *   批量操作左侧的拼图图标也有对应的显示/隐藏动画
-        *   动画效果与AI提供商设置的动画保持一致
-        ## 🏷️ 对话重命名功能
-        *   后台对话队列中的对话现在支持重命名
-        *   提供更灵活的对话组织和查找方式
-        ## 🔄 界面交互改进
-        *   批量管理模式交互更流畅，视觉反馈更明确
-        *   增强聊天记录管理界面的整体一致性
-        ---
-        v15.0 更新日志
-        ## 💾 聊天记录管理系统
-        *   新增聊天记录管理功能，支持导出为Base64/PDF、从Base64导入
-        *   PDF导出功能，方便分享对话内容（单向导出）
-        *   聊天持久化系统，支持后台队列存储和跨标签页同步
-        *   聊天记录批量操作：删除、导出、导入
-        ## 🖼️ 对话功能增强
-        *   连续对话支持插入本地图片（粘贴或文件选择器）
-        *   新增中断按钮，可在AI输出时停止生成
-        *   聊天记录自动保存，关闭窗口时自动存入后台队列
-        ## 📄 PDF导出优化
-        *   PDF导出支持自定义角色选择（默认用户和助手角色）
-        *   修复PDF导出中LaTeX公式渲染问题
-        *   改进导出界面体验，优化操作流程
-        ## 🗂️ 后台聊天队列
-        *   独立聊天记录管理面板，可恢复、删除、导出历史对话
-        *   持久化存储选项，实现跨标签页对话同步
-        *   唯一对话ID机制，避免重复记录
-        *   可清空所有持久化聊天记录（需二次确认）
-        ## 🎨 界面优化
-        *   优化聊天记录管理对话框布局，移除冗余按钮
-        *   调整Base64输入框大小，改善视觉体验
-        *   增强聊天记录面板的组织和展示方式
     `;
 
     const DEFAULT_PROVIDER_BASE64_LIST = [
@@ -271,6 +180,7 @@
     };
 
     let providerTemplatesCache = null;
+    let actionTemplatesCache = null;
     const MERMAID_RENDER_FAILED = Symbol("coolauxv_mermaid_render_failed");
     const chatMermaidSvgCache = new Map();
     const chatMermaidRenderPending = new Map();
@@ -632,6 +542,23 @@
         }
     };
 
+    const encodeBase64Utf8 = (text) => {
+        try {
+            const input = String(text === undefined || text === null ? "" : text);
+            if (typeof TextEncoder !== "undefined") {
+                const bytes = new TextEncoder().encode(input);
+                let binary = "";
+                for (let i = 0; i < bytes.length; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                }
+                return btoa(binary);
+            }
+            return btoa(unescape(encodeURIComponent(input)));
+        } catch (e) {
+            return "";
+        }
+    };
+
     const parseProviderBase64 = (base64) => {
         const decoded = decodeBase64Utf8(base64);
         if (!decoded) return null;
@@ -640,6 +567,410 @@
         } catch (e) {
             return null;
         }
+    };
+
+    const parseActionBase64 = (base64) => {
+        const decoded = decodeBase64Utf8(base64);
+        if (!decoded) return null;
+        try {
+            return JSON.parse(decoded);
+        } catch (e) {
+            return null;
+        }
+    };
+
+    const clampColorValue = (value, min, max) => {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return min;
+        return Math.max(min, Math.min(max, num));
+    };
+
+    const normalizeHue = (value) => {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return 0;
+        const base = num % 360;
+        return base < 0 ? base + 360 : base;
+    };
+
+    const parseRgbString = (value) => {
+        const matched = String(value || "").trim().match(/^rgba?\(\s*([^\)]+)\s*\)$/i);
+        if (!matched) return null;
+        const parts = matched[1].split(",").map((part) => part.trim());
+        if (parts.length < 3) return null;
+        const parseChannel = (raw) => {
+            if (raw.endsWith("%")) {
+                const pct = clampColorValue(parseFloat(raw), 0, 100);
+                return Math.round((pct / 100) * 255);
+            }
+            return Math.round(clampColorValue(parseFloat(raw), 0, 255));
+        };
+        const r = parseChannel(parts[0]);
+        const g = parseChannel(parts[1]);
+        const b = parseChannel(parts[2]);
+        if (![r, g, b].every((item) => Number.isFinite(item))) return null;
+        return { r: r, g: g, b: b };
+    };
+
+    const hslToRgb = (h, s, l) => {
+        const hh = normalizeHue(h);
+        const ss = clampColorValue(s, 0, 100) / 100;
+        const ll = clampColorValue(l, 0, 100) / 100;
+        if (ss === 0) {
+            const gray = Math.round(ll * 255);
+            return { r: gray, g: gray, b: gray };
+        }
+        const chroma = (1 - Math.abs(2 * ll - 1)) * ss;
+        const x = chroma * (1 - Math.abs(((hh / 60) % 2) - 1));
+        const m = ll - chroma / 2;
+        let r1 = 0;
+        let g1 = 0;
+        let b1 = 0;
+        if (hh < 60) {
+            r1 = chroma;
+            g1 = x;
+        } else if (hh < 120) {
+            r1 = x;
+            g1 = chroma;
+        } else if (hh < 180) {
+            g1 = chroma;
+            b1 = x;
+        } else if (hh < 240) {
+            g1 = x;
+            b1 = chroma;
+        } else if (hh < 300) {
+            r1 = x;
+            b1 = chroma;
+        } else {
+            r1 = chroma;
+            b1 = x;
+        }
+        return {
+            r: Math.round((r1 + m) * 255),
+            g: Math.round((g1 + m) * 255),
+            b: Math.round((b1 + m) * 255)
+        };
+    };
+
+    const rgbToHsl = (r, g, b) => {
+        const rr = clampColorValue(r, 0, 255) / 255;
+        const gg = clampColorValue(g, 0, 255) / 255;
+        const bb = clampColorValue(b, 0, 255) / 255;
+        const max = Math.max(rr, gg, bb);
+        const min = Math.min(rr, gg, bb);
+        const delta = max - min;
+        let h = 0;
+        if (delta !== 0) {
+            if (max === rr) {
+                h = 60 * (((gg - bb) / delta) % 6);
+            } else if (max === gg) {
+                h = 60 * (((bb - rr) / delta) + 2);
+            } else {
+                h = 60 * (((rr - gg) / delta) + 4);
+            }
+        }
+        const l = (max + min) / 2;
+        const s = delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1));
+        return {
+            h: Math.round(normalizeHue(h)),
+            s: Math.round(s * 100),
+            l: Math.round(l * 100)
+        };
+    };
+
+    const parseHslString = (value) => {
+        const matched = String(value || "").trim().match(/^hsla?\(\s*([^\)]+)\s*\)$/i);
+        if (!matched) return null;
+        const parts = matched[1].split(",").map((part) => part.trim());
+        if (parts.length < 3) return null;
+        const hueRaw = parts[0].replace(/deg$/i, "").trim();
+        const satRaw = parts[1];
+        const lightRaw = parts[2];
+        const hue = normalizeHue(parseFloat(hueRaw));
+        const sat = satRaw.endsWith("%") ? clampColorValue(parseFloat(satRaw), 0, 100) : clampColorValue(parseFloat(satRaw), 0, 100);
+        const light = lightRaw.endsWith("%") ? clampColorValue(parseFloat(lightRaw), 0, 100) : clampColorValue(parseFloat(lightRaw), 0, 100);
+        if (![hue, sat, light].every((item) => Number.isFinite(item))) return null;
+        return hslToRgb(hue, sat, light);
+    };
+
+    const parseColorToRgb = (value) => {
+        const raw = String(value || "").trim();
+        if (!raw) return null;
+        const byRgb = parseRgbString(raw);
+        if (byRgb) return byRgb;
+        const byHsl = parseHslString(raw);
+        if (byHsl) return byHsl;
+        return null;
+    };
+
+    const rgbToCss = (rgb) => {
+        if (!rgb) return "";
+        const r = Math.round(clampColorValue(rgb.r, 0, 255));
+        const g = Math.round(clampColorValue(rgb.g, 0, 255));
+        const b = Math.round(clampColorValue(rgb.b, 0, 255));
+        return `rgb(${r}, ${g}, ${b})`;
+    };
+
+    const hslToCss = (hsl) => {
+        if (!hsl) return "";
+        const h = Math.round(normalizeHue(hsl.h));
+        const s = Math.round(clampColorValue(hsl.s, 0, 100));
+        const l = Math.round(clampColorValue(hsl.l, 0, 100));
+        return `hsl(${h}, ${s}%, ${l}%)`;
+    };
+
+    const normalizeColorValue = (input, fallback) => {
+        const parsed = parseColorToRgb(input);
+        if (parsed) return rgbToCss(parsed);
+        const fallbackParsed = parseColorToRgb(fallback || "");
+        if (fallbackParsed) return rgbToCss(fallbackParsed);
+        return "rgb(249, 250, 251)";
+    };
+
+    const mixRgbColor = (rgb, targetRgb, ratio) => {
+        if (!rgb || !targetRgb) return rgb;
+        const t = clampColorValue(ratio, 0, 1);
+        return {
+            r: Math.round(rgb.r + (targetRgb.r - rgb.r) * t),
+            g: Math.round(rgb.g + (targetRgb.g - rgb.g) * t),
+            b: Math.round(rgb.b + (targetRgb.b - rgb.b) * t)
+        };
+    };
+
+    const getColorLuma = (rgb) => {
+        if (!rgb) return 1;
+        const toLinear = (n) => {
+            const value = clampColorValue(n, 0, 255) / 255;
+            return value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+        };
+        const r = toLinear(rgb.r);
+        const g = toLinear(rgb.g);
+        const b = toLinear(rgb.b);
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    };
+
+    const normalizeActionId = (id) => normalizeProviderId(id);
+
+    const normalizeActionVisionPromptOrder = (value) => (value === "before" ? "before" : "after");
+
+    let defaultActionSeedMapCache = null;
+    const getDefaultActionSeedMap = () => {
+        if (defaultActionSeedMapCache) return defaultActionSeedMapCache;
+        const map = {};
+        DEFAULT_ACTION_TEMPLATE_BASE64_LIST
+            .map(parseActionBase64)
+            .filter((item) => item && typeof item === "object")
+            .forEach((item) => {
+                const id = normalizeActionId(item.id || "");
+                if (!id || map[id]) return;
+                map[id] = {
+                    systemPrompt: String(item.systemPrompt || item.prompt || "").trim(),
+                    color: String(item.color || "").trim()
+                };
+            });
+        defaultActionSeedMapCache = map;
+        return map;
+    };
+    const getDefaultActionPromptById = (actionId) => {
+        const id = normalizeActionId(actionId);
+        if (!id) return "请根据用户输入完成任务。";
+        const map = getDefaultActionSeedMap();
+        const prompt = map[id] && map[id].systemPrompt ? String(map[id].systemPrompt).trim() : "";
+        return prompt || "请根据用户输入完成任务。";
+    };
+    const hashStringToActionColor = (seed) => {
+        const text = String(seed || "").trim() || "coolauxv-action";
+        let hash = 0;
+        for (let i = 0; i < text.length; i++) {
+            hash = text.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        const hue = Math.abs(hash) % 360;
+        const saturation = 62 + (Math.abs(hash >> 8) % 14); // 62~75
+        const lightness = 46 + (Math.abs(hash >> 16) % 12); // 46~57
+        return hslToCss({ h: hue, s: saturation, l: lightness });
+    };
+    const buildActionColorSeed = (actionId, raw) => {
+        const id = normalizeActionId(actionId);
+        if (!raw || typeof raw !== "object") return id || "coolauxv-action";
+        const label = String(raw.label || raw.text || "").trim();
+        const prompt = String(raw.systemPrompt || raw.prompt || "").trim();
+        const visionOrder = String(raw.visionPromptOrder || raw.visionOrder || "").trim();
+        return [id, label, prompt, visionOrder].filter(Boolean).join("|") || (id || "coolauxv-action");
+    };
+    const normalizeActionWeight = (value) => {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return 1;
+        const clamped = Math.min(12, Math.max(0.2, num));
+        return Math.round(clamped * 100) / 100;
+    };
+    const getDefaultActionColorById = (actionId, raw) => {
+        const id = normalizeActionId(actionId);
+        const map = getDefaultActionSeedMap();
+        const seedColor = id && map[id] ? map[id].color : "";
+        if (seedColor) {
+            return normalizeColorValue(seedColor, "rgb(249, 250, 251)");
+        }
+        if (id && id !== "translate" && id !== "explain") {
+            return hashStringToActionColor(buildActionColorSeed(id, raw));
+        }
+        return id === "explain" ? "rgb(109, 40, 217)" : "rgb(249, 250, 251)";
+    };
+
+    const resolveActionTemplateRawId = (raw) => {
+        if (!raw || typeof raw !== "object") return "";
+        const explicitId = normalizeActionId(raw.id || raw.key || raw.actionId || "");
+        if (explicitId) return explicitId;
+        const legacyName = String(raw.name || "").trim();
+        const labelLike = String(raw.label || raw.text || "").trim();
+        if (legacyName && !labelLike && /^[a-zA-Z0-9_-]+$/.test(legacyName)) {
+            return normalizeActionId(legacyName);
+        }
+        return "";
+    };
+
+    const ensureActionTemplate = (raw) => {
+        if (!raw || typeof raw !== "object") return null;
+        const id = resolveActionTemplateRawId(raw);
+        if (!id) return null;
+        const fallbackPrompt = getDefaultActionPromptById(id);
+        const prompt = String(raw.systemPrompt || raw.prompt || "").trim() || fallbackPrompt;
+        const defaultColor = getDefaultActionColorById(id, raw);
+        const color = normalizeColorValue(raw.color || "", defaultColor);
+        return {
+            id: id,
+            label: String(raw.label || raw.text || id).trim() || id,
+            systemPrompt: prompt,
+            color: color,
+            weight: normalizeActionWeight(raw.weight),
+            visionPromptOrder: normalizeActionVisionPromptOrder(raw.visionPromptOrder || raw.visionOrder || "")
+        };
+    };
+
+    const normalizeActionTemplates = (list) => {
+        if (!Array.isArray(list)) return [];
+        const output = [];
+        const seen = new Set();
+        list.forEach((item) => {
+            const normalized = ensureActionTemplate(item);
+            if (!normalized) return;
+            if (seen.has(normalized.id)) {
+                let idx = 2;
+                let nextId = `${normalized.id}-${idx}`;
+                while (seen.has(nextId)) {
+                    idx += 1;
+                    nextId = `${normalized.id}-${idx}`;
+                }
+                normalized.id = nextId;
+            }
+            seen.add(normalized.id);
+            output.push(normalized);
+        });
+        return output;
+    };
+
+    const serializeActionTemplateList = (list) => normalizeActionTemplates(list)
+        .map((tpl) => encodeBase64Utf8(JSON.stringify(tpl)))
+        .filter(Boolean);
+
+    const deserializeActionTemplateList = (raw) => {
+        let parsed = raw;
+        let needsRewrite = false;
+        if (parsed === null || parsed === undefined || parsed === "") {
+            return { templates: [], needsRewrite: false };
+        }
+        if (typeof parsed === "string") {
+            const text = parsed.trim();
+            if (!text) return { templates: [], needsRewrite: false };
+            try {
+                parsed = JSON.parse(text);
+                needsRewrite = true;
+            } catch (e) {
+                const single = parseActionBase64(text);
+                if (!single) return { templates: [], needsRewrite: false };
+                return { templates: normalizeActionTemplates([single]), needsRewrite: true };
+            }
+        }
+        let list = [];
+        if (Array.isArray(parsed)) {
+            const hasNonStringItem = parsed.some((item) => typeof item !== "string");
+            if (hasNonStringItem) needsRewrite = true;
+            list = parsed
+                .map((item) => (typeof item === "string" ? parseActionBase64(item) : item))
+                .filter(Boolean);
+        } else if (parsed && typeof parsed === "object") {
+            needsRewrite = true;
+            list = Array.isArray(parsed.actions) ? parsed.actions : [parsed];
+        } else {
+            return { templates: [], needsRewrite: false };
+        }
+        return { templates: normalizeActionTemplates(list), needsRewrite: needsRewrite };
+    };
+
+    const buildLegacyPromptWithAppend = (customKey, appendKey, defaultPrompt) => {
+        const custom = String(GM_getValue(customKey, "") || "").trim();
+        const isAppend = !!GM_getValue(appendKey, false);
+        if (!custom) return defaultPrompt;
+        return isAppend ? `${defaultPrompt}\n${custom}` : custom;
+    };
+
+    const getDefaultActionTemplates = () => {
+        const defaults = DEFAULT_ACTION_TEMPLATE_BASE64_LIST
+            .map(parseActionBase64)
+            .filter(Boolean);
+        const normalized = normalizeActionTemplates(defaults);
+        const trans = normalized.find((item) => item.id === "translate");
+        const explain = normalized.find((item) => item.id === "explain");
+        if (trans) {
+            trans.systemPrompt = buildLegacyPromptWithAppend("coolauxv_prompt_trans", "coolauxv_append_trans", getDefaultActionPromptById("translate"));
+        }
+        if (explain) {
+            explain.systemPrompt = buildLegacyPromptWithAppend("coolauxv_prompt_explain", "coolauxv_append_explain", getDefaultActionPromptById("explain"));
+        }
+        return normalized;
+    };
+
+    const loadActionTemplates = () => {
+        let stored = null;
+        try {
+            stored = GM_getValue(ACTION_TEMPLATE_STORAGE_KEY, null);
+        } catch (e) {
+            stored = null;
+        }
+        const parsed = deserializeActionTemplateList(stored);
+        let templates = parsed.templates;
+        if (!templates.length) {
+            templates = getDefaultActionTemplates();
+            GM_setValue(ACTION_TEMPLATE_STORAGE_KEY, serializeActionTemplateList(templates));
+        } else if (parsed.needsRewrite) {
+            GM_setValue(ACTION_TEMPLATE_STORAGE_KEY, serializeActionTemplateList(templates));
+        }
+        templates = normalizeActionTemplates(templates);
+        actionTemplatesCache = templates;
+        return templates;
+    };
+
+    const getActionTemplates = () => actionTemplatesCache || loadActionTemplates();
+
+    const saveActionTemplates = (list) => {
+        const normalized = normalizeActionTemplates(list);
+        actionTemplatesCache = normalized;
+        GM_setValue(ACTION_TEMPLATE_STORAGE_KEY, serializeActionTemplateList(normalized));
+        return normalized;
+    };
+
+    const resolveActionTemplateId = (actionId, list) => {
+        const templates = list || getActionTemplates();
+        const normalizedId = normalizeActionId(actionId);
+        if (normalizedId && templates.some((item) => item.id === normalizedId)) {
+            return normalizedId;
+        }
+        const fallback = templates.find((item) => item.id === DEFAULT_SELECTION_ICON_ACTION);
+        return fallback ? fallback.id : (templates[0] ? templates[0].id : DEFAULT_SELECTION_ICON_ACTION);
+    };
+
+    const getActionTemplateById = (actionId) => {
+        const templates = getActionTemplates();
+        const id = resolveActionTemplateId(actionId, templates);
+        return templates.find((item) => item.id === id) || null;
     };
 
     const normalizeModelItem = (item) => {
@@ -1578,9 +1909,10 @@
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       color: #333;
       z-index: 2147483646 !important;
-      max-width: 95vw !important; max-height: 90vh !important;
-      min-width: 300px;
-      min-height: 300px;
+      max-width: none !important;
+      max-height: none !important;
+      min-width: 180px;
+      min-height: 120px;
       display: flex; flex-direction: column;
       /* 强制重置宿主网页可能存在的全局属性 */
       text-align: left !important;
@@ -1696,6 +2028,14 @@
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-reasoning-wrapper,
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-btn-scroll-bottom,
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-btn-scroll-bottom .coolauxv-scroll-bottom-text {
+        transition: none !important;
+    }
+    #coolauxv-translate-popup.coolauxv-basic-anim-off .coolauxv-provider-checkbox,
+    #coolauxv-translate-popup.coolauxv-basic-anim-off .coolauxv-action-checkbox,
+    #coolauxv-translate-popup.coolauxv-basic-anim-off .coolauxv-sort-handle,
+    #coolauxv-translate-popup.coolauxv-basic-anim-off .coolauxv-batch-actions,
+    #coolauxv-translate-popup.coolauxv-basic-anim-off .coolauxv-action-batch-actions,
+    #coolauxv-translate-popup.coolauxv-basic-anim-off .coolauxv-batch-toggle-icon {
         transition: none !important;
     }
 
@@ -1834,7 +2174,7 @@
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        margin-right: 0;
+        margin-right: -8px;
         font-size: 12px;
         color: #666;
         max-width: 0;
@@ -1844,7 +2184,8 @@
         pointer-events: none;
         transition: max-width 0.25s cubic-bezier(0.2, 0, 0, 1),
                     opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
-                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    margin-right 0.25s cubic-bezier(0.2, 0, 0, 1);
     }
     .coolauxv-provider-checkbox input {
         margin: 0;
@@ -1854,7 +2195,88 @@
         opacity: 1;
         transform: translateX(0);
         pointer-events: auto;
-        margin-right: 6px;
+        margin-right: 0;
+    }
+    .coolauxv-action-checkbox {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-right: -8px;
+        font-size: 12px;
+        color: #666;
+        max-width: 0;
+        opacity: 0;
+        transform: translateX(-8px);
+        overflow: hidden;
+        pointer-events: none;
+        transition: max-width 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    margin-right 0.25s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .coolauxv-action-checkbox input {
+        margin: 0;
+    }
+    .coolauxv-action-batch-mode .coolauxv-action-checkbox {
+        max-width: 80px;
+        opacity: 1;
+        transform: translateX(0);
+        pointer-events: auto;
+        margin-right: 0;
+    }
+    .coolauxv-sort-handle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 6px;
+        background: #f3f4f6;
+        color: #6b7280;
+        font-size: 12px;
+        line-height: 1;
+        user-select: none;
+        cursor: grab;
+        margin-right: -8px;
+        max-width: 0;
+        opacity: 0;
+        transform: translateX(-8px);
+        overflow: hidden;
+        pointer-events: none;
+        transition: max-width 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
+                    transform 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    margin-right 0.25s cubic-bezier(0.2, 0, 0, 1);
+    }
+    .coolauxv-sort-handle:active {
+        cursor: grabbing;
+    }
+    .coolauxv-batch-mode .coolauxv-provider-sort-handle {
+        max-width: 24px;
+        opacity: 1;
+        transform: translateX(0);
+        pointer-events: auto;
+        margin-right: 0;
+    }
+    .coolauxv-action-batch-mode .coolauxv-action-sort-handle {
+        max-width: 24px;
+        opacity: 1;
+        transform: translateX(0);
+        pointer-events: auto;
+        margin-right: 0;
+    }
+    .coolauxv-batch-mode .coolauxv-provider-sort-handle:hover,
+    .coolauxv-action-batch-mode .coolauxv-action-sort-handle:hover {
+        background: #e5e7eb;
+        color: #374151;
+    }
+    .coolauxv-sort-item.coolauxv-dragging {
+        opacity: 0.58;
+    }
+    .coolauxv-sort-item.coolauxv-drag-over {
+        outline: 1px dashed rgba(107, 114, 128, 0.8);
+        outline-offset: 2px;
+        border-radius: 10px;
     }
     .coolauxv-batch-actions {
         display: flex;
@@ -1871,6 +2293,20 @@
                     transform 0.25s cubic-bezier(0.2, 0, 0, 1);
     }
     .coolauxv-batch-mode .coolauxv-batch-actions {
+        max-height: 60px;
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+        margin-bottom: 8px;
+    }
+    .coolauxv-action-batch-actions {
+        max-height: 0;
+        opacity: 0;
+        transform: translateY(-4px);
+        pointer-events: none;
+        margin-bottom: 0;
+    }
+    .coolauxv-action-batch-mode .coolauxv-action-batch-actions {
         max-height: 60px;
         opacity: 1;
         transform: translateY(0);
@@ -2399,7 +2835,7 @@
     #coolauxv-main-top-section {
         display: flex;
         flex-direction: column;
-        overflow: hidden;
+        overflow: visible;
         max-height: none;
         opacity: 1;
         transform: translateY(0);
@@ -2413,6 +2849,7 @@
         max-height: 0;
         opacity: 0;
         transform: translateY(-4px);
+        overflow: hidden;
         pointer-events: none;
     }
     #coolauxv-chat-body {
@@ -2625,9 +3062,28 @@
 
     .coolauxv-btn-blue { background: #eff6ff; color: #2563eb; border-color: #bfdbfe; }
     .coolauxv-btn-blue:hover { background: #bfdbfe; }
+    .coolauxv-main-action-btn {
+        flex: var(--coolauxv-action-weight, 1) 1 0;
+        min-width: 0;
+        background: var(--coolauxv-action-bg, #f9fafb);
+        color: var(--coolauxv-action-fg, #374151);
+        border-color: var(--coolauxv-action-border, rgba(0,0,0,0.12));
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .coolauxv-main-action-btn:hover {
+        background: var(--coolauxv-action-bg-hover, #fff);
+        border-color: var(--coolauxv-action-border-hover, rgba(0,0,0,0.18));
+    }
 
-    #coolauxv-btn-trans,
-    #coolauxv-btn-explain,
+    #coolauxv-main-action-buttons {
+        flex: var(--coolauxv-main-action-total-weight, 1) 1 0;
+        width: 100%;
+        min-width: 0;
+        overflow: visible;
+    }
+    .coolauxv-main-action-btn,
     #coolauxv-btn-stop,
     #coolauxv-btn-image-file,
     #coolauxv-btn-screenshot,
@@ -3975,7 +4431,7 @@
         });
     };
 
-    const normalizeSelectionIconAction = (mode) => (mode === "explain" ? "explain" : "translate");
+    const normalizeSelectionIconAction = (mode) => resolveActionTemplateId(mode, getActionTemplates());
     const getSelectionIconAction = () => normalizeSelectionIconAction(
         GM_getValue("coolauxv_selection_icon_action", DEFAULT_SELECTION_ICON_ACTION)
     );
@@ -4221,11 +4677,7 @@
                   </div>
 
                   <div style="display:flex; gap:10px; margin-bottom:10px; flex-shrink:0;">
-                      <!-- 翻译按钮：默认灰色风格 -->
-                      <button id="coolauxv-btn-trans" class="coolauxv-action-btn" style="flex:1;">翻译</button>
-
-                      <!-- 解读按钮：紫色风格 -->
-                      <button id="coolauxv-btn-explain" class="coolauxv-action-btn coolauxv-btn-purple" style="flex:1;">解读</button>
+                      <div id="coolauxv-main-action-buttons" style="display:flex; gap:10px; min-width:0;"></div>
 
                       <button id="coolauxv-btn-stop" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.6; background:#fee2e2; color:#b91c1c; border-color:#fecaca;" title="打断当前输出">⏹ 停止</button>
 
@@ -4330,6 +4782,28 @@
                 <div id="coolauxv-model-sections"></div>
 
                 <div class="coolauxv-setting-group">
+                    <label class="coolauxv-setting-label">
+                        主界面按钮模块
+                        <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
+                            <span id="coolauxv-btn-action-add" class="coolauxv-link-btn" style="cursor:pointer; user-select:none;">➕ 添加</span>
+                            <span id="coolauxv-btn-action-batch" class="coolauxv-link-btn coolauxv-batch-toggle-btn" style="cursor:pointer; user-select:none;">
+                                <span class="coolauxv-batch-toggle-icon" aria-hidden="true">🧩</span>
+                                <span data-batch-toggle-text>批量</span>
+                            </span>
+                            <span id="coolauxv-btn-toggle-action-all" class="coolauxv-link-btn" style="cursor:pointer; user-select:none;">展开全部</span>
+                        </div>
+                    </label>
+                </div>
+                <div id="coolauxv-action-sections"></div>
+
+                <div class="coolauxv-setting-group">
+                    <div id="coolauxv-action-batch-actions" class="coolauxv-batch-actions coolauxv-action-batch-actions">
+                        <button id="coolauxv-btn-action-share" class="coolauxv-action-btn">🔗 分享</button>
+                        <button id="coolauxv-btn-action-batch-delete" class="coolauxv-action-btn" style="background:#ffe4e6; color:#b91c1c; border-color:#fecdd3;">🗑 删除</button>
+                    </div>
+                </div>
+
+                <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">窗口初始大小 (Width / Height)</label>
                     <div style="display:flex; gap:10px;">
                         <input type="text" id="coolauxv-cfg-width" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认: ${DEFAULT_WIN_WIDTH}">
@@ -4343,46 +4817,6 @@
                     <div class="coolauxv-radio-group">
                         ${logRadioHTML}
                     </div>
-                </div>
-
-                <div class="coolauxv-setting-group">
-                    <label class="coolauxv-setting-label">
-                        翻译提示词
-                        <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
-                            <input type="checkbox" id="coolauxv-cfg-append-trans"> 追加
-                        </label>
-                    </label>
-                    <textarea id="coolauxv-cfg-prompt-trans" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认提示词..."></textarea>
-                </div>
-
-                <div class="coolauxv-setting-group">
-                    <label class="coolauxv-setting-label">
-                        解读提示词
-                        <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
-                            <input type="checkbox" id="coolauxv-cfg-append-explain"> 追加
-                        </label>
-                    </label>
-                    <textarea id="coolauxv-cfg-prompt-explain" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认提示词..."></textarea>
-                </div>
-
-                <div class="coolauxv-setting-group">
-                    <label class="coolauxv-setting-label">
-                        识图提示词
-                        <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
-                            <input type="checkbox" id="coolauxv-cfg-append-vision"> 追加
-                        </label>
-                    </label>
-                    <textarea id="coolauxv-cfg-prompt-vision" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认: ${DEFAULT_PROMPT_VISION}"></textarea>
-                </div>
-
-                <div class="coolauxv-setting-group">
-                    <label class="coolauxv-setting-label">
-                        连续对话提示词
-                        <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
-                            <input type="checkbox" id="coolauxv-cfg-append-chat"> 追加
-                        </label>
-                    </label>
-                    <textarea id="coolauxv-cfg-prompt-chat" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="默认: ${DEFAULT_PROMPT_CONTINUOUS_CHAT}"></textarea>
                 </div>
 
                 <div class="coolauxv-setting-group">
@@ -4442,16 +4876,7 @@
                             <div class="coolauxv-settings-item-head">
                                 <span style="font-size:13px; color:#555;">“译”悬浮球默认操作</span>
                             </div>
-                            <div class="coolauxv-radio-group" style="margin-top:0;">
-                                <label class="coolauxv-radio-label">
-                                    <input type="radio" name="coolauxv_selection_icon_action_radio" value="translate">
-                                    <span class="coolauxv-radio-text">翻译</span>
-                                </label>
-                                <label class="coolauxv-radio-label">
-                                    <input type="radio" name="coolauxv_selection_icon_action_radio" value="explain">
-                                    <span class="coolauxv-radio-text">解读</span>
-                                </label>
-                            </div>
+                            <div id="coolauxv-selection-action-radio-group" class="coolauxv-radio-group" style="margin-top:0;"></div>
                             <div class="coolauxv-settings-item-hint">点击“译”悬浮球时默认触发对应按钮事件</div>
                         </div>
                         <div class="coolauxv-settings-item">
@@ -4641,10 +5066,6 @@
         const clearableInputs = [
             "coolauxv-cfg-width",
             "coolauxv-cfg-height",
-            "coolauxv-cfg-prompt-trans",
-            "coolauxv-cfg-prompt-explain",
-            "coolauxv-cfg-prompt-vision",
-            "coolauxv-cfg-prompt-chat",
             "coolauxv-pdf-url"
         ];
         const attachClearButton = (input) => {
@@ -4703,21 +5124,19 @@
         const btnProviderBatch = popup.querySelector("#coolauxv-btn-provider-batch");
         const btnProviderShare = popup.querySelector("#coolauxv-btn-provider-share");
         const btnProviderBatchDelete = popup.querySelector("#coolauxv-btn-provider-batch-delete");
+        const actionSectionsContainer = popup.querySelector("#coolauxv-action-sections");
+        const btnActionAdd = popup.querySelector("#coolauxv-btn-action-add");
+        const btnActionBatch = popup.querySelector("#coolauxv-btn-action-batch");
+        const btnActionShare = popup.querySelector("#coolauxv-btn-action-share");
+        const btnActionBatchDelete = popup.querySelector("#coolauxv-btn-action-batch-delete");
+        const btnToggleActionAll = popup.querySelector("#coolauxv-btn-toggle-action-all");
+        const selectionActionRadioGroup = popup.querySelector("#coolauxv-selection-action-radio-group");
         const inputWidth = popup.querySelector("#coolauxv-cfg-width");
         const inputHeight = popup.querySelector("#coolauxv-cfg-height");
-        const inputPromptTrans = popup.querySelector("#coolauxv-cfg-prompt-trans");
-        const inputPromptExplain = popup.querySelector("#coolauxv-cfg-prompt-explain");
-        const inputPromptVision = popup.querySelector("#coolauxv-cfg-prompt-vision");
-        const inputPromptChat = popup.querySelector("#coolauxv-cfg-prompt-chat");
-        const inputAppendTrans = popup.querySelector("#coolauxv-cfg-append-trans");
-        const inputAppendExplain = popup.querySelector("#coolauxv-cfg-append-explain");
-        const inputAppendVision = popup.querySelector("#coolauxv-cfg-append-vision");
-        const inputAppendChat = popup.querySelector("#coolauxv-cfg-append-chat");
         const inputBlurGlass = popup.querySelector("#coolauxv-cfg-blur-glass");
         const inputPersistentBall = popup.querySelector("#coolauxv-cfg-persistent-ball");
         const inputDraggableBall = popup.querySelector("#coolauxv-cfg-draggable-ball");
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
-        const selectionIconActionRadios = popup.querySelectorAll('input[name="coolauxv_selection_icon_action_radio"]');
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
         const inputContinuousChat = popup.querySelector("#coolauxv-cfg-continuous-chat");
         const inputChatHistoryPersist = popup.querySelector("#coolauxv-cfg-chat-history-persist");
@@ -4739,6 +5158,7 @@
             "coolauxv_default_provider",
             "coolauxv_model_provider",
             PROVIDER_TEMPLATE_STORAGE_KEY,
+            ACTION_TEMPLATE_STORAGE_KEY,
             "coolauxv_zhipu_api_key",
             "coolauxv_openai_api_key",
             "coolauxv_cnb_api_key",
@@ -6743,6 +7163,54 @@
 
             return pruneEmptyValues(clone);
         };
+        let defaultActionTemplateMapCache = null;
+        const getDefaultActionTemplateMap = () => {
+            if (defaultActionTemplateMapCache) return defaultActionTemplateMapCache;
+            const map = {};
+            getDefaultActionTemplates().forEach((tpl) => {
+                map[tpl.id] = tpl;
+            });
+            defaultActionTemplateMapCache = map;
+            return map;
+        };
+        const mergeActionDefaults = (raw) => {
+            if (!raw || typeof raw !== "object") return raw;
+            const actionId = normalizeActionId(raw.id || "");
+            if (!actionId) return raw;
+            const defaults = getDefaultActionTemplateMap();
+            const base = defaults[actionId];
+            if (!base) return raw;
+            return deepMerge(cloneDeep(base), raw);
+        };
+        const compactActionTemplate = (tpl) => {
+            if (!tpl || typeof tpl !== "object") return tpl;
+            const clone = cloneDeep(tpl);
+            const defaults = getDefaultActionTemplateMap();
+            const defaultTpl = clone.id ? defaults[clone.id] : null;
+            if (defaultTpl) {
+                Object.keys(clone).forEach((key) => {
+                    if (key === "id") return;
+                    if (isDeepEqual(clone[key], defaultTpl[key])) {
+                        delete clone[key];
+                    }
+                });
+            }
+            if (clone.label && clone.id && clone.label === clone.id) delete clone.label;
+            if (clone.visionPromptOrder === "after") delete clone.visionPromptOrder;
+            if (normalizeActionWeight(clone.weight) === 1) delete clone.weight;
+            if (clone.id === "translate" && clone.systemPrompt === getDefaultActionPromptById("translate")) delete clone.systemPrompt;
+            if (clone.id === "explain" && clone.systemPrompt === getDefaultActionPromptById("explain")) delete clone.systemPrompt;
+            if (clone.color) {
+                const normalizedColor = normalizeColorValue(clone.color || "", "");
+                const defaultColor = getDefaultActionColorById(clone.id, clone);
+                if (normalizedColor === normalizeColorValue(defaultColor, defaultColor)) {
+                    delete clone.color;
+                } else {
+                    clone.color = normalizedColor;
+                }
+            }
+            return pruneEmptyValues(clone);
+        };
         const compactConfigSnapshot = (snapshot) => {
             const next = Object.assign({}, snapshot);
             const defaults = {
@@ -6784,14 +7252,31 @@
                     delete next[key];
                 }
             };
-            pruneDefaultPrompt("coolauxv_prompt_trans", DEFAULT_PROMPT_TRANSLATE, "coolauxv_append_trans");
-            pruneDefaultPrompt("coolauxv_prompt_explain", DEFAULT_PROMPT_EXPLAIN, "coolauxv_append_explain");
+            pruneDefaultPrompt("coolauxv_prompt_trans", getDefaultActionPromptById("translate"), "coolauxv_append_trans");
+            pruneDefaultPrompt("coolauxv_prompt_explain", getDefaultActionPromptById("explain"), "coolauxv_append_explain");
             pruneDefaultPrompt("coolauxv_prompt_vision", DEFAULT_PROMPT_VISION, "coolauxv_append_vision");
             pruneDefaultPrompt("coolauxv_prompt_chat", DEFAULT_PROMPT_CONTINUOUS_CHAT, "coolauxv_append_chat");
             if (Object.prototype.hasOwnProperty.call(next, "coolauxv_use_new_screenshot")) {
                 const val = next.coolauxv_use_new_screenshot;
                 if (val === "v1" || val === false) {
                     delete next.coolauxv_use_new_screenshot;
+                }
+            }
+            if (Object.prototype.hasOwnProperty.call(next, ACTION_TEMPLATE_STORAGE_KEY)) {
+                const rawActionList = next[ACTION_TEMPLATE_STORAGE_KEY];
+                if (Array.isArray(rawActionList) && rawActionList.every((item) => typeof item === "string")) {
+                    const cleaned = rawActionList.map((item) => String(item || "").trim()).filter(Boolean);
+                    if (cleaned.length) next[ACTION_TEMPLATE_STORAGE_KEY] = cleaned;
+                    else delete next[ACTION_TEMPLATE_STORAGE_KEY];
+                } else {
+                    const parsedActions = deserializeActionTemplateList(rawActionList).templates;
+                    if (parsedActions.length) {
+                        next[ACTION_TEMPLATE_STORAGE_KEY] = serializeActionTemplateList(
+                            parsedActions.map((tpl) => compactActionTemplate(tpl))
+                        );
+                    } else {
+                        delete next[ACTION_TEMPLATE_STORAGE_KEY];
+                    }
                 }
             }
             return next;
@@ -6814,6 +7299,26 @@
                 payload[PROVIDER_TEMPLATE_STORAGE_KEY] = payload[PROVIDER_TEMPLATE_STORAGE_KEY]
                     .map((tpl) => mergeProviderDefaults(tpl));
             }
+            if (Object.prototype.hasOwnProperty.call(payload, ACTION_TEMPLATE_STORAGE_KEY)) {
+                const rawActionList = payload[ACTION_TEMPLATE_STORAGE_KEY];
+                if (Array.isArray(rawActionList) && rawActionList.every((item) => typeof item === "string")) {
+                    const cleaned = rawActionList.map((item) => String(item || "").trim()).filter(Boolean);
+                    if (cleaned.length) {
+                        payload[ACTION_TEMPLATE_STORAGE_KEY] = cleaned;
+                    } else {
+                        delete payload[ACTION_TEMPLATE_STORAGE_KEY];
+                    }
+                } else {
+                    const parsedActions = deserializeActionTemplateList(rawActionList).templates
+                        .map((tpl) => mergeActionDefaults(tpl))
+                        .filter(Boolean);
+                    if (parsedActions.length) {
+                        payload[ACTION_TEMPLATE_STORAGE_KEY] = serializeActionTemplateList(parsedActions);
+                    } else {
+                        delete payload[ACTION_TEMPLATE_STORAGE_KEY];
+                    }
+                }
+            }
             CONFIG_KEYS.forEach((key) => {
                 if (Object.prototype.hasOwnProperty.call(payload, key)) {
                     const value = payload[key];
@@ -6827,7 +7332,13 @@
                 }
             });
             providerTemplatesCache = null;
+            actionTemplatesCache = null;
             migrateLegacyProviderSettings(loadProviderTemplates());
+            const resolvedActionId = resolveActionTemplateId(
+                payload.coolauxv_selection_icon_action || GM_getValue("coolauxv_selection_icon_action", DEFAULT_SELECTION_ICON_ACTION),
+                loadActionTemplates()
+            );
+            GM_setValue("coolauxv_selection_icon_action", resolvedActionId);
             if (payload && payload.coolauxv_cnb_repo) {
                 const templates = getProviderTemplates();
                 const tpl = templates.find((item) => item.id === "cnb");
@@ -6857,12 +7368,6 @@
                 showModal("提示", "反馈bug需启用详细日志");
             });
         }
-        selectionIconActionRadios.forEach((radio) => {
-            radio.addEventListener("change", (e) => {
-                if (!e.target.checked) return;
-                GM_setValue("coolauxv_selection_icon_action", normalizeSelectionIconAction(e.target.value));
-            });
-        });
 
         const saveConfig = (key, value) => {
             const val = value.trim();
@@ -6875,6 +7380,13 @@
         const providerSectionStates = new Map();
         let isProviderBatchMode = false;
         const selectedProviderIds = new Set();
+        const actionSectionStates = new Map();
+        let isActionBatchMode = false;
+        const selectedActionIds = new Set();
+        let draggingProviderId = "";
+        let draggingActionId = "";
+        let providerDragArmedId = "";
+        let actionDragArmedId = "";
 
         const escapeAttr = (value) => String(value ?? "")
             .replace(/&/g, "&amp;")
@@ -6901,6 +7413,83 @@
             } catch (e) {
                 return null;
             }
+        };
+
+        const reorderListById = (list, dragId, targetId) => {
+            if (!Array.isArray(list) || !dragId || !targetId || dragId === targetId) return list;
+            const fromIdx = list.findIndex((item) => item && item.id === dragId);
+            const toIdx = list.findIndex((item) => item && item.id === targetId);
+            if (fromIdx < 0 || toIdx < 0 || fromIdx === toIdx) return list;
+            const next = list.slice();
+            const [moved] = next.splice(fromIdx, 1);
+            next.splice(toIdx, 0, moved);
+            return next;
+        };
+
+        const captureSortPositions = (container, selector, getId) => {
+            const map = new Map();
+            if (!container) return map;
+            container.querySelectorAll(selector).forEach((item) => {
+                const id = getId(item);
+                if (!id) return;
+                map.set(id, item.getBoundingClientRect().top);
+            });
+            return map;
+        };
+
+        const animateSortReflow = (container, selector, getId, beforeMap) => {
+            if (!container || !beforeMap || !beforeMap.size) return;
+            container.querySelectorAll(selector).forEach((item) => {
+                if (item.classList.contains("coolauxv-dragging")) return;
+                const id = getId(item);
+                if (!id) return;
+                const fromTop = beforeMap.get(id);
+                if (fromTop === undefined) return;
+                const toTop = item.getBoundingClientRect().top;
+                const deltaY = fromTop - toTop;
+                if (Math.abs(deltaY) < 0.5) return;
+                if (typeof item.animate === "function") {
+                    item.animate(
+                        [
+                            { transform: `translateY(${deltaY}px)` },
+                            { transform: "translateY(0)" }
+                        ],
+                        { duration: 180, easing: "cubic-bezier(0.2, 0, 0, 1)" }
+                    );
+                    return;
+                }
+                item.style.transition = "none";
+                item.style.transform = `translateY(${deltaY}px)`;
+                void item.offsetHeight;
+                item.style.transition = "transform 180ms cubic-bezier(0.2, 0, 0, 1)";
+                item.style.transform = "translateY(0)";
+                window.setTimeout(() => {
+                    item.style.transition = "";
+                    item.style.transform = "";
+                }, 200);
+            });
+        };
+
+        const reorderTemplatesByOrderedIds = (templates, orderedIds) => {
+            if (!Array.isArray(templates) || !Array.isArray(orderedIds) || !orderedIds.length) return templates;
+            const tplMap = new Map();
+            templates.forEach((tpl) => {
+                if (tpl && tpl.id) tplMap.set(tpl.id, tpl);
+            });
+            const next = [];
+            const used = new Set();
+            orderedIds.forEach((id) => {
+                if (!id || used.has(id)) return;
+                const tpl = tplMap.get(id);
+                if (!tpl) return;
+                next.push(tpl);
+                used.add(id);
+            });
+            templates.forEach((tpl) => {
+                if (!tpl || !tpl.id || used.has(tpl.id)) return;
+                next.push(tpl);
+            });
+            return next;
         };
 
         const defaultBodyTemplateForType = (type) => {
@@ -7029,7 +7618,7 @@
                 settingsRoot.classList.toggle("coolauxv-batch-mode", isProviderBatchMode);
             }
             if (btnProviderBatch) {
-                const enableAnim = isMinimizeAnimEnabled();
+                const enableAnim = isBasicAnimEnabled();
                 btnProviderBatch.classList.toggle("coolauxv-batch-toggle-active", isProviderBatchMode);
                 btnProviderBatch.classList.toggle("coolauxv-no-anim", !enableAnim);
                 const textEl = btnProviderBatch.querySelector("[data-batch-toggle-text]");
@@ -7043,6 +7632,18 @@
             providerSectionsContainer.querySelectorAll(".coolauxv-provider-select").forEach((checkbox) => {
                 checkbox.checked = selectedProviderIds.has(checkbox.dataset.providerId);
             });
+            providerSectionsContainer.querySelectorAll("[data-sort-kind=\"provider\"]").forEach((item) => {
+                item.draggable = !!isProviderBatchMode;
+                const handle = item.querySelector("[data-sort-handle=\"provider\"]");
+                if (handle) handle.draggable = !!isProviderBatchMode;
+                if (!isProviderBatchMode) {
+                    item.classList.remove("coolauxv-dragging", "coolauxv-drag-over");
+                }
+            });
+            if (!isProviderBatchMode) {
+                draggingProviderId = "";
+                providerDragArmedId = "";
+            }
         };
 
         const openProviderModal = (options = {}) => {
@@ -7920,8 +8521,9 @@
                 }
                 const fieldBlock = `<div style="display:flex; flex-direction:column; gap:8px;">${fieldsHtml}</div>`;
                 return `
-                    <div class="coolauxv-setting-group" data-provider-id="${provider.id}">
+                    <div class="coolauxv-setting-group coolauxv-sort-item" data-provider-id="${provider.id}" data-sort-kind="provider" draggable="false">
                         <label class="coolauxv-setting-label">
+                            <span class="coolauxv-sort-handle coolauxv-provider-sort-handle" data-sort-handle="provider" title="批量模式下拖动排序">⠿</span>
                             <span class="coolauxv-provider-checkbox">
                                 <input type="checkbox" class="coolauxv-provider-select" data-provider-id="${provider.id}">
                             </span>
@@ -8111,7 +8713,603 @@
             }
         };
 
+        const getActionStyleTokens = (colorValue) => {
+            const rgb = parseColorToRgb(colorValue) || { r: 249, g: 250, b: 251 };
+            const luma = getColorLuma(rgb);
+            const text = luma > 0.45 ? "#111827" : "#f9fafb";
+            const borderRgb = mixRgbColor(rgb, { r: 17, g: 24, b: 39 }, luma > 0.45 ? 0.2 : 0.35);
+            const hoverRgb = mixRgbColor(rgb, luma > 0.45 ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 }, luma > 0.45 ? 0.12 : 0.08);
+            const borderHoverRgb = mixRgbColor(borderRgb, luma > 0.45 ? { r: 17, g: 24, b: 39 } : { r: 255, g: 255, b: 255 }, 0.2);
+            return {
+                bg: rgbToCss(rgb),
+                fg: text,
+                border: rgbToCss(borderRgb),
+                hoverBg: rgbToCss(hoverRgb),
+                hoverBorder: rgbToCss(borderHoverRgb)
+            };
+        };
+
+        const renderMainActionButtons = () => {
+            const container = popup.querySelector("#coolauxv-main-action-buttons");
+            if (!container) return;
+            const templates = getActionTemplates();
+            const totalWeight = templates.reduce((sum, tpl) => sum + normalizeActionWeight(tpl.weight), 0);
+            container.style.setProperty("--coolauxv-main-action-total-weight", String(Math.max(0.2, totalWeight || 1)));
+            container.innerHTML = templates.map((tpl) => {
+                const styles = getActionStyleTokens(tpl.color);
+                const weight = normalizeActionWeight(tpl.weight);
+                const buttonId = tpl.id === "translate"
+                    ? "coolauxv-btn-trans"
+                    : (tpl.id === "explain" ? "coolauxv-btn-explain" : "");
+                const idAttr = buttonId ? `id="${buttonId}"` : "";
+                return `
+                    <button ${idAttr}
+                        class="coolauxv-action-btn coolauxv-main-action-btn"
+                        data-action-id="${escapeAttr(tpl.id)}"
+                        title="${escapeAttr(tpl.systemPrompt || "")}"
+                        style="--coolauxv-action-bg:${escapeAttr(styles.bg)}; --coolauxv-action-fg:${escapeAttr(styles.fg)}; --coolauxv-action-border:${escapeAttr(styles.border)}; --coolauxv-action-bg-hover:${escapeAttr(styles.hoverBg)}; --coolauxv-action-border-hover:${escapeAttr(styles.hoverBorder)}; --coolauxv-action-weight:${escapeAttr(String(weight))};">
+                        ${escapeAttr(tpl.label || tpl.id)}
+                    </button>
+                `;
+            }).join("");
+        };
+
+        const renderSelectionActionRadioGroup = () => {
+            if (!selectionActionRadioGroup) return;
+            const templates = getActionTemplates();
+            const selectedAction = resolveActionTemplateId(getSelectionIconAction(), templates);
+            selectionActionRadioGroup.innerHTML = templates.map((tpl) => `
+                <label class="coolauxv-radio-label">
+                    <input type="radio" name="coolauxv_selection_icon_action_radio_dynamic" value="${escapeAttr(tpl.id)}" ${tpl.id === selectedAction ? "checked" : ""}>
+                    <span class="coolauxv-radio-text">${escapeAttr(tpl.label || tpl.id)}</span>
+                </label>
+            `).join("");
+        };
+
+        const encodeActionTemplateBase64 = (template) => {
+            if (!template) return "";
+            const payload = compactActionTemplate(template);
+            return encodeBase64(JSON.stringify(payload));
+        };
+
+        const parseActionImportPayload = (base64Input) => {
+            const raw = String(base64Input || "").trim();
+            if (!raw) return [];
+            try {
+                const parsed = JSON.parse(decodeBase64(raw.replace(/\s+/g, "")));
+                let list = [];
+                if (Array.isArray(parsed)) {
+                    list = parsed;
+                } else if (parsed && typeof parsed === "object") {
+                    if (Array.isArray(parsed.actions)) {
+                        list = parsed.actions;
+                    } else {
+                        list = [parsed];
+                    }
+                }
+                return normalizeActionTemplates(list.map((item) => mergeActionDefaults(item)).filter(Boolean));
+            } catch (e) {
+                return [];
+            }
+        };
+
+        const openActionColorPickerModal = (initialColor, onConfirm) => {
+            const rgbSeed = parseColorToRgb(initialColor) || { r: 109, g: 40, b: 217 };
+            let rgb = { r: rgbSeed.r, g: rgbSeed.g, b: rgbSeed.b };
+            let hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+            let mode = "hsl";
+            const existing = document.getElementById("coolauxv-action-color-modal-overlay");
+            if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-action-color-modal-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0, 0, 0, 0.5)",
+                zIndex: "2147483663",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backdropFilter: "blur(4px)"
+            });
+
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff",
+                width: "460px",
+                maxWidth: "92vw",
+                borderRadius: "12px",
+                padding: "16px",
+                boxShadow: "0 12px 32px rgba(0,0,0,0.28)"
+            });
+
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                    <div style="font-size:16px; font-weight:700; color:#a516e8;">🎨 按钮颜色</div>
+                    <button type="button" id="coolauxv-action-color-close" class="coolauxv-ctrl-btn">×</button>
+                </div>
+                <div style="display:flex; gap:8px; margin-bottom:10px;">
+                    <button type="button" id="coolauxv-action-color-mode-hsl" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">HSL 调色盘</button>
+                    <button type="button" id="coolauxv-action-color-mode-rgb" class="coolauxv-action-btn" style="flex:1;">RGB 调色盘</button>
+                </div>
+                <div id="coolauxv-action-color-preview" style="height:38px; border-radius:8px; border:1px solid #e5e7eb; margin-bottom:10px;"></div>
+                <div id="coolauxv-action-color-hsl-panel" style="display:flex; flex-direction:column; gap:8px;">
+                    <label>H <input type="range" id="coolauxv-action-h" min="0" max="360" step="1" style="width:100%;"></label>
+                    <label>S <input type="range" id="coolauxv-action-s" min="0" max="100" step="1" style="width:100%;"></label>
+                    <label>L <input type="range" id="coolauxv-action-l" min="0" max="100" step="1" style="width:100%;"></label>
+                </div>
+                <div id="coolauxv-action-color-rgb-panel" style="display:none; flex-direction:column; gap:8px;">
+                    <label>R <input type="range" id="coolauxv-action-r" min="0" max="255" step="1" style="width:100%;"></label>
+                    <label>G <input type="range" id="coolauxv-action-g" min="0" max="255" step="1" style="width:100%;"></label>
+                    <label>B <input type="range" id="coolauxv-action-b" min="0" max="255" step="1" style="width:100%;"></label>
+                </div>
+                <div style="margin-top:10px;">
+                    <div class="coolauxv-sub-label">手动输入 (HSL 或 RGB)</div>
+                    <input type="text" id="coolauxv-action-color-manual" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="例如: hsl(271, 69%, 50%) 或 rgb(109, 40, 217)">
+                </div>
+                <div style="display:flex; gap:8px; margin-top:12px;">
+                    <button type="button" id="coolauxv-action-color-cancel" class="coolauxv-action-btn" style="flex:1;">取消</button>
+                    <button type="button" id="coolauxv-action-color-submit" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">确认</button>
+                </div>
+            `;
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+
+            const btnModeHsl = box.querySelector("#coolauxv-action-color-mode-hsl");
+            const btnModeRgb = box.querySelector("#coolauxv-action-color-mode-rgb");
+            const panelHsl = box.querySelector("#coolauxv-action-color-hsl-panel");
+            const panelRgb = box.querySelector("#coolauxv-action-color-rgb-panel");
+            const preview = box.querySelector("#coolauxv-action-color-preview");
+            const manualInput = box.querySelector("#coolauxv-action-color-manual");
+            const closeBtn = box.querySelector("#coolauxv-action-color-close");
+            const cancelBtn = box.querySelector("#coolauxv-action-color-cancel");
+            const submitBtn = box.querySelector("#coolauxv-action-color-submit");
+            const hInput = box.querySelector("#coolauxv-action-h");
+            const sInput = box.querySelector("#coolauxv-action-s");
+            const lInput = box.querySelector("#coolauxv-action-l");
+            const rInput = box.querySelector("#coolauxv-action-r");
+            const gInput = box.querySelector("#coolauxv-action-g");
+            const bInput = box.querySelector("#coolauxv-action-b");
+
+            const setMode = (nextMode) => {
+                mode = nextMode === "rgb" ? "rgb" : "hsl";
+                panelHsl.style.display = mode === "hsl" ? "flex" : "none";
+                panelRgb.style.display = mode === "rgb" ? "flex" : "none";
+                btnModeHsl.classList.toggle("coolauxv-btn-primary", mode === "hsl");
+                btnModeRgb.classList.toggle("coolauxv-btn-primary", mode === "rgb");
+                if (manualInput) {
+                    manualInput.value = mode === "hsl" ? hslToCss(hsl) : rgbToCss(rgb);
+                }
+            };
+
+            const syncPreview = () => {
+                if (preview) preview.style.background = rgbToCss(rgb);
+                if (hInput) hInput.value = String(hsl.h);
+                if (sInput) sInput.value = String(hsl.s);
+                if (lInput) lInput.value = String(hsl.l);
+                if (rInput) rInput.value = String(rgb.r);
+                if (gInput) gInput.value = String(rgb.g);
+                if (bInput) bInput.value = String(rgb.b);
+                if (manualInput) {
+                    manualInput.value = mode === "hsl" ? hslToCss(hsl) : rgbToCss(rgb);
+                }
+            };
+
+            const applyRgb = (nextRgb) => {
+                rgb = {
+                    r: Math.round(clampColorValue(nextRgb.r, 0, 255)),
+                    g: Math.round(clampColorValue(nextRgb.g, 0, 255)),
+                    b: Math.round(clampColorValue(nextRgb.b, 0, 255))
+                };
+                hsl = rgbToHsl(rgb.r, rgb.g, rgb.b);
+                syncPreview();
+            };
+
+            const closeModal = () => {
+                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            };
+
+            if (btnModeHsl) btnModeHsl.addEventListener("click", () => setMode("hsl"));
+            if (btnModeRgb) btnModeRgb.addEventListener("click", () => setMode("rgb"));
+            if (hInput) hInput.addEventListener("input", () => applyRgb(hslToRgb(hInput.value, sInput.value, lInput.value)));
+            if (sInput) sInput.addEventListener("input", () => applyRgb(hslToRgb(hInput.value, sInput.value, lInput.value)));
+            if (lInput) lInput.addEventListener("input", () => applyRgb(hslToRgb(hInput.value, sInput.value, lInput.value)));
+            if (rInput) rInput.addEventListener("input", () => applyRgb({ r: rInput.value, g: gInput.value, b: bInput.value }));
+            if (gInput) gInput.addEventListener("input", () => applyRgb({ r: rInput.value, g: gInput.value, b: bInput.value }));
+            if (bInput) bInput.addEventListener("input", () => applyRgb({ r: rInput.value, g: gInput.value, b: bInput.value }));
+            if (manualInput) {
+                manualInput.addEventListener("change", () => {
+                    const parsed = parseColorToRgb(manualInput.value);
+                    if (!parsed) {
+                        alert("颜色格式无效，请输入 HSL 或 RGB。");
+                        syncPreview();
+                        return;
+                    }
+                    applyRgb(parsed);
+                });
+            }
+            if (submitBtn) {
+                submitBtn.addEventListener("click", () => {
+                    const value = mode === "hsl" ? hslToCss(hsl) : rgbToCss(rgb);
+                    if (typeof onConfirm === "function") onConfirm(value);
+                    closeModal();
+                });
+            }
+            if (closeBtn) closeBtn.addEventListener("click", closeModal);
+            if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeModal();
+            });
+
+            setMode("hsl");
+            syncPreview();
+        };
+
+        const openActionModal = (options = {}) => {
+            const mode = options.mode === "edit" ? "edit" : "add";
+            const templates = getActionTemplates();
+            const existing = mode === "edit"
+                ? templates.find((item) => item.id === options.actionId)
+                : null;
+            const baseAction = existing
+                ? cloneDeep(existing)
+                : {
+                    id: "",
+                    label: "",
+                    systemPrompt: "",
+                    color: hashStringToActionColor("new-action"),
+                    weight: 1,
+                    visionPromptOrder: "after"
+                };
+
+            const existingOverlay = document.getElementById("coolauxv-action-modal-overlay");
+            if (existingOverlay && existingOverlay.parentNode) existingOverlay.parentNode.removeChild(existingOverlay);
+
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-action-modal-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0,0,0,0.5)",
+                zIndex: "2147483662",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backdropFilter: "blur(4px)"
+            });
+
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff",
+                width: "520px",
+                maxWidth: "92%",
+                maxHeight: "88vh",
+                display: "flex",
+                flexDirection: "column",
+                padding: "18px",
+                borderRadius: "12px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.3)"
+            });
+
+            const titleText = mode === "edit" ? "⚙️ 编辑按钮" : "➕ 新增按钮";
+            const submitText = mode === "edit" ? "保存修改" : "保存";
+            const readonly = mode === "edit" ? "readonly" : "";
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+                    <div style="font-size:18px; font-weight:800; color:#a516e8;">${titleText}</div>
+                    <button type="button" id="coolauxv-action-modal-close" class="coolauxv-ctrl-btn">×</button>
+                </div>
+                <div style="display:flex; gap:8px; margin-bottom:10px;">
+                    <button type="button" id="coolauxv-action-mode-manual" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">手动填写</button>
+                    <button type="button" id="coolauxv-action-mode-base64" class="coolauxv-action-btn" style="flex:1;">Base64 导入</button>
+                </div>
+                <div id="coolauxv-action-manual-section" style="display:flex; flex-direction:column; gap:8px; overflow:auto;">
+                    <div class="coolauxv-sub-label">按钮文本</div>
+                    <input type="text" id="coolauxv-action-form-label" class="coolauxv-setting-input coolauxv-fixed-input" value="${escapeAttr(baseAction.label)}" placeholder="例如：总结">
+                    <div class="coolauxv-sub-label">按钮 ID（唯一）</div>
+                    <input type="text" id="coolauxv-action-form-id" class="coolauxv-setting-input coolauxv-fixed-input" value="${escapeAttr(baseAction.id)}" ${readonly} placeholder="例如：summarize">
+                    <div class="coolauxv-sub-label">System 提示词</div>
+                    <textarea id="coolauxv-action-form-prompt" class="coolauxv-setting-input coolauxv-resizable-input" rows="5">${escapeText(baseAction.systemPrompt || "")}</textarea>
+                    <div class="coolauxv-sub-label">按钮权重（主界面宽度占比，默认 1）</div>
+                    <input type="number" id="coolauxv-action-form-weight" class="coolauxv-setting-input coolauxv-fixed-input" min="0.2" max="12" step="0.1" value="${escapeAttr(String(normalizeActionWeight(baseAction.weight)))}">
+                    <div class="coolauxv-sub-label">按钮颜色（HSL 或 RGB）</div>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                        <input type="text" id="coolauxv-action-form-color" class="coolauxv-setting-input coolauxv-fixed-input" value="${escapeAttr(baseAction.color || "")}" placeholder="rgb(109, 40, 217)">
+                        <button type="button" id="coolauxv-action-form-pick-color" class="coolauxv-action-btn">🎨 选色</button>
+                    </div>
+                    <div class="coolauxv-sub-label">视觉模式拼接顺序</div>
+                    <select id="coolauxv-action-form-vision-order" class="coolauxv-setting-input coolauxv-fixed-input">
+                        <option value="after" ${baseAction.visionPromptOrder !== "before" ? "selected" : ""}>System + 识图提示词</option>
+                        <option value="before" ${baseAction.visionPromptOrder === "before" ? "selected" : ""}>识图提示词 + System</option>
+                    </select>
+                </div>
+                <div id="coolauxv-action-base64-section" style="display:none;">
+                    <div class="coolauxv-sub-label">Base64 文本</div>
+                    <textarea id="coolauxv-action-form-base64" class="coolauxv-setting-input coolauxv-resizable-input" rows="5" placeholder="粘贴单个按钮配置或批量分享文本..."></textarea>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                    <button type="button" id="coolauxv-action-modal-cancel" class="coolauxv-action-btn" style="flex:1;">取消</button>
+                    <button type="button" id="coolauxv-action-modal-submit" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">${submitText}</button>
+                </div>
+            `;
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+
+            const btnManual = box.querySelector("#coolauxv-action-mode-manual");
+            const btnBase64 = box.querySelector("#coolauxv-action-mode-base64");
+            const manualSection = box.querySelector("#coolauxv-action-manual-section");
+            const base64Section = box.querySelector("#coolauxv-action-base64-section");
+            const closeBtn = box.querySelector("#coolauxv-action-modal-close");
+            const cancelBtn = box.querySelector("#coolauxv-action-modal-cancel");
+            const submitBtn = box.querySelector("#coolauxv-action-modal-submit");
+            const inputLabel = box.querySelector("#coolauxv-action-form-label");
+            const inputId = box.querySelector("#coolauxv-action-form-id");
+            const inputPrompt = box.querySelector("#coolauxv-action-form-prompt");
+            const inputWeight = box.querySelector("#coolauxv-action-form-weight");
+            const inputColor = box.querySelector("#coolauxv-action-form-color");
+            const inputVisionOrder = box.querySelector("#coolauxv-action-form-vision-order");
+            const inputBase64 = box.querySelector("#coolauxv-action-form-base64");
+            const btnPickColor = box.querySelector("#coolauxv-action-form-pick-color");
+            let activeTab = "manual";
+            let isColorDirty = mode === "edit";
+
+            const closeModal = () => {
+                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            };
+            const setTab = (tab) => {
+                activeTab = tab === "base64" ? "base64" : "manual";
+                manualSection.style.display = activeTab === "manual" ? "flex" : "none";
+                base64Section.style.display = activeTab === "base64" ? "block" : "none";
+                btnManual.classList.toggle("coolauxv-btn-primary", activeTab === "manual");
+                btnBase64.classList.toggle("coolauxv-btn-primary", activeTab === "base64");
+            };
+
+            if (btnManual) btnManual.addEventListener("click", () => setTab("manual"));
+            if (btnBase64) btnBase64.addEventListener("click", () => setTab("base64"));
+            const getActionSeedForColor = () => {
+                const seedId = String((inputId && inputId.value) || "").trim();
+                const seedLabel = String((inputLabel && inputLabel.value) || "").trim();
+                const seedPrompt = String((inputPrompt && inputPrompt.value) || "").trim();
+                return [seedId, seedLabel, seedPrompt].filter(Boolean).join("|");
+            };
+            const syncAutoColor = () => {
+                if (isColorDirty || !inputColor) return;
+                inputColor.value = hashStringToActionColor(getActionSeedForColor());
+            };
+            if (inputLabel) inputLabel.addEventListener("input", syncAutoColor);
+            if (inputId) inputId.addEventListener("input", syncAutoColor);
+            if (inputPrompt) inputPrompt.addEventListener("input", syncAutoColor);
+            if (btnPickColor && inputColor) {
+                btnPickColor.addEventListener("click", () => {
+                    openActionColorPickerModal(inputColor.value, (nextColor) => {
+                        isColorDirty = true;
+                        inputColor.value = nextColor;
+                    });
+                });
+            }
+            if (inputColor) {
+                inputColor.addEventListener("input", () => {
+                    isColorDirty = true;
+                });
+            }
+            if (closeBtn) closeBtn.addEventListener("click", closeModal);
+            if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeModal();
+            });
+            syncAutoColor();
+
+            if (submitBtn) {
+                submitBtn.addEventListener("click", () => {
+                    if (activeTab === "base64") {
+                        const imported = parseActionImportPayload(inputBase64 ? inputBase64.value : "");
+                        if (!imported.length) {
+                            alert("Base64 内容无效。");
+                            return;
+                        }
+                        let nextTemplates = getActionTemplates().slice();
+                        if (mode === "edit" && existing) {
+                            const first = imported[0];
+                            first.id = existing.id;
+                            nextTemplates = nextTemplates.map((item) => item.id === existing.id ? first : item);
+                        } else {
+                            imported.forEach((item) => {
+                                if (nextTemplates.some((tpl) => tpl.id === item.id)) {
+                                    const nextId = `${item.id}-${Date.now().toString(36)}`;
+                                    item.id = normalizeActionId(nextId);
+                                }
+                                nextTemplates.push(item);
+                            });
+                        }
+                        saveActionTemplates(nextTemplates);
+                        renderActionUI();
+                        closeModal();
+                        return;
+                    }
+
+                    const label = String((inputLabel && inputLabel.value) || "").trim();
+                    const rawId = String((inputId && inputId.value) || "").trim();
+                    const normalizedId = normalizeActionId(rawId || label);
+                    const promptText = String((inputPrompt && inputPrompt.value) || "").trim();
+                    const weight = normalizeActionWeight((inputWeight && inputWeight.value) || 1);
+                    const colorText = String((inputColor && inputColor.value) || "").trim();
+                    const visionOrder = normalizeActionVisionPromptOrder((inputVisionOrder && inputVisionOrder.value) || "after");
+                    if (!normalizedId) {
+                        alert("按钮 ID 不能为空。");
+                        return;
+                    }
+                    if (!promptText) {
+                        alert("System 提示词不能为空。");
+                        return;
+                    }
+                    const normalizedColor = normalizeColorValue(colorText, hashStringToActionColor([normalizedId, label, promptText].filter(Boolean).join("|")));
+                    const nextTemplate = ensureActionTemplate({
+                        id: normalizedId,
+                        label: label || normalizedId,
+                        systemPrompt: promptText,
+                        weight: weight,
+                        color: normalizedColor,
+                        visionPromptOrder: visionOrder
+                    });
+                    if (!nextTemplate) {
+                        alert("按钮配置无效，请检查输入。");
+                        return;
+                    }
+
+                    let nextTemplates = getActionTemplates().slice();
+                    if (mode === "edit" && existing) {
+                        nextTemplate.id = existing.id;
+                        nextTemplates = nextTemplates.map((item) => item.id === existing.id ? nextTemplate : item);
+                    } else {
+                        if (nextTemplates.some((item) => item.id === nextTemplate.id)) {
+                            alert("按钮 ID 已存在，请更换。");
+                            return;
+                        }
+                        nextTemplates.push(nextTemplate);
+                    }
+                    saveActionTemplates(nextTemplates);
+                    renderActionUI();
+                    closeModal();
+                });
+            }
+            setTab("manual");
+        };
+
+        const ensureActionSectionStates = (templates) => {
+            templates.forEach((tpl) => {
+                if (!actionSectionStates.has(tpl.id)) {
+                    actionSectionStates.set(tpl.id, false);
+                }
+            });
+            Array.from(actionSectionStates.keys()).forEach((id) => {
+                if (!templates.some((tpl) => tpl.id === id)) actionSectionStates.delete(id);
+            });
+        };
+
+        const updateActionToggleLabels = () => {
+            if (!actionSectionsContainer) return;
+            const sections = Array.from(actionSectionsContainer.querySelectorAll("[data-action-section]"));
+            sections.forEach((section) => {
+                const actionId = section.dataset.actionSection;
+                const toggle = actionSectionsContainer.querySelector(`[data-action-toggle="${actionId}"]`);
+                if (toggle) toggle.textContent = isSectionExpanded(section) ? "收起" : "展开";
+            });
+            if (!btnToggleActionAll || !sections.length) return;
+            const allExpanded = sections.every((section) => isSectionExpanded(section));
+            btnToggleActionAll.textContent = allExpanded ? "收起全部" : "展开全部";
+        };
+
+        const applyActionSectionStates = () => {
+            if (!actionSectionsContainer) return;
+            actionSectionsContainer.querySelectorAll("[data-action-section]").forEach((section) => {
+                const actionId = section.dataset.actionSection;
+                const expanded = actionSectionStates.get(actionId);
+                setSectionStateInstant(section, !!expanded);
+            });
+            updateActionToggleLabels();
+        };
+
+        const updateActionBatchModeUI = () => {
+            if (settingsRoot) {
+                settingsRoot.classList.toggle("coolauxv-action-batch-mode", isActionBatchMode);
+            }
+            if (btnActionBatch) {
+                const enableAnim = isBasicAnimEnabled();
+                btnActionBatch.classList.toggle("coolauxv-batch-toggle-active", isActionBatchMode);
+                btnActionBatch.classList.toggle("coolauxv-no-anim", !enableAnim);
+                const textEl = btnActionBatch.querySelector("[data-batch-toggle-text]");
+                if (textEl) textEl.textContent = isActionBatchMode ? "完成批量" : "批量";
+            }
+            if (!actionSectionsContainer) return;
+            actionSectionsContainer.querySelectorAll(".coolauxv-action-select").forEach((checkbox) => {
+                checkbox.checked = selectedActionIds.has(checkbox.dataset.actionId);
+            });
+            actionSectionsContainer.querySelectorAll("[data-sort-kind=\"action\"]").forEach((item) => {
+                item.draggable = !!isActionBatchMode;
+                const handle = item.querySelector("[data-sort-handle=\"action\"]");
+                if (handle) handle.draggable = !!isActionBatchMode;
+                if (!isActionBatchMode) {
+                    item.classList.remove("coolauxv-dragging", "coolauxv-drag-over");
+                }
+            });
+            if (!isActionBatchMode) {
+                draggingActionId = "";
+                actionDragArmedId = "";
+            }
+        };
+
+        const renderActionSections = (templates) => {
+            if (!actionSectionsContainer) return;
+            actionSectionsContainer.innerHTML = templates.map((tpl) => {
+                const styles = getActionStyleTokens(tpl.color);
+                const sectionId = `coolauxv-action-section-${tpl.id}`;
+                return `
+                    <div class="coolauxv-setting-group coolauxv-sort-item" data-action-id="${escapeAttr(tpl.id)}" data-sort-kind="action" draggable="false">
+                        <label class="coolauxv-setting-label">
+                            <span class="coolauxv-sort-handle coolauxv-action-sort-handle" data-sort-handle="action" title="批量模式下拖动排序">⠿</span>
+                            <span class="coolauxv-action-checkbox">
+                                <input type="checkbox" class="coolauxv-action-select" data-action-id="${escapeAttr(tpl.id)}">
+                            </span>
+                            <span class="coolauxv-provider-title">${escapeAttr(tpl.label || tpl.id)}</span>
+                            <span class="coolauxv-provider-subtitle">按钮模块</span>
+                            <span class="coolauxv-link-btn" data-action-toggle="${escapeAttr(tpl.id)}" style="margin-left:auto; cursor:pointer; user-select:none;">收起</span>
+                            <span class="coolauxv-link-btn" data-action="edit-action" data-action-id="${escapeAttr(tpl.id)}" style="cursor:pointer; user-select:none;">⚙️ 编辑</span>
+                            <span class="coolauxv-link-btn" data-action="share-action" data-action-id="${escapeAttr(tpl.id)}" style="cursor:pointer; user-select:none;">🔗 分享</span>
+                        </label>
+                        <div id="${sectionId}" class="coolauxv-collapse-section" data-action-section="${escapeAttr(tpl.id)}">
+                            <div style="display:flex; flex-direction:column; gap:8px;">
+                                <div class="coolauxv-sub-label">按钮文本</div>
+                                <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" data-action-id="${escapeAttr(tpl.id)}" data-action-field="label" value="${escapeAttr(tpl.label || "")}">
+                                <div class="coolauxv-sub-label">System 提示词</div>
+                                <textarea class="coolauxv-setting-input coolauxv-resizable-input" rows="4" data-action-id="${escapeAttr(tpl.id)}" data-action-field="systemPrompt">${escapeText(tpl.systemPrompt || "")}</textarea>
+                                <div class="coolauxv-sub-label">按钮权重（主界面宽度占比）</div>
+                                <input type="number" class="coolauxv-setting-input coolauxv-fixed-input" min="0.2" max="12" step="0.1" data-action-id="${escapeAttr(tpl.id)}" data-action-field="weight" value="${escapeAttr(String(normalizeActionWeight(tpl.weight)))}">
+                                <div class="coolauxv-sub-label">按钮颜色</div>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" data-action-id="${escapeAttr(tpl.id)}" data-action-field="color" value="${escapeAttr(tpl.color || "")}">
+                                    <button type="button" class="coolauxv-action-btn" data-action="pick-color" data-action-id="${escapeAttr(tpl.id)}">🎨</button>
+                                    <span style="width:30px; height:30px; border-radius:8px; border:1px solid #e5e7eb; background:${escapeAttr(styles.bg)};"></span>
+                                </div>
+                                <div class="coolauxv-sub-label">视觉模式拼接顺序</div>
+                                <select class="coolauxv-setting-input coolauxv-fixed-input" data-action-id="${escapeAttr(tpl.id)}" data-action-field="visionPromptOrder">
+                                    <option value="after" ${tpl.visionPromptOrder !== "before" ? "selected" : ""}>System + 识图提示词</option>
+                                    <option value="before" ${tpl.visionPromptOrder === "before" ? "selected" : ""}>识图提示词 + System</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join("");
+        };
+
+        const renderActionUI = () => {
+            const templates = getActionTemplates();
+            if (!templates.length) {
+                saveActionTemplates(getDefaultActionTemplates());
+            }
+            const latestTemplates = getActionTemplates();
+            const resolvedDefault = resolveActionTemplateId(GM_getValue("coolauxv_selection_icon_action", DEFAULT_SELECTION_ICON_ACTION), latestTemplates);
+            if (resolvedDefault !== GM_getValue("coolauxv_selection_icon_action", "")) {
+                GM_setValue("coolauxv_selection_icon_action", resolvedDefault);
+            }
+            ensureActionSectionStates(latestTemplates);
+            renderActionSections(latestTemplates);
+            applyActionSectionStates();
+            updateActionBatchModeUI();
+            renderMainActionButtons();
+            renderSelectionActionRadioGroup();
+        };
+
         renderProviderUI();
+        renderActionUI();
 
         if (providerRadioGroup) {
             providerRadioGroup.addEventListener("change", (e) => {
@@ -8145,6 +9343,115 @@
         }
 
         if (providerSectionsContainer) {
+            const clearProviderDragVisual = () => {
+                providerSectionsContainer.querySelectorAll("[data-sort-kind=\"provider\"]").forEach((item) => {
+                    item.classList.remove("coolauxv-dragging", "coolauxv-drag-over");
+                });
+            };
+            providerSectionsContainer.addEventListener("pointerdown", (e) => {
+                const targetEl = e.target instanceof Element ? e.target : null;
+                const handle = targetEl ? targetEl.closest("[data-sort-handle=\"provider\"]") : null;
+                const item = targetEl ? targetEl.closest("[data-sort-kind=\"provider\"]") : null;
+                if (!isProviderBatchMode || !handle || !item) {
+                    providerDragArmedId = "";
+                    return;
+                }
+                providerDragArmedId = item.dataset.providerId || "";
+            });
+            providerSectionsContainer.addEventListener("pointerup", () => {
+                providerDragArmedId = "";
+            });
+            providerSectionsContainer.addEventListener("pointercancel", () => {
+                providerDragArmedId = "";
+            });
+            providerSectionsContainer.addEventListener("dragstart", (e) => {
+                const targetEl = e.target instanceof Element ? e.target : null;
+                const item = targetEl ? targetEl.closest("[data-sort-kind=\"provider\"]") : null;
+                if (!isProviderBatchMode || !item) {
+                    e.preventDefault();
+                    return;
+                }
+                const providerId = item.dataset.providerId;
+                if (!providerId || providerDragArmedId !== providerId) {
+                    e.preventDefault();
+                    return;
+                }
+                providerDragArmedId = "";
+                draggingProviderId = providerId;
+                clearProviderDragVisual();
+                item.classList.add("coolauxv-dragging");
+                if (e.dataTransfer) {
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", providerId);
+                }
+            });
+            providerSectionsContainer.addEventListener("dragover", (e) => {
+                if (!isProviderBatchMode || !draggingProviderId) return;
+                e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+                const targetEl = e.target instanceof Element ? e.target : null;
+                const overItem = targetEl ? targetEl.closest("[data-sort-kind=\"provider\"]") : null;
+                if (!overItem) return;
+                const overId = overItem.dataset.providerId;
+                if (!overId) return;
+                providerSectionsContainer.querySelectorAll("[data-sort-kind=\"provider\"].coolauxv-drag-over").forEach((item) => {
+                    if (item !== overItem) item.classList.remove("coolauxv-drag-over");
+                });
+                overItem.classList.add("coolauxv-drag-over");
+                if (overId === draggingProviderId) return;
+                const dragItem = Array.from(providerSectionsContainer.querySelectorAll("[data-sort-kind=\"provider\"]"))
+                    .find((item) => item.dataset.providerId === draggingProviderId);
+                if (!dragItem || dragItem === overItem) return;
+                const rect = overItem.getBoundingClientRect();
+                const shouldInsertBefore = e.clientY < (rect.top + rect.height / 2);
+                const noPositionChange = shouldInsertBefore
+                    ? dragItem.nextElementSibling === overItem
+                    : overItem.nextElementSibling === dragItem;
+                if (noPositionChange) return;
+                const beforeMap = captureSortPositions(
+                    providerSectionsContainer,
+                    "[data-sort-kind=\"provider\"]",
+                    (item) => item.dataset.providerId || ""
+                );
+                if (shouldInsertBefore) {
+                    providerSectionsContainer.insertBefore(dragItem, overItem);
+                } else {
+                    providerSectionsContainer.insertBefore(dragItem, overItem.nextElementSibling);
+                }
+                animateSortReflow(
+                    providerSectionsContainer,
+                    "[data-sort-kind=\"provider\"]",
+                    (item) => item.dataset.providerId || "",
+                    beforeMap
+                );
+            });
+            providerSectionsContainer.addEventListener("dragleave", (e) => {
+                const targetEl = e.target instanceof Element ? e.target : null;
+                const item = targetEl ? targetEl.closest("[data-sort-kind=\"provider\"]") : null;
+                if (!item) return;
+                const related = e.relatedTarget instanceof Element ? e.relatedTarget : null;
+                if (related && item.contains(related)) return;
+                item.classList.remove("coolauxv-drag-over");
+            });
+            providerSectionsContainer.addEventListener("drop", (e) => {
+                if (!isProviderBatchMode || !draggingProviderId) return;
+                e.preventDefault();
+                clearProviderDragVisual();
+                draggingProviderId = "";
+                providerDragArmedId = "";
+                const orderedIds = Array.from(providerSectionsContainer.querySelectorAll("[data-sort-kind=\"provider\"]"))
+                    .map((item) => item.dataset.providerId || "")
+                    .filter(Boolean);
+                if (!orderedIds.length) return;
+                const nextTemplates = reorderTemplatesByOrderedIds(getProviderTemplates(), orderedIds);
+                saveProviderTemplates(nextTemplates);
+                renderProviderUI();
+            });
+            providerSectionsContainer.addEventListener("dragend", () => {
+                draggingProviderId = "";
+                providerDragArmedId = "";
+                clearProviderDragVisual();
+            });
             providerSectionsContainer.addEventListener("click", (e) => {
                 const target = e.target;
                 if (!target) return;
@@ -8353,6 +9660,234 @@
             });
         }
 
+        if (selectionActionRadioGroup) {
+            selectionActionRadioGroup.addEventListener("change", (e) => {
+                const target = e.target;
+                if (!target || target.name !== "coolauxv_selection_icon_action_radio_dynamic") return;
+                if (!target.checked) return;
+                const actionId = resolveActionTemplateId(target.value, getActionTemplates());
+                GM_setValue("coolauxv_selection_icon_action", actionId);
+            });
+        }
+
+        if (actionSectionsContainer) {
+            const clearActionDragVisual = () => {
+                actionSectionsContainer.querySelectorAll("[data-sort-kind=\"action\"]").forEach((item) => {
+                    item.classList.remove("coolauxv-dragging", "coolauxv-drag-over");
+                });
+            };
+            actionSectionsContainer.addEventListener("pointerdown", (e) => {
+                const targetEl = e.target instanceof Element ? e.target : null;
+                const handle = targetEl ? targetEl.closest("[data-sort-handle=\"action\"]") : null;
+                const item = targetEl ? targetEl.closest("[data-sort-kind=\"action\"]") : null;
+                if (!isActionBatchMode || !handle || !item) {
+                    actionDragArmedId = "";
+                    return;
+                }
+                actionDragArmedId = item.dataset.actionId || "";
+            });
+            actionSectionsContainer.addEventListener("pointerup", () => {
+                actionDragArmedId = "";
+            });
+            actionSectionsContainer.addEventListener("pointercancel", () => {
+                actionDragArmedId = "";
+            });
+            actionSectionsContainer.addEventListener("dragstart", (e) => {
+                const targetEl = e.target instanceof Element ? e.target : null;
+                const item = targetEl ? targetEl.closest("[data-sort-kind=\"action\"]") : null;
+                if (!isActionBatchMode || !item) {
+                    e.preventDefault();
+                    return;
+                }
+                const actionId = item.dataset.actionId;
+                if (!actionId || actionDragArmedId !== actionId) {
+                    e.preventDefault();
+                    return;
+                }
+                actionDragArmedId = "";
+                draggingActionId = actionId;
+                clearActionDragVisual();
+                item.classList.add("coolauxv-dragging");
+                if (e.dataTransfer) {
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", actionId);
+                }
+            });
+            actionSectionsContainer.addEventListener("dragover", (e) => {
+                if (!isActionBatchMode || !draggingActionId) return;
+                e.preventDefault();
+                if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+                const targetEl = e.target instanceof Element ? e.target : null;
+                const overItem = targetEl ? targetEl.closest("[data-sort-kind=\"action\"]") : null;
+                if (!overItem) return;
+                const overId = overItem.dataset.actionId;
+                if (!overId) return;
+                actionSectionsContainer.querySelectorAll("[data-sort-kind=\"action\"].coolauxv-drag-over").forEach((item) => {
+                    if (item !== overItem) item.classList.remove("coolauxv-drag-over");
+                });
+                overItem.classList.add("coolauxv-drag-over");
+                if (overId === draggingActionId) return;
+                const dragItem = Array.from(actionSectionsContainer.querySelectorAll("[data-sort-kind=\"action\"]"))
+                    .find((item) => item.dataset.actionId === draggingActionId);
+                if (!dragItem || dragItem === overItem) return;
+                const rect = overItem.getBoundingClientRect();
+                const shouldInsertBefore = e.clientY < (rect.top + rect.height / 2);
+                const noPositionChange = shouldInsertBefore
+                    ? dragItem.nextElementSibling === overItem
+                    : overItem.nextElementSibling === dragItem;
+                if (noPositionChange) return;
+                const beforeMap = captureSortPositions(
+                    actionSectionsContainer,
+                    "[data-sort-kind=\"action\"]",
+                    (item) => item.dataset.actionId || ""
+                );
+                if (shouldInsertBefore) {
+                    actionSectionsContainer.insertBefore(dragItem, overItem);
+                } else {
+                    actionSectionsContainer.insertBefore(dragItem, overItem.nextElementSibling);
+                }
+                animateSortReflow(
+                    actionSectionsContainer,
+                    "[data-sort-kind=\"action\"]",
+                    (item) => item.dataset.actionId || "",
+                    beforeMap
+                );
+            });
+            actionSectionsContainer.addEventListener("dragleave", (e) => {
+                const targetEl = e.target instanceof Element ? e.target : null;
+                const item = targetEl ? targetEl.closest("[data-sort-kind=\"action\"]") : null;
+                if (!item) return;
+                const related = e.relatedTarget instanceof Element ? e.relatedTarget : null;
+                if (related && item.contains(related)) return;
+                item.classList.remove("coolauxv-drag-over");
+            });
+            actionSectionsContainer.addEventListener("drop", (e) => {
+                if (!isActionBatchMode || !draggingActionId) return;
+                e.preventDefault();
+                clearActionDragVisual();
+                draggingActionId = "";
+                actionDragArmedId = "";
+                const orderedIds = Array.from(actionSectionsContainer.querySelectorAll("[data-sort-kind=\"action\"]"))
+                    .map((item) => item.dataset.actionId || "")
+                    .filter(Boolean);
+                if (!orderedIds.length) return;
+                const nextTemplates = reorderTemplatesByOrderedIds(getActionTemplates(), orderedIds);
+                saveActionTemplates(nextTemplates);
+                renderActionUI();
+            });
+            actionSectionsContainer.addEventListener("dragend", () => {
+                draggingActionId = "";
+                actionDragArmedId = "";
+                clearActionDragVisual();
+            });
+            actionSectionsContainer.addEventListener("click", (e) => {
+                const target = e.target;
+                if (!target) return;
+                const actionType = target.dataset.action;
+                if (actionType === "edit-action") {
+                    const actionId = target.dataset.actionId;
+                    if (!actionId) return;
+                    openActionModal({ mode: "edit", actionId: actionId });
+                    return;
+                }
+                if (actionType === "share-action") {
+                    const actionId = target.dataset.actionId;
+                    if (!actionId) return;
+                    const tpl = getActionTemplates().find((item) => item.id === actionId);
+                    if (!tpl) return;
+                    const payload = encodeActionTemplateBase64(tpl);
+                    if (!payload) {
+                        alert("分享失败，请稍后重试。");
+                        return;
+                    }
+                    if (typeof GM_setClipboard !== "undefined") {
+                        GM_setClipboard(payload, "text");
+                        alert("按钮配置已复制到剪贴板。");
+                    } else {
+                        prompt("按钮配置已生成，请复制：", payload);
+                    }
+                    return;
+                }
+                if (actionType === "pick-color") {
+                    const actionId = target.dataset.actionId;
+                    if (!actionId) return;
+                    const input = actionSectionsContainer.querySelector(`[data-action-id="${actionId}"][data-action-field="color"]`);
+                    if (!input) return;
+                    openActionColorPickerModal(input.value, (nextColor) => {
+                        input.value = nextColor;
+                        input.dispatchEvent(new Event("change", { bubbles: true }));
+                    });
+                    return;
+                }
+                const toggleId = target.dataset.actionToggle;
+                if (toggleId) {
+                    const section = actionSectionsContainer.querySelector(`[data-action-section="${toggleId}"]`);
+                    if (!section) return;
+                    const shouldExpand = !isSectionExpanded(section);
+                    actionSectionStates.set(toggleId, shouldExpand);
+                    setSectionAnimatedVisibility(section, shouldExpand);
+                    updateActionToggleLabels();
+                }
+            });
+
+            actionSectionsContainer.addEventListener("change", (e) => {
+                const target = e.target;
+                if (!target) return;
+                if (target.classList.contains("coolauxv-action-select")) {
+                    const actionId = target.dataset.actionId;
+                    if (!actionId) return;
+                    if (target.checked) selectedActionIds.add(actionId);
+                    else selectedActionIds.delete(actionId);
+                    return;
+                }
+                const actionId = target.dataset.actionId;
+                const field = target.dataset.actionField;
+                if (!actionId || !field) return;
+                const templates = getActionTemplates();
+                const tpl = templates.find((item) => item.id === actionId);
+                if (!tpl) return;
+
+                if (field === "color") {
+                    const parsed = parseColorToRgb(target.value);
+                    if (!parsed) {
+                        alert("颜色格式无效，请输入 HSL 或 RGB。");
+                        renderActionUI();
+                        return;
+                    }
+                    tpl.color = rgbToCss(parsed);
+                    saveActionTemplates(templates);
+                    renderActionUI();
+                    return;
+                }
+                if (field === "visionPromptOrder") {
+                    tpl.visionPromptOrder = normalizeActionVisionPromptOrder(target.value);
+                    saveActionTemplates(templates);
+                    return;
+                }
+                if (field === "weight") {
+                    tpl.weight = normalizeActionWeight(target.value);
+                    saveActionTemplates(templates);
+                    renderActionUI();
+                    return;
+                }
+                if (field === "label") {
+                    tpl.label = String(target.value || "").trim() || tpl.id;
+                    saveActionTemplates(templates);
+                    renderActionUI();
+                    return;
+                }
+                if (field === "systemPrompt") {
+                    tpl.systemPrompt = String(target.value || "").trim();
+                    if (!tpl.systemPrompt) {
+                        tpl.systemPrompt = getDefaultActionPromptById(tpl.id);
+                    }
+                    saveActionTemplates(templates);
+                    renderActionUI();
+                    return;
+                }
+            });
+        }
+
         if (modelSectionsContainer) {
             modelSectionsContainer.addEventListener("click", (e) => {
                 const btn = e.target.closest(".coolauxv-model-btn");
@@ -8487,6 +10022,74 @@
                     setSectionAnimatedVisibility(section, nextState);
                 });
                 updateProviderToggleLabels();
+            });
+        }
+
+        if (btnActionAdd) {
+            btnActionAdd.addEventListener("click", () => {
+                openActionModal({ mode: "add" });
+            });
+        }
+
+        if (btnActionBatch) {
+            btnActionBatch.addEventListener("click", () => {
+                isActionBatchMode = !isActionBatchMode;
+                if (!isActionBatchMode) selectedActionIds.clear();
+                updateActionBatchModeUI();
+            });
+        }
+
+        if (btnActionShare) {
+            btnActionShare.addEventListener("click", () => {
+                if (!selectedActionIds.size) {
+                    alert("请先选择要分享的按钮。");
+                    return;
+                }
+                const templates = getActionTemplates()
+                    .filter((tpl) => selectedActionIds.has(tpl.id))
+                    .map((tpl) => compactActionTemplate(tpl));
+                const payload = encodeBase64(JSON.stringify(pruneEmptyValues({ version: ACTION_SHARE_VERSION, actions: templates })));
+                if (!payload) {
+                    alert("分享失败，请稍后重试。");
+                    return;
+                }
+                if (typeof GM_setClipboard !== "undefined") {
+                    GM_setClipboard(payload, "text");
+                    alert("已生成分享文本并复制到剪贴板。");
+                } else {
+                    prompt("分享文本已生成，请复制：", payload);
+                }
+            });
+        }
+
+        if (btnActionBatchDelete) {
+            btnActionBatchDelete.addEventListener("click", () => {
+                if (!selectedActionIds.size) {
+                    alert("请先选择要删除的按钮。");
+                    return;
+                }
+                if (!confirm("确定要删除选中的按钮吗？")) return;
+                let templates = getActionTemplates().filter((tpl) => !selectedActionIds.has(tpl.id));
+                if (!templates.length) templates = getDefaultActionTemplates();
+                saveActionTemplates(templates);
+                selectedActionIds.clear();
+                renderActionUI();
+            });
+        }
+
+        if (btnToggleActionAll) {
+            btnToggleActionAll.addEventListener("click", () => {
+                if (!actionSectionsContainer) return;
+                const sections = Array.from(actionSectionsContainer.querySelectorAll("[data-action-section]"));
+                if (!sections.length) return;
+                const allExpanded = sections.every((section) => isSectionExpanded(section));
+                sections.forEach((section) => {
+                    const actionId = section.dataset.actionSection;
+                    const nextState = !allExpanded;
+                    actionSectionStates.set(actionId, nextState);
+                    setSectionAnimatedVisibility(section, nextState);
+                });
+                updateActionToggleLabels();
             });
         }
 
@@ -8834,24 +10437,17 @@
 
         const loadConfig = () => {
             providerTemplatesCache = null;
+            actionTemplatesCache = null;
             renderProviderUI();
+            renderActionUI();
 
             if (inputWidth) inputWidth.value = GM_getValue("coolauxv_win_width", "");
             if (inputHeight) inputHeight.value = GM_getValue("coolauxv_win_height", "");
-            if (inputPromptTrans) inputPromptTrans.value = GM_getValue("coolauxv_prompt_trans", "");
-            if (inputPromptExplain) inputPromptExplain.value = GM_getValue("coolauxv_prompt_explain", "");
-            if (inputPromptChat) inputPromptChat.value = GM_getValue("coolauxv_prompt_chat", "");
-            if (inputAppendTrans) inputAppendTrans.checked = GM_getValue("coolauxv_append_trans", false);
-            if (inputAppendExplain) inputAppendExplain.checked = GM_getValue("coolauxv_append_explain", false);
-            if (inputAppendVision) inputAppendVision.checked = GM_getValue("coolauxv_append_vision", false);
-            if (inputAppendChat) inputAppendChat.checked = GM_getValue("coolauxv_append_chat", false);
 
             const currentLevel = GM_getValue("coolauxv_log_level", DEFAULT_LOG_LEVEL);
             const targetRadio = popup.querySelector(`input[name="coolauxv_log_level_radio"][value="${currentLevel}"]`);
             if (targetRadio) targetRadio.checked = true;
-            const selectionIconAction = getSelectionIconAction();
-            const targetSelectionActionRadio = popup.querySelector(`input[name="coolauxv_selection_icon_action_radio"][value="${selectionIconAction}"]`);
-            if (targetSelectionActionRadio) targetSelectionActionRadio.checked = true;
+            renderSelectionActionRadioGroup();
 
             if (inputBlurGlass) {
                 inputBlurGlass.checked = GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS);
@@ -8883,7 +10479,6 @@
                 const raw = GM_getValue("coolauxv_anim_speed", DEFAULT_ANIM_SPEED);
                 inputAnimSpeed.value = raw ? String(raw) : String(DEFAULT_ANIM_SPEED);
             }
-            if (inputPromptVision) inputPromptVision.value = GM_getValue("coolauxv_prompt_vision", "");
             if (inputContinuousChat) inputContinuousChat.checked = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
             if (inputChatHistoryPersist) inputChatHistoryPersist.checked = GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST);
             if (inputChatEnterSend) inputChatEnterSend.checked = GM_getValue("coolauxv_chat_enter_send", DEFAULT_CHAT_ENTER_SEND);
@@ -8924,10 +10519,6 @@
                 const raw = GM_getValue("coolauxv_anim_speed", DEFAULT_ANIM_SPEED);
                 inputAnimSpeed.value = raw ? String(raw) : String(DEFAULT_ANIM_SPEED);
             }
-            if (inputAppendTrans) inputAppendTrans.checked = GM_getValue("coolauxv_append_trans", false);
-            if (inputAppendExplain) inputAppendExplain.checked = GM_getValue("coolauxv_append_explain", false);
-            if (inputAppendVision) inputAppendVision.checked = GM_getValue("coolauxv_append_vision", false);
-            if (inputAppendChat) inputAppendChat.checked = GM_getValue("coolauxv_append_chat", false);
             if (inputContinuousChat) {
                 const enabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
                 inputContinuousChat.checked = enabled;
@@ -8940,18 +10531,28 @@
             if (inputChatEnterSend) {
                 inputChatEnterSend.checked = GM_getValue("coolauxv_chat_enter_send", DEFAULT_CHAT_ENTER_SEND);
             }
-            const selectionIconAction = getSelectionIconAction();
-            const targetSelectionActionRadio = popup.querySelector(`input[name="coolauxv_selection_icon_action_radio"][value="${selectionIconAction}"]`);
-            if (targetSelectionActionRadio) targetSelectionActionRadio.checked = true;
+            renderSelectionActionRadioGroup();
+            renderMainActionButtons();
         };
 
         const buildExportSnapshot = (includePrivacy) => {
             const snapshot = snapshotConfig();
             delete snapshot[CHAT_QUEUE_STORAGE_KEY];
             const rawTemplates = snapshot[PROVIDER_TEMPLATE_STORAGE_KEY];
-            if (!Array.isArray(rawTemplates)) {
-                return snapshot;
+            const rawActionTemplates = snapshot[ACTION_TEMPLATE_STORAGE_KEY];
+            if (Array.isArray(rawActionTemplates) && rawActionTemplates.every((item) => typeof item === "string")) {
+                const cleaned = rawActionTemplates.map((item) => String(item || "").trim()).filter(Boolean);
+                if (cleaned.length) snapshot[ACTION_TEMPLATE_STORAGE_KEY] = cleaned;
+                else delete snapshot[ACTION_TEMPLATE_STORAGE_KEY];
+            } else if (rawActionTemplates !== undefined) {
+                const parsedActions = deserializeActionTemplateList(rawActionTemplates).templates;
+                if (parsedActions.length) {
+                    snapshot[ACTION_TEMPLATE_STORAGE_KEY] = serializeActionTemplateList(parsedActions);
+                } else {
+                    delete snapshot[ACTION_TEMPLATE_STORAGE_KEY];
+                }
             }
+            if (!Array.isArray(rawTemplates)) return snapshot;
             const secrets = loadProviderSecretStore();
             const templates = normalizeProviderTemplates(rawTemplates);
             snapshot[PROVIDER_TEMPLATE_STORAGE_KEY] = templates.map((tpl) => {
@@ -8985,6 +10586,11 @@
             if (Array.isArray(snapshot[PROVIDER_TEMPLATE_STORAGE_KEY])) {
                 snapshot[PROVIDER_TEMPLATE_STORAGE_KEY] = snapshot[PROVIDER_TEMPLATE_STORAGE_KEY]
                     .map((tpl) => compactProviderTemplate(tpl));
+            }
+            if (Array.isArray(snapshot[ACTION_TEMPLATE_STORAGE_KEY])) {
+                const cleaned = snapshot[ACTION_TEMPLATE_STORAGE_KEY].map((item) => String(item || "").trim()).filter(Boolean);
+                if (cleaned.length) snapshot[ACTION_TEMPLATE_STORAGE_KEY] = cleaned;
+                else delete snapshot[ACTION_TEMPLATE_STORAGE_KEY];
             }
             const compacted = pruneEmptyValues(compactConfigSnapshot(snapshot));
             const payload = encodeBase64(JSON.stringify(compacted));
@@ -9134,6 +10740,7 @@
                 clearAllStoredKeys();
                 GM_deleteValue("coolauxv_installed_version"); // 重置更新状态
                 saveProviderTemplates(getDefaultProviderTemplates());
+                saveActionTemplates(getDefaultActionTemplates());
                 refreshConfigUI();
                 alert("配置已重置。");
             }
@@ -9141,14 +10748,6 @@
 
         if (inputWidth) inputWidth.addEventListener("input", (e) => saveConfig("coolauxv_win_width", e.target.value));
         if (inputHeight) inputHeight.addEventListener("input", (e) => saveConfig("coolauxv_win_height", e.target.value));
-        if (inputPromptTrans) inputPromptTrans.addEventListener("input", (e) => saveConfig("coolauxv_prompt_trans", e.target.value));
-        if (inputPromptExplain) inputPromptExplain.addEventListener("input", (e) => saveConfig("coolauxv_prompt_explain", e.target.value));
-        if (inputPromptChat) inputPromptChat.addEventListener("input", (e) => saveConfig("coolauxv_prompt_chat", e.target.value));
-        if (inputPromptVision) inputPromptVision.addEventListener("input", (e) => saveConfig("coolauxv_prompt_vision", e.target.value));
-        if (inputAppendTrans) inputAppendTrans.addEventListener("change", (e) => GM_setValue("coolauxv_append_trans", e.target.checked));
-        if (inputAppendExplain) inputAppendExplain.addEventListener("change", (e) => GM_setValue("coolauxv_append_explain", e.target.checked));
-        if (inputAppendVision) inputAppendVision.addEventListener("change", (e) => GM_setValue("coolauxv_append_vision", e.target.checked));
-        if (inputAppendChat) inputAppendChat.addEventListener("change", (e) => GM_setValue("coolauxv_append_chat", e.target.checked));
         if (inputContinuousChat) {
             inputContinuousChat.addEventListener("change", (e) => {
                 const enabled = e.target.checked;
@@ -9409,21 +11008,10 @@
     };
 
     function getActiveConfig() {
-        // 辅助函数：处理提示词逻辑
-        // 如果自定义为空 -> 用默认
-        // 如果自定义不为空：
-        //    -> 勾选了追加 -> 默认 + 换行 + 自定义
-        //    -> 没勾选追加 -> 自定义
-        const getFinalPrompt = (keyCustom, keyAppend, defaultText) => {
-            const custom = GM_getValue(keyCustom, "").trim();
-            const isAppend = GM_getValue(keyAppend, false);
-
-            if (!custom) return defaultText;
-            if (isAppend) return defaultText + "\n" + custom;
-            return custom;
-        };
-
         const templates = getProviderTemplates();
+        const actionTemplates = getActionTemplates();
+        const translateAction = actionTemplates.find((item) => item.id === "translate");
+        const explainAction = actionTemplates.find((item) => item.id === "explain");
         const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), templates);
         const provider = getProviderTemplateSafe(providerId);
         const groups = provider && Array.isArray(provider.modelGroups) ? provider.modelGroups : [];
@@ -9446,10 +11034,10 @@
             apiKey: provider ? provider.apiKey : "",
             modelName: modelName,
             modelVision: modelVision,
-            promptTrans: getFinalPrompt("coolauxv_prompt_trans", "coolauxv_append_trans", DEFAULT_PROMPT_TRANSLATE),
-            promptExplain: getFinalPrompt("coolauxv_prompt_explain", "coolauxv_append_explain", DEFAULT_PROMPT_EXPLAIN),
-            promptVision: getFinalPrompt("coolauxv_prompt_vision", "coolauxv_append_vision", DEFAULT_PROMPT_VISION),
-            promptContinuousChat: getFinalPrompt("coolauxv_prompt_chat", "coolauxv_append_chat", DEFAULT_PROMPT_CONTINUOUS_CHAT)
+            promptTrans: translateAction ? translateAction.systemPrompt : getDefaultActionPromptById("translate"),
+            promptExplain: explainAction ? explainAction.systemPrompt : getDefaultActionPromptById("explain"),
+            promptVision: buildLegacyPromptWithAppend("coolauxv_prompt_vision", "coolauxv_append_vision", DEFAULT_PROMPT_VISION),
+            promptContinuousChat: buildLegacyPromptWithAppend("coolauxv_prompt_chat", "coolauxv_append_chat", DEFAULT_PROMPT_CONTINUOUS_CHAT)
         };
     }
 
@@ -10937,8 +12525,7 @@
         const pdfOriginInfoBtn = popup.querySelector("#coolauxv-pdf-origin-info");
         const rawToggle = popup.querySelector("#coolauxv-raw-toggle");
         const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle");
-        const btnTrans = popup.querySelector("#coolauxv-btn-trans");
-        const btnExplain = popup.querySelector("#coolauxv-btn-explain");
+        const mainActionButtons = popup.querySelector("#coolauxv-main-action-buttons");
         const btnStop = popup.querySelector("#coolauxv-btn-stop");
         const btnChatHistory = popup.querySelector("#coolauxv-chat-history-btn");
         const btnChatSend = popup.querySelector("#coolauxv-btn-chat-send");
@@ -11017,8 +12604,15 @@
             }
         };
 
-        if (btnTrans) btnTrans.onclick = () => doAction("translate");
-        if (btnExplain) btnExplain.onclick = () => doAction("explain");
+        if (mainActionButtons) {
+            mainActionButtons.addEventListener("click", (e) => {
+                const btn = e.target.closest("[data-action-id]");
+                if (!btn) return;
+                const actionId = btn.dataset.actionId;
+                if (!actionId) return;
+                doAction(actionId);
+            });
+        }
         if (btnStop) btnStop.onclick = () => interruptActiveOutput();
         if (btnChatHistory) btnChatHistory.onclick = () => openChatHistoryManager();
         if (btnChatSend) btnChatSend.onclick = () => doChatSend();
@@ -11598,13 +13192,15 @@
     // ========================================================================
     // 网络引擎 (Stream)
     // ========================================================================
-    async function doAction(mode) {
+    async function doAction(actionId) {
         const input = popup.querySelector("#coolauxv-input");
         if (!input) return;
+        const actionTemplate = getActionTemplateById(actionId);
+        const resolvedActionId = actionTemplate ? actionTemplate.id : resolveActionTemplateId(actionId, getActionTemplates());
 
         // 检查是否有截图缓存
         if (capturedImageBase64) {
-            doImageAnalysis(mode);
+            doImageAnalysis(resolvedActionId);
             return;
         }
 
@@ -11649,7 +13245,9 @@
         if (gmRequest && gmRequest.abort) gmRequest.abort();
 
         const url = buildProviderUrl(providerTemplate);
-        const systemPrompt = mode === "explain" ? config.promptExplain : config.promptTrans;
+        const systemPrompt = actionTemplate
+            ? actionTemplate.systemPrompt
+            : (resolvedActionId === "explain" ? config.promptExplain : config.promptTrans);
         const historyEntry = {
             systemPrompt: systemPrompt,
             userContentText: text,
@@ -11693,7 +13291,7 @@
                     let apiErr = null;
                     try {
                         const errJson = await response.json();
-                        logAiRawResponse(provider, config.modelName, mode, errJson);
+                        logAiRawResponse(provider, config.modelName, resolvedActionId, errJson);
                         apiErr = parseApiError(errJson);
                     } catch (e) { }
                     if (!shouldSuppressResultError()) {
@@ -11708,7 +13306,7 @@
                 try {
                     rawText = await response.text();
                 } catch (e) { }
-                logAiRawResponse(provider, config.modelName, mode, rawText);
+                logAiRawResponse(provider, config.modelName, resolvedActionId, rawText);
                 if (response.status === 401 || response.status === 403) throw new Error("AUTH_INVALID");
                 throw new Error(`HTTP ${response.status}`);
             }
@@ -11754,7 +13352,7 @@
                 }
                 stopRenderLoop();
                 historyEntry.assistantText = streamTextBuffer;
-                logAiResponse(provider, config.modelName, mode, streamTextBuffer);
+                logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
                 recordHistoryEntry(historyEntry);
                 autoExpandChatIfEnabled(actionToken);
                 return;
@@ -11788,7 +13386,7 @@
             const resultDiv = popup.querySelector("#coolauxv-result");
 
             if (res.status === 429) {
-                logAiRawResponse(provider, config.modelName, mode, res.responseText);
+                logAiRawResponse(provider, config.modelName, resolvedActionId, res.responseText);
                 const apiErr = parseApiError(res.responseText);
                 if (resultDiv && !shouldSuppressResultError()) {
                     resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
@@ -11800,7 +13398,7 @@
             }
 
             const fullText = res.responseText || (typeof res.response === 'string' ? res.response : "");
-            logAiRawResponse(provider, config.modelName, mode, fullText);
+            logAiRawResponse(provider, config.modelName, resolvedActionId, fullText);
 
             if (res.status === 401 || res.status === 403) {
                 if (!shouldSuppressResultError()) {
@@ -11840,7 +13438,7 @@
                 }
                 renderContent();
                 historyEntry.assistantText = streamTextBuffer;
-                logAiResponse(provider, config.modelName, mode, streamTextBuffer);
+                logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
                 recordHistoryEntry(historyEntry);
                 autoExpandChatIfEnabled(actionToken);
             } else {
@@ -11959,7 +13557,7 @@
                             }
                             stopRenderLoop();
                             historyEntry.assistantText = streamTextBuffer;
-                            logAiResponse(provider, config.modelName, mode, streamTextBuffer);
+                            logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
                             recordHistoryEntry(historyEntry);
                             autoExpandChatIfEnabled(actionToken);
                         }
@@ -13056,7 +14654,7 @@
 
 
     // 执行视觉分析 API 请求
-    async function doImageAnalysis(mode = 'vision') {
+    async function doImageAnalysis(actionId = "vision") {
         if (!capturedImageBase64) {
             alert("未获取到图片数据");
             return;
@@ -13085,6 +14683,10 @@
         let textPrompt = "";
         const userText = input.value.trim();
         const imageBase64 = capturedImageBase64;
+        const actionTemplate = actionId === "vision" ? null : getActionTemplateById(actionId);
+        const resolvedActionId = actionTemplate
+            ? actionTemplate.id
+            : (actionId === "vision" ? "vision" : resolveActionTemplateId(actionId, getActionTemplates()));
 
         // --- 核心逻辑：Prompt 拼接 ---
         if (userText) {
@@ -13092,19 +14694,20 @@
             textPrompt = userText;
             Logger.info("Vision Action: User Input Only");
         } else {
-            // 用户输入为空，根据模式拼接提示词
-            if (mode === 'translate') {
-                // 翻译模式：识屏提示词 拼到 翻译提示词 后面 -> [Trans] + [Vision]
-                textPrompt = `${config.promptTrans}\n\n${config.promptVision}`;
-                Logger.info("Vision Action: Translate (Trans + Vision)");
-            } else if (mode === 'explain') {
-                // 解读模式：解读提示词 拼到 识屏提示词 后面 -> [Vision] + [Explain]
-                textPrompt = `${config.promptVision}\n\n${config.promptExplain}`;
-                Logger.info("Vision Action: Explain (Vision + Explain)");
-            } else {
-                // 识屏模式：默认识屏提示词
+            if (resolvedActionId === "vision") {
                 textPrompt = config.promptVision;
                 Logger.info("Vision Action: General Analysis");
+            } else {
+                const systemPrompt = actionTemplate
+                    ? actionTemplate.systemPrompt
+                    : (resolvedActionId === "explain" ? config.promptExplain : config.promptTrans);
+                const order = actionTemplate
+                    ? normalizeActionVisionPromptOrder(actionTemplate.visionPromptOrder)
+                    : (resolvedActionId === "explain" ? "before" : "after");
+                textPrompt = order === "before"
+                    ? `${config.promptVision}\n\n${systemPrompt}`
+                    : `${systemPrompt}\n\n${config.promptVision}`;
+                Logger.info(`Vision Action: ${resolvedActionId} (${order === "before" ? "Vision + System" : "System + Vision"})`);
             }
         }
 
@@ -13163,7 +14766,7 @@
         if (abortController) abortController.abort();
         if (gmRequest && gmRequest.abort) gmRequest.abort();
 
-        Logger.info(`Starting Vision API Request (${mode})...`);
+        Logger.info(`Starting Vision API Request (${resolvedActionId})...`);
 
         gmRequest = GM_xmlhttpRequest({
             method: "POST",
@@ -13220,7 +14823,7 @@
                             }
                             stopRenderLoop();
                             historyEntry.assistantText = streamTextBuffer;
-                            logAiResponse(provider, config.modelVision, mode, streamTextBuffer);
+                            logAiResponse(provider, config.modelVision, resolvedActionId, streamTextBuffer);
                             recordHistoryEntry(historyEntry);
                             autoExpandChatIfEnabled(actionToken);
                         }
@@ -13229,7 +14832,7 @@
             },
             onload: (res) => {
                 if (ignoreIncomingOutput) return;
-                logAiRawResponse(provider, config.modelVision, mode, res.responseText);
+                logAiRawResponse(provider, config.modelVision, resolvedActionId, res.responseText);
                 if (res.status === 429) {
                     stopRenderLoop();
                     if (!shouldSuppressResultError()) {
