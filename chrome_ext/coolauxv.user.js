@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.1
+// @version      v16.1.1
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -139,6 +139,10 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.1.2 更新日志
+        ## 🐛 问题修复
+        *   修复导入ChatGPT聊天记录的时候不会导入引用信息
+        ---
         v16.1 更新日志
         ## ✨ 新功能
         *   支持导入ChatGPT的聊天记录了，目前已测试[这个插件](https://github.com/pionxzh/chatgpt-exporter)导出的json可用。
@@ -3142,6 +3146,28 @@
     .coolauxv-markdown p { margin: 0 0 10px 0; text-align: left !important; text-indent: 0 !important; }
     .coolauxv-markdown ul, .coolauxv-markdown ol { padding-left: 20px; margin: 5px 0 10px 0; text-align: left !important; }
     .coolauxv-markdown h1, .coolauxv-markdown h2, .coolauxv-markdown h3 { font-weight: bold; margin: 15px 0 8px 0; color: #1f2937; line-height: 1.4; text-align: left !important; }
+    .coolauxv-markdown a, .coolauxv-markdown-body a {
+        color: #1d4ed8 !important;
+        text-decoration-line: underline !important;
+        text-decoration-thickness: 2px !important;
+        text-underline-offset: 2px !important;
+        font-weight: 600;
+        background: rgba(59, 130, 246, 0.14);
+        border-radius: 4px;
+        padding: 0 3px;
+        cursor: pointer;
+    }
+    .coolauxv-markdown a:hover, .coolauxv-markdown-body a:hover {
+        color: #1e40af !important;
+        background: rgba(59, 130, 246, 0.24);
+    }
+    .coolauxv-markdown a:visited, .coolauxv-markdown-body a:visited {
+        color: #3730a3 !important;
+    }
+    .coolauxv-markdown a:focus-visible, .coolauxv-markdown-body a:focus-visible {
+        outline: 2px solid rgba(59, 130, 246, 0.4);
+        outline-offset: 1px;
+    }
     .coolauxv-markdown code { background-color: #f3f4f6; color: #c2410c; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
     .coolauxv-markdown pre { background-color: #1f2937; color: #f9fafb; padding: 10px; border-radius: 6px; overflow-x: auto; margin: 10px 0; text-align: left !important; }
     .coolauxv-mermaid-rendered { margin: 10px 0; padding: 8px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; overflow-x: auto; }
@@ -5650,6 +5676,149 @@
             return "";
         };
 
+        const normalizeOpenAISourceUrl = (value) => {
+            const raw = asNonEmptyString(value);
+            if (!raw) return "";
+            if (!/^https?:\/\//i.test(raw)) return "";
+            return raw;
+        };
+
+        const getOpenAIUrlAttributionLabel = (url, fallback) => {
+            const direct = asNonEmptyString(fallback);
+            if (direct) return direct;
+            const normalized = normalizeOpenAISourceUrl(url);
+            if (!normalized) return "来源";
+            try {
+                const hostname = new URL(normalized).hostname.replace(/^www\./i, "");
+                return hostname || "来源";
+            } catch (e) {
+                return "来源";
+            }
+        };
+
+        const buildOpenAIReferenceLinks = (reference) => {
+            if (!reference || typeof reference !== "object") return [];
+            const links = [];
+            const seen = new Set();
+            const pushLink = (url, label) => {
+                const normalized = normalizeOpenAISourceUrl(url);
+                if (!normalized) return;
+                const key = normalized.toLowerCase();
+                if (seen.has(key)) return;
+                seen.add(key);
+                links.push({
+                    label: getOpenAIUrlAttributionLabel(normalized, label),
+                    url: normalized
+                });
+            };
+
+            const items = Array.isArray(reference.items) ? reference.items : [];
+            items.forEach((item) => {
+                if (!item || typeof item !== "object") return;
+                pushLink(item.url, item.attribution || item.title);
+                const supporting = Array.isArray(item.supporting_websites) ? item.supporting_websites : [];
+                supporting.forEach((site) => {
+                    if (!site || typeof site !== "object") return;
+                    pushLink(site.url, site.attribution || site.title);
+                });
+            });
+
+            if (!links.length) {
+                const safeUrls = Array.isArray(reference.safe_urls) ? reference.safe_urls : [];
+                safeUrls.forEach((url) => {
+                    pushLink(url, "");
+                });
+            }
+            return links;
+        };
+
+        const formatOpenAIReferenceMarkdown = (reference) => {
+            const links = buildOpenAIReferenceLinks(reference);
+            if (!links.length) return "";
+            return links.map((item) => `[${item.label}](<${item.url}>)`).join(" ");
+        };
+
+        const escapeOpenAIReferenceTokenForRegex = (value) => {
+            return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        };
+
+        const applyOpenAIContentReferences = (text, message) => {
+            const baseText = String(text || "");
+            if (!baseText.trim()) return "";
+            if (!message || typeof message !== "object") return baseText.trim();
+            const metadata = message.metadata && typeof message.metadata === "object" ? message.metadata : {};
+            const refs = Array.isArray(metadata.content_references) ? metadata.content_references : [];
+            if (!refs.length) return baseText.trim();
+
+            let output = baseText;
+            refs.forEach((reference) => {
+                if (!reference || typeof reference !== "object") return;
+                const token = asNonEmptyString(reference.matched_text);
+                if (!token) return;
+                const markdown = formatOpenAIReferenceMarkdown(reference);
+                const replacement = markdown ? ` ${markdown}` : "";
+                const tokenPattern = new RegExp(escapeOpenAIReferenceTokenForRegex(token), "g");
+                output = output.replace(tokenPattern, replacement);
+            });
+
+            // 清理未匹配到 content_references 的残留 cite token
+            output = output.replace(/cite[\s\S]*?/g, "");
+            return output.trim();
+        };
+
+        const collectOpenAIMessageSourceUrls = (message) => {
+            if (!message || typeof message !== "object") return [];
+            const metadata = message.metadata && typeof message.metadata === "object" ? message.metadata : {};
+            const urls = [];
+            const seen = new Set();
+            const pushUrl = (value) => {
+                const normalized = normalizeOpenAISourceUrl(value);
+                if (!normalized) return;
+                const key = normalized.toLowerCase();
+                if (seen.has(key)) return;
+                seen.add(key);
+                urls.push(normalized);
+            };
+
+            if (Array.isArray(metadata.citations)) {
+                metadata.citations.forEach((item) => {
+                    if (typeof item === "string") {
+                        pushUrl(item);
+                        return;
+                    }
+                    if (!item || typeof item !== "object") return;
+                    pushUrl(item.url);
+                    pushUrl(item.uri);
+                    pushUrl(item.link);
+                    pushUrl(item.source);
+                });
+            }
+
+            if (Array.isArray(metadata.search_result_groups)) {
+                metadata.search_result_groups.forEach((group) => {
+                    if (!group || typeof group !== "object") return;
+                    pushUrl(group.url);
+                    const entries = Array.isArray(group.entries) ? group.entries : [];
+                    entries.forEach((entry) => {
+                        if (!entry || typeof entry !== "object") return;
+                        pushUrl(entry.url);
+                        pushUrl(entry.link);
+                        pushUrl(entry.source);
+                    });
+                });
+            }
+
+            return urls;
+        };
+
+        const appendOpenAISourceMarkdown = (text, urls) => {
+            const baseText = String(text || "").trim();
+            if (!baseText) return "";
+            if (!Array.isArray(urls) || !urls.length) return baseText;
+            const links = urls.map((url, idx) => `[来源${idx + 1}](<${url}>)`).join(" ");
+            return `${baseText}\n\n${links}`;
+        };
+
         const extractOpenAIMessageModel = (message, fallbackModel) => {
             const metadata = message && message.metadata && typeof message.metadata === "object" ? message.metadata : {};
             const authorMeta = message && message.author && message.author.metadata && typeof message.author.metadata === "object"
@@ -5734,7 +5903,10 @@
                 const role = asNonEmptyString(message.author && message.author.role);
                 if (!["system", "user", "assistant"].includes(role)) return;
                 if (!shouldImportOpenAIMessage(message, role)) return;
-                const text = extractOpenAIMessageText(message.content);
+                const rawText = extractOpenAIMessageText(message.content);
+                const textWithInlineRefs = applyOpenAIContentReferences(rawText, message);
+                const sourceUrls = collectOpenAIMessageSourceUrls(message);
+                const text = textWithInlineRefs || appendOpenAISourceMarkdown(rawText, sourceUrls);
                 if (!text) return;
 
                 let assistantLabel = "";
