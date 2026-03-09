@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.0
+// @version      v16.1
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -42,6 +42,7 @@
     const DEFAULT_MODEL_PROVIDER = "zhipu";
     const PROVIDER_TEMPLATE_STORAGE_KEY = "coolauxv_provider_templates_v1";
     const PROVIDER_SECRET_STORAGE_KEY = "coolauxv_provider_custom_secrets_v1";
+    const LEGACY_PROVIDER_MIGRATION_FLAG = "coolauxv_legacy_provider_settings_migrated_v1";
     const PROVIDER_SHARE_VERSION = 1;
     const ACTION_TEMPLATE_STORAGE_KEY = "coolauxv_action_templates_v1";
     const ACTION_SHARE_VERSION = 1;
@@ -138,6 +139,10 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.1 更新日志
+        ## ✨ 新功能
+        *   支持导入ChatGPT的聊天记录了，目前已测试[这个插件](https://github.com/pionxzh/chatgpt-exporter)导出的json可用。
+        ---
         v16.0 更新日志
         ## ✨ 新功能
         *   首页按钮“翻译”、“解读”按钮解耦，可自定义、可新增可删除。
@@ -1253,8 +1258,11 @@
     };
 
     const migrateLegacyProviderSettings = (templates) => {
-        let changed = false;
         const list = templates || getProviderTemplates();
+        if (GM_getValue(LEGACY_PROVIDER_MIGRATION_FLAG, false)) {
+            return list;
+        }
+        let changed = false;
         list.forEach((tpl) => {
             if (tpl.id === "zhipu") {
                 const legacyKey = GM_getValue("coolauxv_zhipu_api_key", "") || GM_getValue("coolauxv_api_key", "");
@@ -1321,6 +1329,7 @@
         if (changed) {
             saveProviderTemplates(list);
         }
+        GM_setValue(LEGACY_PROVIDER_MIGRATION_FLAG, true);
         return list;
     };
 
@@ -5201,7 +5210,8 @@
             "coolauxv_zhipu_model_vision",
             "coolauxv_openai_model_name",
             "coolauxv_cnb_model_name",
-            "coolauxv_enable_exit_anim"
+            "coolauxv_enable_exit_anim",
+            LEGACY_PROVIDER_MIGRATION_FLAG
         ];
 
         const listAllStoredKeys = () => {
@@ -5535,21 +5545,243 @@
             return renamed;
         };
 
-        const parseChatHistoryImportPayload = (base64Input) => {
-            const raw = String(base64Input || "").trim();
+        const asNonEmptyString = (value) => {
+            if (value === undefined || value === null) return "";
+            return String(value).trim();
+        };
+
+        const pickFirstNonEmptyString = (...values) => {
+            for (let i = 0; i < values.length; i++) {
+                const normalized = asNonEmptyString(values[i]);
+                if (normalized) return normalized;
+            }
+            return "";
+        };
+
+        const formatImportedAssistantLabel = (providerId, modelName) => {
+            const providerText = asNonEmptyString(providerId);
+            const modelText = asNonEmptyString(modelName);
+            if (providerText && modelText) return `${providerText} ${modelText}`.trim();
+            return modelText || providerText;
+        };
+
+        const parseJsonOrBase64Payload = (inputText) => {
+            const raw = String(inputText || "").trim();
             if (!raw) return null;
-            let parsed = null;
+            try {
+                return JSON.parse(raw);
+            } catch (e) { }
             try {
                 const normalizedBase64 = raw.replace(/\s+/g, "");
-                parsed = JSON.parse(decodeBase64(normalizedBase64));
+                return JSON.parse(decodeBase64(normalizedBase64));
             } catch (e) {
                 return null;
             }
+        };
+
+        const extractOpenAITextFromPart = (part) => {
+            if (typeof part === "string") return part;
+            if (!part || typeof part !== "object") return "";
+            const partType = asNonEmptyString(part.type).toLowerCase();
+            if (partType && [
+                "search_query",
+                "search_result",
+                "tool_use",
+                "tool_result",
+                "reasoning",
+                "reasoning_recap",
+                "thought",
+                "thoughts",
+                "thinking",
+                "code"
+            ].includes(partType)) {
+                return "";
+            }
+            if (typeof part.text === "string") return part.text;
+            if (typeof part.content === "string") return part.content;
+            if (typeof part.output_text === "string") return part.output_text;
+            if (typeof part.value === "string" && (part.type === "text" || part.type === "output_text")) return part.value;
+            if (part.text && typeof part.text === "object") {
+                if (typeof part.text.value === "string") return part.text.value;
+                if (Array.isArray(part.text.parts)) {
+                    return part.text.parts.map((item) => extractOpenAITextFromPart(item)).filter(Boolean).join("");
+                }
+            }
+            if (Array.isArray(part.parts)) {
+                return part.parts.map((item) => extractOpenAITextFromPart(item)).filter(Boolean).join("");
+            }
+            if (Array.isArray(part.content)) {
+                return part.content.map((item) => extractOpenAITextFromPart(item)).filter(Boolean).join("");
+            }
+            return "";
+        };
+
+        const shouldImportOpenAIMessage = (message, role) => {
+            if (!message || typeof message !== "object") return false;
+            const metadata = message.metadata && typeof message.metadata === "object" ? message.metadata : {};
+            if (metadata.is_visually_hidden_from_conversation) return false;
+            const content = message.content && typeof message.content === "object" ? message.content : {};
+            const contentType = asNonEmptyString(content.content_type).toLowerCase();
+            if (contentType && contentType !== "text") return false;
+            if (role !== "assistant") return true;
+            const channel = asNonEmptyString(message.channel || metadata.channel).toLowerCase();
+            if (channel && channel !== "final") return false;
+            const recipient = asNonEmptyString(message.recipient).toLowerCase();
+            if (recipient && recipient !== "all") return false;
+            return true;
+        };
+
+        const extractOpenAIMessageText = (content) => {
+            if (typeof content === "string") return content.trim();
+            if (!content || typeof content !== "object") return "";
+            if (Array.isArray(content.parts)) {
+                return content.parts.map((part) => extractOpenAITextFromPart(part)).filter(Boolean).join("\n").trim();
+            }
+            if (Array.isArray(content.content)) {
+                return content.content.map((part) => extractOpenAITextFromPart(part)).filter(Boolean).join("\n").trim();
+            }
+            if (Array.isArray(content.items)) {
+                return content.items.map((part) => extractOpenAITextFromPart(part)).filter(Boolean).join("\n").trim();
+            }
+            if (typeof content.text === "string") return content.text.trim();
+            if (content.text && typeof content.text === "object") {
+                return extractOpenAITextFromPart(content.text).trim();
+            }
+            return "";
+        };
+
+        const extractOpenAIMessageModel = (message, fallbackModel) => {
+            const metadata = message && message.metadata && typeof message.metadata === "object" ? message.metadata : {};
+            const authorMeta = message && message.author && message.author.metadata && typeof message.author.metadata === "object"
+                ? message.author.metadata
+                : {};
+            return pickFirstNonEmptyString(
+                metadata.resolved_model_slug,
+                metadata.model_slug,
+                metadata.default_model_slug,
+                metadata.model,
+                metadata.model_id,
+                authorMeta.resolved_model_slug,
+                authorMeta.model_slug,
+                authorMeta.default_model_slug,
+                fallbackModel
+            );
+        };
+
+        const isOpenAIConversationObject = (value) => {
+            if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+            return !!(value.mapping && typeof value.mapping === "object");
+        };
+
+        const getOpenAIConversationSource = (parsed) => {
+            if (isOpenAIConversationObject(parsed)) return parsed;
+            if (parsed && typeof parsed === "object" && Array.isArray(parsed.conversations)) {
+                return parsed.conversations.find((item) => isOpenAIConversationObject(item)) || null;
+            }
+            if (Array.isArray(parsed)) {
+                return parsed.find((item) => isOpenAIConversationObject(item)) || null;
+            }
+            return null;
+        };
+
+        const parseOpenAIConversationPayload = (parsed) => {
+            const conversation = getOpenAIConversationSource(parsed);
+            if (!conversation) return null;
+            const mapping = conversation.mapping && typeof conversation.mapping === "object" ? conversation.mapping : null;
+            if (!mapping) return null;
+            let cursor = pickFirstNonEmptyString(conversation.current_node, conversation.currentNode);
+            if (!cursor) return null;
+
+            const branch = [];
+            const visited = new Set();
+            while (cursor && !visited.has(cursor)) {
+                visited.add(cursor);
+                const node = mapping[cursor];
+                if (!node || typeof node !== "object") break;
+                branch.push(node);
+                cursor = asNonEmptyString(node.parent);
+            }
+            if (!branch.length) return null;
+            branch.reverse();
+
+            const sessionId = pickFirstNonEmptyString(conversation.conversation_id, conversation.id);
+            const title = pickFirstNonEmptyString(
+                conversation.title,
+                conversation.name,
+                conversation.chatName,
+                conversation.topic
+            );
+            const providerId = pickFirstNonEmptyString(
+                conversation.chatProvider,
+                conversation.providerId,
+                conversation.provider,
+                "openai"
+            );
+            const defaultModel = pickFirstNonEmptyString(
+                conversation.default_model_slug,
+                conversation.model_slug,
+                conversation.modelName,
+                conversation.model
+            );
+
+            const records = [];
+            let systemPrompt = "";
+            let latestModel = defaultModel;
+
+            branch.forEach((node) => {
+                const message = node && node.message && typeof node.message === "object" ? node.message : null;
+                if (!message) return;
+                const role = asNonEmptyString(message.author && message.author.role);
+                if (!["system", "user", "assistant"].includes(role)) return;
+                if (!shouldImportOpenAIMessage(message, role)) return;
+                const text = extractOpenAIMessageText(message.content);
+                if (!text) return;
+
+                let assistantLabel = "";
+                if (role === "assistant") {
+                    const modelName = extractOpenAIMessageModel(message, latestModel);
+                    if (modelName) latestModel = modelName;
+                    assistantLabel = formatImportedAssistantLabel(providerId, modelName);
+                } else if (role === "system" && !systemPrompt) {
+                    systemPrompt = text;
+                }
+
+                const normalizedRecord = normalizeChatHistoryRecord({
+                    role: role,
+                    text: text,
+                    assistantLabel: assistantLabel
+                });
+                if (normalizedRecord) records.push(normalizedRecord);
+            });
+
+            if (!records.length) return null;
+            const modelName = latestModel || defaultModel;
+            return {
+                records: records,
+                providerId: providerId,
+                sessionId: sessionId,
+                title: asNonEmptyString(title),
+                systemPrompt: systemPrompt,
+                assistantLabel: formatImportedAssistantLabel(providerId, modelName),
+                modelName: modelName
+            };
+        };
+
+        const parseChatHistoryImportPayload = (inputText) => {
+            const raw = String(inputText || "").trim();
+            if (!raw) return null;
+            const parsed = parseJsonOrBase64Payload(raw);
+            if (!parsed) return null;
+            const openaiPayload = parseOpenAIConversationPayload(parsed);
+            if (openaiPayload) return openaiPayload;
+
             let recordsSource = null;
             let providerId = "";
             let sessionId = "";
+            let title = "";
             let systemPrompt = "";
             let assistantLabel = "";
+            let modelName = "";
 
             if (Array.isArray(parsed)) {
                 recordsSource = parsed;
@@ -5563,24 +5795,36 @@
                 sessionId = typeof parsed.chatSessionId === "string"
                     ? parsed.chatSessionId
                     : (typeof parsed.sessionId === "string" ? parsed.sessionId : "");
+                title = pickFirstNonEmptyString(parsed.title, parsed.chatName, parsed.customTitle, parsed.name);
                 systemPrompt = typeof parsed.chatSystemPrompt === "string"
                     ? parsed.chatSystemPrompt
                     : (typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "");
                 assistantLabel = typeof parsed.chatAssistantLabel === "string"
                     ? parsed.chatAssistantLabel
                     : (typeof parsed.assistantLabel === "string" ? parsed.assistantLabel : "");
+                modelName = pickFirstNonEmptyString(parsed.chatModel, parsed.modelName, parsed.model, parsed.default_model_slug);
             }
 
             if (!Array.isArray(recordsSource)) return null;
+            const normalizedProviderId = asNonEmptyString(providerId);
+            const normalizedModelName = asNonEmptyString(modelName);
+            const normalizedAssistantLabel = asNonEmptyString(assistantLabel)
+                || formatImportedAssistantLabel(normalizedProviderId, normalizedModelName);
             const records = recordsSource
                 .map((record) => normalizeChatHistoryRecord(record))
-                .filter(Boolean);
+                .filter(Boolean)
+                .map((record) => {
+                    if (record.role !== "assistant" || record.assistantLabel || !normalizedAssistantLabel) return record;
+                    return Object.assign({}, record, { assistantLabel: normalizedAssistantLabel });
+                });
             return {
                 records: records,
-                providerId: providerId,
-                sessionId: sessionId,
-                systemPrompt: systemPrompt,
-                assistantLabel: assistantLabel
+                providerId: normalizedProviderId,
+                sessionId: asNonEmptyString(sessionId),
+                title: asNonEmptyString(title),
+                systemPrompt: asNonEmptyString(systemPrompt),
+                assistantLabel: normalizedAssistantLabel,
+                modelName: normalizedModelName
             };
         };
 
@@ -5607,18 +5851,28 @@
             const importedHasRecords = chatHistoryRecords.length > 0;
             const templates = getProviderTemplates();
             const config = getActiveConfig();
-            const resolvedProvider = resolveProviderId(parsedPayload.providerId || config.provider || DEFAULT_PROVIDER, templates);
-            chatProvider = importedHasRecords ? resolvedProvider : "";
+            const importedProviderId = asNonEmptyString(parsedPayload.providerId);
+            const importedModelName = asNonEmptyString(parsedPayload.modelName);
+            const resolvedProvider = resolveProviderId(importedProviderId || config.provider || DEFAULT_PROVIDER, templates);
+            chatProvider = importedHasRecords ? (importedProviderId || resolvedProvider) : "";
             chatSessionStarted = importedHasRecords;
             chatSessionId = importedHasRecords
                 ? (parsedPayload.sessionId || generateRequestId())
                 : "";
             chatSystemPrompt = parsedPayload.systemPrompt || "";
-            chatAssistantLabel = parsedPayload.assistantLabel || formatChatModelLabel(resolvedProvider, config.modelVision);
+            const importedAssistantLabel = asNonEmptyString(parsedPayload.assistantLabel)
+                || formatImportedAssistantLabel(chatProvider || resolvedProvider, importedModelName);
+            chatAssistantLabel = importedAssistantLabel || formatChatModelLabel(resolvedProvider, config.modelVision);
+            if (chatAssistantLabel) {
+                chatHistoryRecords = chatHistoryRecords.map((record) => {
+                    if (!record || record.role !== "assistant" || record.assistantLabel) return record;
+                    return Object.assign({}, record, { assistantLabel: chatAssistantLabel });
+                });
+            }
 
             if (importedHasRecords) {
                 rebuildChatDisplayFromHistory(chatAssistantLabel);
-                chatMessages = buildChatMessagesForProvider(chatProvider);
+                chatMessages = buildChatMessagesForProvider(resolvedProvider);
                 streamMode = "chat";
             } else {
                 chatMessages = [];
@@ -5900,17 +6154,28 @@
         };
 
         const importChatHistoryFromText = (base64Text) => {
-            const parsed = parseChatHistoryImportPayload(base64Text);
-            if (!parsed) {
-                alert("聊天记录格式无效，请确认 Base64 内容正确。");
+            const parsedItems = parseChatQueueImportItems(base64Text);
+            if (!parsedItems.length) {
+                alert("聊天记录格式无效，请确认 JSON 或 Base64 内容正确。");
                 return false;
             }
-            const applied = applyImportedChatHistory(parsed);
-            if (applied) {
-                alert("聊天记录已导入。");
-                return true;
+            let persistenceAutoEnabled = false;
+            if (!isChatHistoryQueuePersistenceEnabled()) {
+                GM_setValue("coolauxv_chat_history_persist", true);
+                chatQueuePersistBootstrapped = false;
+                persistenceAutoEnabled = true;
             }
-            return false;
+            const importedCount = importChatQueueItems(parsedItems);
+            if (!importedCount) {
+                alert("聊天记录导入失败，请稍后重试。");
+                return false;
+            }
+            if (persistenceAutoEnabled) {
+                alert(`已导入 ${importedCount} 条聊天记录到已保存会话，并自动开启本地持久化。`);
+            } else {
+                alert(`已导入 ${importedCount} 条聊天记录到已保存会话。`);
+            }
+            return true;
         };
 
         const openChatHistoryExportModal = (base64Text, payload) => {
@@ -6138,13 +6403,14 @@
                     <button type="button" id="coolauxv-chat-history-import-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
                 </div>
                 <div style="display:flex; flex-direction:column; gap:8px; flex:1;">
-                    <div class="coolauxv-sub-label">粘贴 Base64 文本，或选择 .auv 文件</div>
+                    <div class="coolauxv-sub-label">粘贴 JSON / Base64 文本，或选择 .auv / .json 文件</div>
                     <textarea id="coolauxv-chat-history-import-text" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="粘贴导入内容..." spellcheck="false"></textarea>
-                    <div style="font-size:11px; color:#888;">支持聊天记录导出的 Base64 文本。</div>
+                    <div style="font-size:11px; color:#888;">支持聊天记录导出的 Base64，也支持 OpenAI 官方导出 JSON。导入后会保存到后台已保存会话。</div>
                 </div>
-                <div style="display:flex; gap:10px; margin-top:12px;">
-                    <button type="button" id="coolauxv-chat-history-import-file" class="coolauxv-action-btn" style="flex:1;">选择 .auv</button>
-                    <button type="button" id="coolauxv-chat-history-import-submit" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">导入</button>
+                <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
+                    <button type="button" id="coolauxv-chat-history-import-exporter-link" class="coolauxv-action-btn" style="flex:1;">支持格式导出插件</button>
+                    <button type="button" id="coolauxv-chat-history-import-file" class="coolauxv-action-btn" style="flex:1;">选择 .auv/.json</button>
+                    <button type="button" id="coolauxv-chat-history-import-submit" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">导入到已保存会话</button>
                 </div>
             `;
 
@@ -6169,16 +6435,22 @@
             document.addEventListener("keydown", onEsc);
 
             const inputEl = box.querySelector("#coolauxv-chat-history-import-text");
+            const exporterLinkBtn = box.querySelector("#coolauxv-chat-history-import-exporter-link");
             const fileBtn = box.querySelector("#coolauxv-chat-history-import-file");
             const submitBtn = box.querySelector("#coolauxv-chat-history-import-submit");
             const closeBtn = box.querySelector("#coolauxv-chat-history-import-close");
             if (inputEl) setTimeout(() => inputEl.focus(), 0);
 
+            if (exporterLinkBtn) {
+                exporterLinkBtn.addEventListener("click", () => {
+                    window.open("https://github.com/pionxzh/chatgpt-exporter", "_blank", "noopener,noreferrer");
+                });
+            }
             if (fileBtn) {
                 fileBtn.addEventListener("click", () => {
                     const fileInput = document.createElement("input");
                     fileInput.type = "file";
-                    fileInput.accept = ".auv,text/plain";
+                    fileInput.accept = ".auv,.json,text/plain,application/json";
                     fileInput.addEventListener("change", async () => {
                         const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
                         if (!file) return;
@@ -6189,7 +6461,7 @@
                                 inputEl.focus();
                             }
                         } catch (e) {
-                            alert("读取 .auv 文件失败，请重试。");
+                            alert("读取文件失败，请重试。");
                         }
                     }, { once: true });
                     fileInput.click();
@@ -6199,7 +6471,7 @@
                 submitBtn.addEventListener("click", () => {
                     const text = inputEl ? String(inputEl.value || "").trim() : "";
                     if (!text) {
-                        alert("请先粘贴 Base64 文本或选择 .auv 文件。");
+                        alert("请先粘贴 JSON/Base64 文本或选择 .auv/.json 文件。");
                         return;
                     }
                     const imported = importChatHistoryFromText(text);
@@ -6416,10 +6688,11 @@
                 chatHistoryRecords: fallbackHistory.records || []
             });
             if (!historyPayload) return [];
+            const importedTitle = asNonEmptyString(fallbackHistory.title);
             const queueItem = normalizeChatQueueItem({
                 id: historyPayload.chatSessionId || `queue-${generateRequestId()}`,
                 updatedAt: new Date().toISOString(),
-                title: formatChatQueueTitle(historyPayload),
+                title: importedTitle || formatChatQueueTitle(historyPayload),
                 payload: historyPayload
             });
             return queueItem ? [queueItem] : [];
@@ -7319,6 +7592,10 @@
                     }
                 }
             }
+            let importedChatQueue = null;
+            if (Object.prototype.hasOwnProperty.call(payload, CHAT_QUEUE_STORAGE_KEY)) {
+                importedChatQueue = normalizeChatQueueList(payload[CHAT_QUEUE_STORAGE_KEY]);
+            }
             CONFIG_KEYS.forEach((key) => {
                 if (Object.prototype.hasOwnProperty.call(payload, key)) {
                     const value = payload[key];
@@ -7331,6 +7608,15 @@
                     GM_deleteValue(key);
                 }
             });
+            if (importedChatQueue !== null) {
+                if (importedChatQueue.length) {
+                    savePersistentChatQueue(importedChatQueue);
+                } else {
+                    GM_deleteValue(CHAT_QUEUE_STORAGE_KEY);
+                }
+                chatBackgroundQueue = importedChatQueue.slice(0, CHAT_QUEUE_MAX_SIZE);
+                chatQueuePersistBootstrapped = true;
+            }
             providerTemplatesCache = null;
             actionTemplatesCache = null;
             migrateLegacyProviderSettings(loadProviderTemplates());
@@ -7375,6 +7661,23 @@
             else GM_deleteValue(key);
             if (!val && key === "coolauxv_zhipu_api_key") {
                 GM_deleteValue("coolauxv_api_key");
+            }
+        };
+        const clearLegacyProviderValueIfNeeded = (providerId, field, value) => {
+            const trimmed = String(value === undefined || value === null ? "" : value).trim();
+            if (field === "apiKey" && !trimmed) {
+                if (providerId === "zhipu") {
+                    GM_deleteValue("coolauxv_zhipu_api_key");
+                    GM_deleteValue("coolauxv_api_key");
+                } else if (providerId === "openai") {
+                    GM_deleteValue("coolauxv_openai_api_key");
+                } else if (providerId === "cnb") {
+                    GM_deleteValue("coolauxv_cnb_api_key");
+                }
+                return;
+            }
+            if (providerId === "cnb" && field === "customFields.repo" && !trimmed) {
+                GM_deleteValue("coolauxv_cnb_repo");
             }
         };
         const providerSectionStates = new Map();
@@ -9602,11 +9905,13 @@
                     updateProviderSecretField(tpl.id, key, "");
                     tpl.customFields = normalizeCustomFields(tpl.customFields);
                     tpl.customFields[key] = target.value;
+                    clearLegacyProviderValueIfNeeded(tpl.id, `customFields.${key}`, target.value);
                     saveProviderTemplates(templates);
                     return;
                 }
 
                 tpl[field] = target.value;
+                clearLegacyProviderValueIfNeeded(tpl.id, field, target.value);
                 saveProviderTemplates(templates);
             });
 
@@ -9652,10 +9957,12 @@
                     updateProviderSecretField(tpl.id, key, "");
                     tpl.customFields = normalizeCustomFields(tpl.customFields);
                     tpl.customFields[key] = target.value;
+                    clearLegacyProviderValueIfNeeded(tpl.id, `customFields.${key}`, target.value);
                     saveProviderTemplates(templates);
                     return;
                 }
                 tpl[field] = target.value;
+                clearLegacyProviderValueIfNeeded(tpl.id, field, target.value);
                 saveProviderTemplates(templates);
             });
         }
@@ -10535,9 +10842,21 @@
             renderMainActionButtons();
         };
 
-        const buildExportSnapshot = (includePrivacy) => {
+        const buildExportSnapshot = (includePrivacy, includeChatRecords) => {
             const snapshot = snapshotConfig();
-            delete snapshot[CHAT_QUEUE_STORAGE_KEY];
+            if (includeChatRecords) {
+                const queueSnapshot = mergeChatQueueLists(
+                    normalizeChatQueueList(chatBackgroundQueue),
+                    loadPersistentChatQueue()
+                ).slice(0, CHAT_QUEUE_MAX_SIZE);
+                if (queueSnapshot.length) {
+                    snapshot[CHAT_QUEUE_STORAGE_KEY] = queueSnapshot;
+                } else {
+                    delete snapshot[CHAT_QUEUE_STORAGE_KEY];
+                }
+            } else {
+                delete snapshot[CHAT_QUEUE_STORAGE_KEY];
+            }
             const rawTemplates = snapshot[PROVIDER_TEMPLATE_STORAGE_KEY];
             const rawActionTemplates = snapshot[ACTION_TEMPLATE_STORAGE_KEY];
             if (Array.isArray(rawActionTemplates) && rawActionTemplates.every((item) => typeof item === "string")) {
@@ -10580,38 +10899,267 @@
             return snapshot;
         };
 
+        const openConfigExportOptionsModal = (onSubmit) => {
+            const existingOverlay = document.getElementById("coolauxv-config-export-modal-overlay");
+            if (existingOverlay && existingOverlay.parentNode) {
+                existingOverlay.parentNode.removeChild(existingOverlay);
+            }
+
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-config-export-modal-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0, 0, 0, 0.5)",
+                zIndex: "2147483661",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backdropFilter: "blur(4px)",
+                opacity: "0",
+                transition: "opacity 0.2s"
+            });
+
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff",
+                width: "480px",
+                maxWidth: "92%",
+                maxHeight: "88vh",
+                display: "flex",
+                flexDirection: "column",
+                padding: "18px",
+                borderRadius: "12px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+                transform: "scale(0.96)",
+                transition: "transform 0.2s",
+                overflow: "hidden"
+            });
+
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+                    <div style="font-size:18px; font-weight:800; color:#a516e8;">⬇️ 导出配置</div>
+                    <button type="button" id="coolauxv-config-export-modal-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:10px; flex:1;">
+                    <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; color:#333;">
+                        <input type="checkbox" id="coolauxv-config-export-include-privacy" checked style="margin-top:2px;">
+                        <span>敏感信息（API Key、打码字段等）</span>
+                    </label>
+                    <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; color:#333;">
+                        <input type="checkbox" id="coolauxv-config-export-include-chat-records" style="margin-top:2px;">
+                        <span>所有聊天记录（后台已保存会话）</span>
+                    </label>
+                    <div style="font-size:11px; color:#888; line-height:1.5;">
+                        未勾选敏感信息时，会自动清空 Key 等隐私字段。
+                    </div>
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                    <button type="button" id="coolauxv-config-export-cancel" class="coolauxv-action-btn" style="flex:1;">取消</button>
+                    <button type="button" id="coolauxv-config-export-submit" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">导出</button>
+                </div>
+            `;
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => {
+                overlay.style.opacity = "1";
+                box.style.transform = "scale(1)";
+            });
+
+            const closeModal = () => {
+                document.removeEventListener("keydown", onEsc);
+                overlay.style.opacity = "0";
+                box.style.transform = "scale(0.96)";
+                setTimeout(() => {
+                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                }, 200);
+            };
+
+            const onEsc = (e) => {
+                if (e.key === "Escape") closeModal();
+            };
+            document.addEventListener("keydown", onEsc);
+
+            const privacyCheckbox = box.querySelector("#coolauxv-config-export-include-privacy");
+            const chatRecordsCheckbox = box.querySelector("#coolauxv-config-export-include-chat-records");
+            const submitBtn = box.querySelector("#coolauxv-config-export-submit");
+            const closeBtn = box.querySelector("#coolauxv-config-export-modal-close");
+            const cancelBtn = box.querySelector("#coolauxv-config-export-cancel");
+
+            if (submitBtn) {
+                submitBtn.addEventListener("click", () => {
+                    const includePrivacy = !!(privacyCheckbox && privacyCheckbox.checked);
+                    const includeChatRecords = !!(chatRecordsCheckbox && chatRecordsCheckbox.checked);
+                    closeModal();
+                    if (typeof onSubmit === "function") {
+                        onSubmit({ includePrivacy: includePrivacy, includeChatRecords: includeChatRecords });
+                    }
+                });
+            }
+            if (closeBtn) closeBtn.addEventListener("click", closeModal);
+            if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeModal();
+            });
+        };
+
+        const openConfigExportPayloadModal = (payload) => {
+            const existingOverlay = document.getElementById("coolauxv-config-export-payload-modal-overlay");
+            if (existingOverlay && existingOverlay.parentNode) {
+                existingOverlay.parentNode.removeChild(existingOverlay);
+            }
+
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-config-export-payload-modal-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                width: "100vw",
+                height: "100vh",
+                background: "rgba(0, 0, 0, 0.5)",
+                zIndex: "2147483661",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backdropFilter: "blur(4px)",
+                opacity: "0",
+                transition: "opacity 0.2s"
+            });
+
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff",
+                width: "560px",
+                maxWidth: "92%",
+                maxHeight: "88vh",
+                display: "flex",
+                flexDirection: "column",
+                padding: "18px",
+                borderRadius: "12px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.3)",
+                transform: "scale(0.96)",
+                transition: "transform 0.2s",
+                overflow: "hidden"
+            });
+
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+                    <div style="font-size:18px; font-weight:800; color:#a516e8;">📋 手动复制配置</div>
+                    <button type="button" id="coolauxv-config-export-payload-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
+                </div>
+                <div style="font-size:12px; color:#666; margin-bottom:8px;">剪贴板写入失败，请手动复制以下 Base64 文本。</div>
+                <textarea id="coolauxv-config-export-payload-input" class="coolauxv-setting-input coolauxv-resizable-input" rows="6" readonly></textarea>
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                    <button type="button" id="coolauxv-config-export-payload-copy" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">复制</button>
+                    <button type="button" id="coolauxv-config-export-payload-ok" class="coolauxv-action-btn" style="flex:1;">关闭</button>
+                </div>
+            `;
+
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => {
+                overlay.style.opacity = "1";
+                box.style.transform = "scale(1)";
+            });
+
+            const closeModal = () => {
+                document.removeEventListener("keydown", onEsc);
+                overlay.style.opacity = "0";
+                box.style.transform = "scale(0.96)";
+                setTimeout(() => {
+                    if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+                }, 200);
+            };
+            const onEsc = (e) => {
+                if (e.key === "Escape") closeModal();
+            };
+            document.addEventListener("keydown", onEsc);
+
+            const inputEl = box.querySelector("#coolauxv-config-export-payload-input");
+            const copyBtn = box.querySelector("#coolauxv-config-export-payload-copy");
+            const closeBtn = box.querySelector("#coolauxv-config-export-payload-close");
+            const okBtn = box.querySelector("#coolauxv-config-export-payload-ok");
+
+            if (inputEl) {
+                inputEl.value = payload;
+                setTimeout(() => {
+                    inputEl.focus();
+                    inputEl.select();
+                }, 0);
+            }
+            if (copyBtn) {
+                copyBtn.addEventListener("click", () => {
+                    if (typeof GM_setClipboard !== "undefined") {
+                        GM_setClipboard(payload, "text");
+                        showModal("导出成功", "配置已导出并复制到剪贴板。");
+                        closeModal();
+                        return;
+                    }
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(payload)
+                            .then(() => {
+                                showModal("导出成功", "配置已导出并复制到剪贴板。");
+                                closeModal();
+                            })
+                            .catch(() => {
+                                if (inputEl) {
+                                    inputEl.focus();
+                                    inputEl.select();
+                                }
+                            });
+                        return;
+                    }
+                    if (inputEl) {
+                        inputEl.focus();
+                        inputEl.select();
+                    }
+                });
+            }
+            if (closeBtn) closeBtn.addEventListener("click", closeModal);
+            if (okBtn) okBtn.addEventListener("click", closeModal);
+            overlay.addEventListener("click", (e) => {
+                if (e.target === overlay) closeModal();
+            });
+        };
+
         const exportConfig = () => {
-            const includePrivacy = confirm("导出配置是否包含隐私信息（如 API KEY、打码字段）？\n确定=包含，取消=不包含");
-            const snapshot = buildExportSnapshot(includePrivacy);
-            if (Array.isArray(snapshot[PROVIDER_TEMPLATE_STORAGE_KEY])) {
-                snapshot[PROVIDER_TEMPLATE_STORAGE_KEY] = snapshot[PROVIDER_TEMPLATE_STORAGE_KEY]
-                    .map((tpl) => compactProviderTemplate(tpl));
-            }
-            if (Array.isArray(snapshot[ACTION_TEMPLATE_STORAGE_KEY])) {
-                const cleaned = snapshot[ACTION_TEMPLATE_STORAGE_KEY].map((item) => String(item || "").trim()).filter(Boolean);
-                if (cleaned.length) snapshot[ACTION_TEMPLATE_STORAGE_KEY] = cleaned;
-                else delete snapshot[ACTION_TEMPLATE_STORAGE_KEY];
-            }
-            const compacted = pruneEmptyValues(compactConfigSnapshot(snapshot));
-            const payload = encodeBase64(JSON.stringify(compacted));
-            if (!payload) {
-                alert("导出失败，请稍后重试。");
-                return;
-            }
-            if (typeof GM_setClipboard !== "undefined") {
-                GM_setClipboard(payload, "text");
-                alert("配置已导出并复制到剪贴板。");
-                return;
-            }
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                navigator.clipboard.writeText(payload)
-                    .then(() => alert("配置已导出并复制到剪贴板。"))
-                    .catch(() => {
-                        prompt("配置已导出，请复制以下文本：", payload);
-                    });
-                return;
-            }
-            prompt("配置已导出，请复制以下文本：", payload);
+            openConfigExportOptionsModal(({ includePrivacy, includeChatRecords }) => {
+                const snapshot = buildExportSnapshot(includePrivacy, includeChatRecords);
+                if (Array.isArray(snapshot[PROVIDER_TEMPLATE_STORAGE_KEY])) {
+                    snapshot[PROVIDER_TEMPLATE_STORAGE_KEY] = snapshot[PROVIDER_TEMPLATE_STORAGE_KEY]
+                        .map((tpl) => compactProviderTemplate(tpl));
+                }
+                if (Array.isArray(snapshot[ACTION_TEMPLATE_STORAGE_KEY])) {
+                    const cleaned = snapshot[ACTION_TEMPLATE_STORAGE_KEY].map((item) => String(item || "").trim()).filter(Boolean);
+                    if (cleaned.length) snapshot[ACTION_TEMPLATE_STORAGE_KEY] = cleaned;
+                    else delete snapshot[ACTION_TEMPLATE_STORAGE_KEY];
+                }
+                const compacted = pruneEmptyValues(compactConfigSnapshot(snapshot));
+                const payload = encodeBase64(JSON.stringify(compacted));
+                if (!payload) {
+                    showModal("导出失败", "导出失败，请稍后重试。");
+                    return;
+                }
+                if (typeof GM_setClipboard !== "undefined") {
+                    GM_setClipboard(payload, "text");
+                    showModal("导出成功", "配置已导出并复制到剪贴板。");
+                    return;
+                }
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(payload)
+                        .then(() => showModal("导出成功", "配置已导出并复制到剪贴板。"))
+                        .catch(() => {
+                            openConfigExportPayloadModal(payload);
+                        });
+                    return;
+                }
+                openConfigExportPayloadModal(payload);
+            });
         };
 
         const openConfigImportModal = (onSubmit) => {

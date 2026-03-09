@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CoolAuxv 网页翻译与阅读助手",
-  "version": "16.0",
+  "version": "16.1",
   "description": "网页翻译与阅读助手（Chromium 类浏览器扩展版，基于 CoolAuxv 用户脚本）。",
   "permissions": ["clipboardWrite", "storage", "tabs", "webNavigation", "webRequest", "declarativeNetRequest", "declarativeNetRequestWithHostAccess"],
   "host_permissions": ["<all_urls>"],
