@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.1.1
+// @version      v16.1.2
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -140,6 +140,11 @@
 
     const LATEST_CHANGELOG = `
         v16.1.2 更新日志
+        ## 🐛 问题修复
+        *   修复导入聊天记录后自动开启聊天记录持久化
+        *   修复聊天记录持久化按钮不勾选时不能管理聊天记录
+        ---
+        v16.1.1 更新日志
         ## 🐛 问题修复
         *   修复导入ChatGPT聊天记录的时候不会导入引用信息
         ---
@@ -5455,10 +5460,6 @@
         let chatQueuePersistBootstrapped = false;
 
         const syncChatQueueFromPersistentStore = () => {
-            if (!isChatHistoryQueuePersistenceEnabled()) {
-                chatQueuePersistBootstrapped = false;
-                return chatBackgroundQueue;
-            }
             const globalQueue = loadPersistentChatQueue();
             if (!chatQueuePersistBootstrapped && chatBackgroundQueue.length) {
                 chatBackgroundQueue = normalizeChatQueueList(chatBackgroundQueue.concat(globalQueue)).slice(0, CHAT_QUEUE_MAX_SIZE);
@@ -5471,10 +5472,6 @@
         };
 
         const persistChatQueueToGlobalStore = () => {
-            if (!isChatHistoryQueuePersistenceEnabled()) {
-                chatQueuePersistBootstrapped = false;
-                return;
-            }
             chatBackgroundQueue = normalizeChatQueueList(chatBackgroundQueue).slice(0, CHAT_QUEUE_MAX_SIZE);
             savePersistentChatQueue(chatBackgroundQueue);
             chatQueuePersistBootstrapped = true;
@@ -6331,22 +6328,12 @@
                 alert("聊天记录格式无效，请确认 JSON 或 Base64 内容正确。");
                 return false;
             }
-            let persistenceAutoEnabled = false;
-            if (!isChatHistoryQueuePersistenceEnabled()) {
-                GM_setValue("coolauxv_chat_history_persist", true);
-                chatQueuePersistBootstrapped = false;
-                persistenceAutoEnabled = true;
-            }
             const importedCount = importChatQueueItems(parsedItems);
             if (!importedCount) {
                 alert("聊天记录导入失败，请稍后重试。");
                 return false;
             }
-            if (persistenceAutoEnabled) {
-                alert(`已导入 ${importedCount} 条聊天记录到已保存会话，并自动开启本地持久化。`);
-            } else {
-                alert(`已导入 ${importedCount} 条聊天记录到已保存会话。`);
-            }
+            alert(`已导入 ${importedCount} 条聊天记录到已保存会话。`);
             return true;
         };
 
@@ -7412,7 +7399,6 @@
 
         queueCurrentChatSessionToBackground = () => {
             if (!isChatHistoryQueueFeatureEnabled()) return false;
-            if (!isChatHistoryQueuePersistenceEnabled()) return false;
             const payload = buildChatHistoryExportPayload();
             if (!payload) return false;
             const queued = enqueueChatPayloadToQueue(payload, { createdAt: new Date().toISOString() });
@@ -11479,11 +11465,6 @@
             inputChatHistoryPersist.addEventListener("change", (e) => {
                 const enabled = e.target.checked;
                 GM_setValue("coolauxv_chat_history_persist", enabled);
-                if (enabled) {
-                    chatQueuePersistBootstrapped = false;
-                    syncChatQueueFromPersistentStore();
-                    persistChatQueueToGlobalStore();
-                }
                 toggleContinuousChat(GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT));
             });
         }
@@ -11492,12 +11473,8 @@
                 if (!confirm("确定要清空所有持久化聊天记录吗？")) return;
                 if (!confirm("该操作不可恢复。是否继续？")) return;
                 GM_deleteValue(CHAT_QUEUE_STORAGE_KEY);
-                if (GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST)) {
-                    chatBackgroundQueue = [];
-                    chatQueuePersistBootstrapped = true;
-                } else {
-                    chatQueuePersistBootstrapped = false;
-                }
+                chatBackgroundQueue = [];
+                chatQueuePersistBootstrapped = true;
                 alert("已清空持久化聊天记录。");
             });
         }
