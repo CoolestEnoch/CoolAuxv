@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.1.2
+// @version      v16.1.3
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -139,6 +139,10 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.1.3 更新日志
+        ## 🐛 问题修复
+        *   修复不勾选聊天记录持久化也会保存聊天记录
+        ---
         v16.1.2 更新日志
         ## 🐛 问题修复
         *   修复导入聊天记录后自动开启聊天记录持久化
@@ -7399,6 +7403,7 @@
 
         queueCurrentChatSessionToBackground = () => {
             if (!isChatHistoryQueueFeatureEnabled()) return false;
+            if (!isChatHistoryQueuePersistenceEnabled()) return false;
             const payload = buildChatHistoryExportPayload();
             if (!payload) return false;
             const queued = enqueueChatPayloadToQueue(payload, { createdAt: new Date().toISOString() });
