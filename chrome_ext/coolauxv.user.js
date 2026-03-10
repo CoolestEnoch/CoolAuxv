@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.1.3
+// @version      v16.2
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -135,21 +135,37 @@
 
     const DEFAULT_ACTION_TEMPLATE_BASE64_LIST = [
         "eyJpZCI6InRyYW5zbGF0ZSIsImxhYmVsIjoi57+76K+RIiwic3lzdGVtUHJvbXB0Ijoi5L2g5piv5LiA5Liq57+76K+R5byV5pOO44CC5bCG55So5oi36L6T5YWl55u05o6l57+76K+R5oiQ5Lit5paH44CC5aaC5p6c6L6T5YWl5piv5Lit5paH5YiZ6K+R5Li66Iux5paH44CC5LiN6KaB6L6T5Ye65Lu75L2V5aSa5L2Z55qE6Kej6YeK44CCIiwiY29sb3IiOiJyZ2IoMjQ5LCAyNTAsIDI1MSkiLCJ2aXNpb25Qcm9tcHRPcmRlciI6ImFmdGVyIn0=",
-        "eyJpZCI6ImV4cGxhaW4iLCJsYWJlbCI6Iuino+ivuyIsInN5c3RlbVByb21wdCI6IueUqOaIt+i+k+WFpeaWh+acrOWQju+8jOWFiOe/u+ivkeWFqOaWh++8muiLpemdnuS4reaWh+ivkeaIkOS4reaWh++8jOiLpeaYr+S4reaWh+ivkeaIkOiLseaWh++8jOS4uuiLseaWh+eugOWGmeeUqOaLrOWPt+agh+azqOWujOaVtOWGmeazleOAgueUqOaIt+aYr+i/meS4qumihuWfn+eahOaWsOaJi++8jOS9oOaYr+i/meS4qumihuWfn+eahOi1hOa3seS4k+WutuWFvOWkp+W4iO+8jOeEtuWQjuivpue7huino+ivu++8mueUqOmAmuS/l+S4reaWh+ino+mHiuaJgOacieS4k+S4muamguW/te+8jOavj+S4quamguW/teino+mHiuWJjeWFiOaYjuehruagh+azqOWOn+acr+ivre+8iOiLseaWh+eugOWGmemcgOWQjOaXtue7meWHuuWFqOensO+8iSzlpoLmnpzmnInlhazlvI/vvIzor7fnlKhsYXRleOagvOW8j+i+k+WHuuOAguino+ivu+imgeivpue7huWFqOmdou+8jOa2teebluWumuS5ieOAgeiDjOaZr+OAgeWOn+eQhuOAgeW6lOeUqOWSjOaEj+S5ieOAgui+k+WHuuS4uuaOkueJiOS4sOWvjOeahE1hcmtkb3du77yM6Zmk57+76K+R5aSW5YWo5paH6YO955So5Lit5paH5Zue562U77yM5LiN5YWB6K645oqK5YWo5paH6YO95pS+5ZyoY29kZWJsb2Nr6YeM44CCIiwiY29sb3IiOiJyZ2IoMTA5LCA0MCwgMjE3KSIsInZpc2lvblByb21wdE9yZGVyIjoiYmVmb3JlIn0="
+        "eyJpZCI6ImV4cGxhaW4iLCJsYWJlbCI6Iuino+ivuyIsInN5c3RlbVByb21wdCI6IueUqOaIt+i+k+WFpeaWh+acrOWQju+8jOWFiOe/u+ivkeWFqOaWh++8muiLpemdnuS4reaWh+ivkeaIkOS4reaWh++8jOiLpeaYr+S4reaWh+ivkeaIkOiLseaWh++8jOS4uuiLseaWh+eugOWGmeeUqOaLrOWPt+agh+azqOWujOaVtOWGmeazleOAgueUqOaIt+aYr+i/meS4qumihuWfn+eahOaWsOaJi++8jOS9oOaYr+i/meS4qumihuWfn+eahOi1hOa3seS4k+WutuWFvOWkp+W4iO+8jOeEtuWQjuivpue7huino+ivu++8mueUqOmAmuS/l+S4reaWh+ino+mHiuaJgOacieS4k+S4muamguW/te+8jOavj+S4quamguW/teino+mHiuWJjeWFiOaYjuehruagh+azqOWOn+acr+ivre+8iOiLseaWh+eugOWGmemcgOWQjOaXtue7meWHuuWFqOensO+8iSzlpoLmnpzmnInlhazlvI/vvIzor7fnlKhsYXRleOagvOW8j+i+k+WHuuOAguino+ivu+imgeivpue7huWFqOmdou+8jOa2teebluWumuS5ieOAgeiDjOaZr+OAgeWOn+eQhuOAgeW6lOeUqOWSjOaEj+S5ieOAgui+k+WHuuS4uuaOkueJiOS4sOWvjOeahE1hcmtkb3du77yM6Zmk57+76K+R5aSW5YWo5paH6YO955So5Lit5paH5Zue562U77yM5LiN5YWB6K645oqK5YWo5paH6YO95pS+5ZyoY29kZWJsb2Nr6YeM44CCIiwiY29sb3IiOiJyZ2IoMTA5LCA0MCwgMjE3KSIsInZpc2lvblByb21wdE9yZGVyIjoiYmVmb3JlIn0=",
+        "eyJ2ZXJzaW9uIjoxLCJhY3Rpb25zIjpbeyJpZCI6Ii0tIiwibGFiZWwiOiLmgLvnu5MiLCJzeXN0ZW1Qcm9tcHQiOiLnlKjkuK3mlofmgLvnu5PnlKjmiLfovpPlhaXnmoTmlofmnKzvvIzlj6/ku6Xmj5LlhaVtZXJtYWlk5rWB56iL5Zu+77yM5Luj56CB5b+F6aG75pS+5ZyoY29kZWJsb2Nr6YeM77yMbGF0ZXjlhazlvI/lv4XpobvnlKgk5YyF6KO577yM5LiN54S25riy5p+T5LiN5LqG44CCIiwiY29sb3IiOiJyZ2IoNjMsIDIxNywgMTkyKSJ9XX0=",
+        "eyJ2ZXJzaW9uIjoxLCJhY3Rpb25zIjpbeyJpZCI6ImNoYXQiLCJsYWJlbCI6IuiBiuWkqSIsInN5c3RlbVByb21wdCI6IuWSjOeUqOaIt+i/m+ihjOS6pOa1geOAgiJ9XX0="
     ];
 
     const LATEST_CHANGELOG = `
+        v16.2 更新日志
+        ## 🔧 问题修复
+        *   修复聊天记录导出失败
+        *   修复导入聊天记录成功后不会立即刷新
+        *   修复聊天记录管理页有时候会自己关掉
+        *   修复聊天记录导出时角色选择不生效
+        *   修复导出为pdf时不会渲染markdown界面
+        ## ✨ 新功能
+        *   主界面按钮可一键恢复默认了
+        *   新增“总结”和“聊天”按钮
+        ## ⚡ 优化
+        *   优化内置大模型提供商和主界面按钮配置文件的处理逻辑
+        *   优化内置大模型提供商和主界面按钮分享的id设置逻辑
+        ---
         v16.1.3 更新日志
-        ## 🐛 问题修复
+        ## 🔧 问题修复
         *   修复不勾选聊天记录持久化也会保存聊天记录
         ---
         v16.1.2 更新日志
-        ## 🐛 问题修复
+        ## 🔧 问题修复
         *   修复导入聊天记录后自动开启聊天记录持久化
         *   修复聊天记录持久化按钮不勾选时不能管理聊天记录
         ---
         v16.1.1 更新日志
-        ## 🐛 问题修复
+        ## 🔧 问题修复
         *   修复导入ChatGPT聊天记录的时候不会导入引用信息
         ---
         v16.1 更新日志
@@ -164,7 +180,7 @@
         *   **PDF 阅读增强**：
             *   内置 PDF.js 查看器支持分数缩放，缩放更平滑
             *   自动将 arXiv 的 PDF 链接重定向到内置查看器，无需手动切换
-        ## 🐛 问题修复
+        ## 🔧 问题修复
         *   修复偶发的本地 PDF 文件无法在内置 PDF.js 中预览的问题
         *   修复pdfjs预览器里可能出现两个分数缩放输入框的问题
         *   修复pdfjs预览器里偶发的没法分数缩放问题
@@ -560,15 +576,23 @@
         }
     };
 
+    const uint8ToBinaryString = (bytes) => {
+        if (!bytes || !bytes.length) return "";
+        const chunkSize = 0x8000;
+        const chunks = [];
+        for (let i = 0; i < bytes.length; i += chunkSize) {
+            const chunk = bytes.subarray(i, i + chunkSize);
+            chunks.push(String.fromCharCode.apply(null, chunk));
+        }
+        return chunks.join("");
+    };
+
     const encodeBase64Utf8 = (text) => {
         try {
             const input = String(text === undefined || text === null ? "" : text);
             if (typeof TextEncoder !== "undefined") {
                 const bytes = new TextEncoder().encode(input);
-                let binary = "";
-                for (let i = 0; i < bytes.length; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                }
+                const binary = uint8ToBinaryString(bytes);
                 return btoa(binary);
             }
             return btoa(unescape(encodeURIComponent(input)));
@@ -595,6 +619,30 @@
         } catch (e) {
             return null;
         }
+    };
+
+    const unpackActionPayloadItems = (payload) => {
+        if (!payload || typeof payload !== "object") return [];
+        if (Array.isArray(payload.actions)) {
+            return payload.actions.filter((item) => item && typeof item === "object");
+        }
+        return [payload];
+    };
+
+    const unpackProviderPayloadItems = (payload) => {
+        if (!payload || typeof payload !== "object") return [];
+        if (Array.isArray(payload.providers)) {
+            return payload.providers.filter((item) => item && typeof item === "object");
+        }
+        return [payload];
+    };
+
+    const parseDefaultActionTemplateBase64Entry = (base64) => {
+        return unpackActionPayloadItems(parseActionBase64(base64));
+    };
+
+    const parseDefaultProviderTemplateBase64Entry = (base64) => {
+        return unpackProviderPayloadItems(parseProviderBase64(base64));
     };
 
     const clampColorValue = (value, min, max) => {
@@ -775,7 +823,7 @@
         if (defaultActionSeedMapCache) return defaultActionSeedMapCache;
         const map = {};
         DEFAULT_ACTION_TEMPLATE_BASE64_LIST
-            .map(parseActionBase64)
+            .flatMap(parseDefaultActionTemplateBase64Entry)
             .filter((item) => item && typeof item === "object")
             .forEach((item) => {
                 const id = normalizeActionId(item.id || "");
@@ -932,7 +980,7 @@
 
     const getDefaultActionTemplates = () => {
         const defaults = DEFAULT_ACTION_TEMPLATE_BASE64_LIST
-            .map(parseActionBase64)
+            .flatMap(parseDefaultActionTemplateBase64Entry)
             .filter(Boolean);
         const normalized = normalizeActionTemplates(defaults);
         const trans = normalized.find((item) => item.id === "translate");
@@ -1217,7 +1265,7 @@
 
     const getDefaultProviderTemplates = () => {
         const templates = DEFAULT_PROVIDER_BASE64_LIST
-            .map(parseProviderBase64)
+            .flatMap(parseDefaultProviderTemplateBase64Entry)
             .filter(Boolean);
         return normalizeProviderTemplates(templates);
     };
@@ -4830,6 +4878,7 @@
                         主界面按钮模块
                         <div style="margin-left:auto; display:flex; gap:6px; align-items:center;">
                             <span id="coolauxv-btn-action-add" class="coolauxv-link-btn" style="cursor:pointer; user-select:none;">➕ 添加</span>
+                            <span id="coolauxv-btn-action-reset" class="coolauxv-link-btn" style="cursor:pointer; user-select:none;">♻️ 重置</span>
                             <span id="coolauxv-btn-action-batch" class="coolauxv-link-btn coolauxv-batch-toggle-btn" style="cursor:pointer; user-select:none;">
                                 <span class="coolauxv-batch-toggle-icon" aria-hidden="true">🧩</span>
                                 <span data-batch-toggle-text>批量</span>
@@ -5170,6 +5219,7 @@
         const btnProviderBatchDelete = popup.querySelector("#coolauxv-btn-provider-batch-delete");
         const actionSectionsContainer = popup.querySelector("#coolauxv-action-sections");
         const btnActionAdd = popup.querySelector("#coolauxv-btn-action-add");
+        const btnActionReset = popup.querySelector("#coolauxv-btn-action-reset");
         const btnActionBatch = popup.querySelector("#coolauxv-btn-action-batch");
         const btnActionShare = popup.querySelector("#coolauxv-btn-action-share");
         const btnActionBatchDelete = popup.querySelector("#coolauxv-btn-action-batch-delete");
@@ -5271,15 +5321,18 @@
         };
 
         const encodeBase64 = (text) => {
+            const input = String(text === undefined || text === null ? "" : text);
             try {
                 if (typeof TextEncoder !== "undefined") {
-                    const bytes = new TextEncoder().encode(text);
-                    let binary = "";
-                    bytes.forEach((b) => { binary += String.fromCharCode(b); });
+                    const bytes = new TextEncoder().encode(input);
+                    const binary = uint8ToBinaryString(bytes);
                     return btoa(binary);
                 }
-                return btoa(unescape(encodeURIComponent(text)));
+                return btoa(unescape(encodeURIComponent(input)));
             } catch (e) {
+                Logger.error("[ChatHistory]", "encodeBase64 failed", e && (e.message || String(e)), {
+                    inputLength: input.length
+                });
                 return "";
             }
         };
@@ -5321,12 +5374,16 @@
                 ? payload.chatSessionId
                 : (typeof payload.chatId === "string" ? payload.chatId : "");
             const normalizedSessionId = String(rawSessionId || "").trim();
+            const normalizedTitle = String(payload.title || payload.name || "").trim();
+            const normalizedChatName = String(payload.chatName || payload.customTitle || "").trim();
             return {
                 type: CHAT_HISTORY_SHARE_TYPE,
                 version: CHAT_HISTORY_SHARE_VERSION,
                 exportedAt: typeof payload.exportedAt === "string" ? payload.exportedAt : new Date().toISOString(),
                 chatProvider: typeof payload.chatProvider === "string" ? payload.chatProvider : "",
                 chatSessionId: normalizedSessionId,
+                title: normalizedTitle,
+                chatName: normalizedChatName,
                 chatSystemPrompt: typeof payload.chatSystemPrompt === "string" ? payload.chatSystemPrompt : "",
                 chatAssistantLabel: typeof payload.chatAssistantLabel === "string" ? payload.chatAssistantLabel : "",
                 chatHistoryRecords: records
@@ -5968,7 +6025,7 @@
                 sessionId = typeof parsed.chatSessionId === "string"
                     ? parsed.chatSessionId
                     : (typeof parsed.sessionId === "string" ? parsed.sessionId : "");
-                title = pickFirstNonEmptyString(parsed.title, parsed.chatName, parsed.customTitle, parsed.name);
+                title = pickFirstNonEmptyString(parsed.chatName, parsed.customTitle, parsed.title, parsed.name);
                 systemPrompt = typeof parsed.chatSystemPrompt === "string"
                     ? parsed.chatSystemPrompt
                     : (typeof parsed.systemPrompt === "string" ? parsed.systemPrompt : "");
@@ -6110,6 +6167,9 @@
                 }, 0);
                 return true;
             } catch (e) {
+                Logger.error("[ChatHistory]", "download .auv failed", e && (e.message || String(e)), {
+                    textLength: value.length
+                });
                 return false;
             }
         };
@@ -6160,7 +6220,26 @@
                 output += escapeHtml(text.slice(lastIndex)).replace(/\n/g, "<br>");
                 return output;
             };
-            const toHtmlText = (value) => renderPdfMathText(value);
+            const renderPdfMarkdownText = (value) => {
+                const text = String(value ?? "");
+                if (!text) return "";
+                if (typeof marked !== "undefined" && marked && typeof marked.parse === "function") {
+                    try {
+                        const markdownInput = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+                        const rendered = marked.parse(markdownInput, {
+                            gfm: true,
+                            breaks: true
+                        });
+                        if (typeof rendered === "string" && rendered.trim()) {
+                            return rendered;
+                        }
+                    } catch (err) {
+                        Logger.warn("[ChatHistory]", "pdf markdown render failed", err && (err.message || String(err)));
+                    }
+                }
+                return renderPdfMathText(text);
+            };
+            const toHtmlText = (value) => renderPdfMarkdownText(value);
             const roleLabelMap = {
                 system: "系统",
                 user: "用户",
@@ -6267,6 +6346,69 @@
       color: #111827;
       white-space: normal;
       word-break: break-word;
+    }
+    .chat-text > :first-child {
+      margin-top: 0;
+    }
+    .chat-text > :last-child {
+      margin-bottom: 0;
+    }
+    .chat-text p {
+      margin: 0 0 8px 0;
+    }
+    .chat-text ul, .chat-text ol {
+      margin: 0 0 8px 0;
+      padding-left: 20px;
+    }
+    .chat-text li {
+      margin: 2px 0;
+    }
+    .chat-text h1, .chat-text h2, .chat-text h3, .chat-text h4 {
+      margin: 10px 0 6px 0;
+      line-height: 1.35;
+    }
+    .chat-text pre {
+      margin: 8px 0;
+      padding: 8px 10px;
+      background: #111827;
+      color: #f9fafb;
+      border-radius: 8px;
+      overflow: auto;
+    }
+    .chat-text code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 12px;
+      background: #f3f4f6;
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+    .chat-text pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+    }
+    .chat-text blockquote {
+      margin: 8px 0;
+      padding: 0 10px;
+      border-left: 3px solid #d1d5db;
+      color: #4b5563;
+    }
+    .chat-text table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 8px 0;
+      font-size: 12px;
+    }
+    .chat-text th, .chat-text td {
+      border: 1px solid #d1d5db;
+      padding: 4px 6px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .chat-text th {
+      background: #f3f4f6;
+      font-weight: 700;
     }
     .chat-text .katex-display {
       margin: 0.4em 0;
@@ -6387,8 +6529,7 @@
                 </div>
                 <div style="display:flex; flex-direction:column; gap:8px; flex:1;">
                     <div class="coolauxv-sub-label">已生成 Base64，可复制或保存为 .auv</div>
-                    <textarea id="coolauxv-chat-history-export-text" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" spellcheck="false"></textarea>
-                    <div style="font-size:11px; color:#888;">为避免浏览器输入框长度限制，建议使用此处文本框操作。</div>
+                    <div style="font-size:12px; color:#666;">导出内容已生成，可直接点击下方按钮复制或保存为 .auv 文件。</div>
                     <div class="coolauxv-sub-label">导出角色（PDF）</div>
                     <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:center;">
                         <label class="coolauxv-toggle-label" style="background:none; padding:0; border:none;">
@@ -6432,7 +6573,6 @@
             };
             document.addEventListener("keydown", onEsc);
 
-            const inputEl = box.querySelector("#coolauxv-chat-history-export-text");
             const copyBtn = box.querySelector("#coolauxv-chat-history-export-copy");
             const saveBtn = box.querySelector("#coolauxv-chat-history-export-save");
             const pdfBtn = box.querySelector("#coolauxv-chat-history-export-pdf");
@@ -6440,38 +6580,71 @@
             const roleAssistantEl = box.querySelector("#coolauxv-chat-history-export-role-assistant");
             const roleSystemEl = box.querySelector("#coolauxv-chat-history-export-role-system");
             const closeBtn = box.querySelector("#coolauxv-chat-history-export-close");
-            if (inputEl) {
-                inputEl.value = base64Text || "";
-                setTimeout(() => {
-                    inputEl.focus();
-                    inputEl.select();
-                }, 0);
-            }
+            const collectSelectedRoles = () => {
+                const selectedRoles = [];
+                if (roleUserEl && roleUserEl.checked) selectedRoles.push("user");
+                if (roleAssistantEl && roleAssistantEl.checked) selectedRoles.push("assistant");
+                if (roleSystemEl && roleSystemEl.checked) selectedRoles.push("system");
+                return selectedRoles;
+            };
+            const buildRoleFilteredExportBase64 = () => {
+                const selectedRoles = collectSelectedRoles();
+                if (!selectedRoles.length) {
+                    alert("请至少选择一个导出角色。");
+                    return null;
+                }
+                const normalizedPayload = normalizeChatHistoryPayload(payload);
+                if (!normalizedPayload) {
+                    alert("当前没有可导出的连续对话记录。");
+                    return null;
+                }
+                const roleSet = new Set(selectedRoles);
+                const filteredRecords = normalizedPayload.chatHistoryRecords.filter((record) => roleSet.has(record.role));
+                if (!filteredRecords.length) {
+                    alert("当前没有符合所选角色的聊天记录。");
+                    return null;
+                }
+                const filteredPayload = Object.assign({}, normalizedPayload, {
+                    chatHistoryRecords: filteredRecords
+                });
+                let payloadJson = "";
+                try {
+                    payloadJson = JSON.stringify(filteredPayload);
+                } catch (e) {
+                    Logger.error("[ChatHistory]", "role filtered export JSON stringify failed", e && (e.message || String(e)));
+                    alert("聊天记录导出失败，请稍后重试。");
+                    return null;
+                }
+                const encoded = encodeBase64(payloadJson);
+                if (!encoded) {
+                    Logger.error("[ChatHistory]", "role filtered export encode failed", {
+                        recordCount: filteredRecords.length,
+                        jsonLength: payloadJson.length
+                    });
+                    alert("聊天记录导出失败，请稍后重试。");
+                    return null;
+                }
+                return encoded;
+            };
 
             if (copyBtn) {
                 copyBtn.addEventListener("click", async () => {
-                    const text = inputEl ? String(inputEl.value || "").trim() : "";
+                    const text = buildRoleFilteredExportBase64();
                     if (!text) {
-                        alert("没有可复制的内容。");
                         return;
                     }
                     const copied = await copyTextToClipboard(text);
                     if (copied) {
                         alert("聊天记录 Base64 已复制到剪贴板。");
                     } else {
-                        alert("复制失败，请手动复制文本框内容。");
-                        if (inputEl) {
-                            inputEl.focus();
-                            inputEl.select();
-                        }
+                        alert("复制失败，请稍后重试。");
                     }
                 });
             }
             if (saveBtn) {
                 saveBtn.addEventListener("click", () => {
-                    const text = inputEl ? String(inputEl.value || "").trim() : "";
+                    const text = buildRoleFilteredExportBase64();
                     if (!text) {
-                        alert("没有可保存的内容。");
                         return;
                     }
                     const saved = downloadChatHistoryFile(text);
@@ -6484,10 +6657,7 @@
             }
             if (pdfBtn) {
                 pdfBtn.addEventListener("click", () => {
-                    const selectedRoles = [];
-                    if (roleUserEl && roleUserEl.checked) selectedRoles.push("user");
-                    if (roleAssistantEl && roleAssistantEl.checked) selectedRoles.push("assistant");
-                    if (roleSystemEl && roleSystemEl.checked) selectedRoles.push("system");
+                    const selectedRoles = collectSelectedRoles();
                     if (!selectedRoles.length) {
                         alert("请至少选择一个导出角色。");
                         return;
@@ -6502,17 +6672,37 @@
             });
         };
 
-        const exportChatHistoryPayload = (payload) => {
-            const normalizedPayload = normalizeChatHistoryPayload(payload);
+        const exportChatHistoryPayload = (payload, options = {}) => {
+            const mergedPayload = Object.assign({}, payload || {}, options || {});
+            const normalizedPayload = normalizeChatHistoryPayload(mergedPayload);
             if (!normalizedPayload) {
+                Logger.warn("[ChatHistory]", "export skipped: no valid records");
                 alert("当前没有可导出的连续对话记录。");
                 return false;
             }
-            const base64 = encodeBase64(JSON.stringify(normalizedPayload));
-            if (!base64) {
+            let payloadJson = "";
+            try {
+                payloadJson = JSON.stringify(normalizedPayload);
+            } catch (e) {
+                Logger.error("[ChatHistory]", "export JSON stringify failed", e && (e.message || String(e)));
                 alert("聊天记录导出失败，请稍后重试。");
                 return false;
             }
+            const base64 = encodeBase64(payloadJson);
+            if (!base64) {
+                Logger.error("[ChatHistory]", "export encode failed", {
+                    recordCount: normalizedPayload.chatHistoryRecords.length,
+                    jsonLength: payloadJson.length
+                });
+                alert("聊天记录导出失败，请稍后重试。");
+                return false;
+            }
+            Logger.debug("[ChatHistory]", "export ready", {
+                recordCount: normalizedPayload.chatHistoryRecords.length,
+                jsonLength: payloadJson.length,
+                base64Length: base64.length,
+                sessionId: normalizedPayload.chatSessionId || ""
+            });
             openChatHistoryExportModal(base64, normalizedPayload);
             return true;
         };
@@ -6522,7 +6712,7 @@
             return exportChatHistoryPayload(payload);
         };
 
-        const openChatHistoryImportModal = () => {
+        const openChatHistoryImportModal = (onImported) => {
             const existingOverlay = document.getElementById("coolauxv-chat-history-import-overlay");
             if (existingOverlay && existingOverlay.parentNode) {
                 existingOverlay.parentNode.removeChild(existingOverlay);
@@ -6638,7 +6828,10 @@
                         return;
                     }
                     const imported = importChatHistoryFromText(text);
-                    if (imported) closeModal();
+                    if (imported) {
+                        if (typeof onImported === "function") onImported();
+                        closeModal();
+                    }
                 });
             }
             if (closeBtn) closeBtn.addEventListener("click", closeModal);
@@ -6675,6 +6868,7 @@
         const exportChatQueueItems = (items) => {
             const normalizedItems = normalizeChatQueueList(items);
             if (!normalizedItems.length) {
+                Logger.warn("[ChatHistory]", "batch export skipped: no selected queue items");
                 alert("请先选择要导出的后台会话。");
                 return false;
             }
@@ -6684,11 +6878,28 @@
                 exportedAt: new Date().toISOString(),
                 items: normalizedItems
             };
-            const base64 = encodeBase64(JSON.stringify(payload));
-            if (!base64) {
+            let payloadJson = "";
+            try {
+                payloadJson = JSON.stringify(payload);
+            } catch (e) {
+                Logger.error("[ChatHistory]", "batch export JSON stringify failed", e && (e.message || String(e)));
                 alert("批量导出失败，请稍后重试。");
                 return false;
             }
+            const base64 = encodeBase64(payloadJson);
+            if (!base64) {
+                Logger.error("[ChatHistory]", "batch export encode failed", {
+                    itemCount: normalizedItems.length,
+                    jsonLength: payloadJson.length
+                });
+                alert("批量导出失败，请稍后重试。");
+                return false;
+            }
+            Logger.debug("[ChatHistory]", "batch export ready", {
+                itemCount: normalizedItems.length,
+                jsonLength: payloadJson.length,
+                base64Length: base64.length
+            });
             openChatQueueExportModal(base64);
             return true;
         };
@@ -6739,7 +6950,7 @@
                 </div>
                 <div style="display:flex; flex-direction:column; gap:8px; flex:1;">
                     <div class="coolauxv-sub-label">已生成 Base64，可复制或保存为 .auv</div>
-                    <textarea id="coolauxv-chat-queue-export-text" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" spellcheck="false"></textarea>
+                    <div style="font-size:12px; color:#666;">导出内容已生成，可直接点击下方按钮复制或保存为 .auv 文件。</div>
                     <div style="font-size:11px; color:#888;">可在“批量导入后台会话”中恢复。</div>
                 </div>
                 <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
@@ -6768,20 +6979,12 @@
             };
             document.addEventListener("keydown", onEsc);
 
-            const inputEl = box.querySelector("#coolauxv-chat-queue-export-text");
             const copyBtn = box.querySelector("#coolauxv-chat-queue-export-copy");
             const saveBtn = box.querySelector("#coolauxv-chat-queue-export-save");
             const closeBtn = box.querySelector("#coolauxv-chat-queue-export-close");
-            if (inputEl) {
-                inputEl.value = base64Text || "";
-                setTimeout(() => {
-                    inputEl.focus();
-                    inputEl.select();
-                }, 0);
-            }
             if (copyBtn) {
                 copyBtn.addEventListener("click", async () => {
-                    const text = inputEl ? String(inputEl.value || "").trim() : "";
+                    const text = String(base64Text || "").trim();
                     if (!text) {
                         alert("没有可复制的内容。");
                         return;
@@ -6790,13 +6993,13 @@
                     if (copied) {
                         alert("批量会话 Base64 已复制到剪贴板。");
                     } else {
-                        alert("复制失败，请手动复制文本框内容。");
+                        alert("复制失败，请稍后重试。");
                     }
                 });
             }
             if (saveBtn) {
                 saveBtn.addEventListener("click", () => {
-                    const text = inputEl ? String(inputEl.value || "").trim() : "";
+                    const text = String(base64Text || "").trim();
                     if (!text) {
                         alert("没有可保存的内容。");
                         return;
@@ -7249,14 +7452,14 @@
 
             if (exportBtn) {
                 exportBtn.addEventListener("click", () => {
-                    closeModal();
                     exportChatHistory();
                 });
             }
             if (importBtn) {
                 importBtn.addEventListener("click", () => {
-                    closeModal();
-                    openChatHistoryImportModal();
+                    openChatHistoryImportModal(() => {
+                        renderQueueItems();
+                    });
                 });
             }
             if (batchToggleBtn) {
@@ -7378,8 +7581,10 @@
                         return;
                     }
                     if (action === "export") {
-                        closeModal();
-                        exportChatHistoryPayload(item.payload);
+                        exportChatHistoryPayload(item.payload, {
+                            title: item.title || "",
+                            chatName: item.chatName || ""
+                        });
                         return;
                     }
                     if (action === "delete") {
@@ -7483,6 +7688,55 @@
             });
             return output;
         };
+        const hashStringForShareId = (input) => {
+            const text = String(input || "");
+            let hashA = 0x811c9dc5;
+            let hashB = 0x9e3779b1;
+            for (let i = 0; i < text.length; i += 1) {
+                const code = text.charCodeAt(i);
+                hashA ^= code;
+                hashA = Math.imul(hashA, 0x01000193);
+                hashB ^= code + i;
+                hashB = Math.imul(hashB, 0x85ebca6b);
+            }
+            return `${(hashA >>> 0).toString(36)}${(hashB >>> 0).toString(36)}`;
+        };
+        const buildHashedShareTemplateId = (template, kind, extraSalt = "") => {
+            const payload = cloneDeep(template || {});
+            payload.id = "";
+            if (Object.prototype.hasOwnProperty.call(payload, "sourceId")) {
+                payload.sourceId = "";
+            }
+            const seed = `${JSON.stringify(payload)}|${Date.now()}|${extraSalt}`;
+            const hash = hashStringForShareId(seed).slice(0, 10) || Date.now().toString(36).slice(-8);
+            const rawId = `${kind === "provider" ? "provider" : "action"}-${hash}`;
+            return kind === "provider" ? normalizeProviderId(rawId) : normalizeActionId(rawId);
+        };
+        const buildShareTemplateWithHashedId = (template, kind, extraSalt = "", usedIds = null) => {
+            if (!template || typeof template !== "object") return template;
+            const clone = cloneDeep(template);
+            const originalId = String(clone.id || "").trim();
+            let nextId = buildHashedShareTemplateId(clone, kind, extraSalt);
+            if (usedIds && typeof usedIds.has === "function" && typeof usedIds.add === "function") {
+                let attempt = 0;
+                while (usedIds.has(nextId) && attempt < 32) {
+                    attempt += 1;
+                    nextId = buildHashedShareTemplateId(clone, kind, `${extraSalt}|${attempt}`);
+                }
+                if (usedIds.has(nextId)) {
+                    const rawFallback = `${kind === "provider" ? "provider" : "action"}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+                    nextId = kind === "provider" ? normalizeProviderId(rawFallback) : normalizeActionId(rawFallback);
+                }
+                usedIds.add(nextId);
+            }
+            clone.id = nextId;
+            if (originalId) {
+                clone.sourceId = originalId;
+            } else if (Object.prototype.hasOwnProperty.call(clone, "sourceId")) {
+                delete clone.sourceId;
+            }
+            return clone;
+        };
         let defaultProviderTemplateMapCache = null;
         const getDefaultProviderTemplateMap = () => {
             if (defaultProviderTemplateMapCache) return defaultProviderTemplateMapCache;
@@ -7496,9 +7750,13 @@
         const mergeProviderDefaults = (raw) => {
             if (!raw || typeof raw !== "object") return raw;
             const providerId = normalizeProviderId(raw.id || "");
-            if (!providerId) return raw;
+            const sourceProviderId = normalizeProviderId(raw.sourceId || raw.templateId || "");
             const defaults = getDefaultProviderTemplateMap();
-            const base = defaults[providerId];
+            const matchId = (providerId && defaults[providerId])
+                ? providerId
+                : ((sourceProviderId && defaults[sourceProviderId]) ? sourceProviderId : "");
+            if (!matchId) return raw;
+            const base = defaults[matchId];
             if (!base) return raw;
             return deepMerge(cloneDeep(base), raw);
         };
@@ -7612,9 +7870,13 @@
         const mergeActionDefaults = (raw) => {
             if (!raw || typeof raw !== "object") return raw;
             const actionId = normalizeActionId(raw.id || "");
-            if (!actionId) return raw;
+            const sourceActionId = normalizeActionId(raw.sourceId || raw.templateId || "");
             const defaults = getDefaultActionTemplateMap();
-            const base = defaults[actionId];
+            const matchId = (actionId && defaults[actionId])
+                ? actionId
+                : ((sourceActionId && defaults[sourceActionId]) ? sourceActionId : "");
+            if (!matchId) return raw;
+            const base = defaults[matchId];
             if (!base) return raw;
             return deepMerge(cloneDeep(base), raw);
         };
@@ -9234,7 +9496,8 @@
 
         const encodeActionTemplateBase64 = (template) => {
             if (!template) return "";
-            const payload = compactActionTemplate(template);
+            const compacted = compactActionTemplate(template);
+            const payload = buildShareTemplateWithHashedId(compacted, "action");
             return encodeBase64(JSON.stringify(payload));
         };
 
@@ -10421,9 +10684,10 @@
                 }
                 const includePrivacy = confirm("分享配置是否包含隐私信息（如 API KEY、打码字段）？\n确定=包含，取消=不包含");
                 const secrets = loadProviderSecretStore();
+                const usedProviderShareIds = new Set();
                 const templates = getProviderTemplates()
                     .filter((tpl) => selectedProviderIds.has(tpl.id))
-                    .map((tpl) => {
+                    .map((tpl, index) => {
                         const clone = cloneDeep(tpl);
                         if (!includePrivacy) {
                             clone.apiKey = "";
@@ -10444,7 +10708,8 @@
                                 }
                             });
                         }
-                        return compactProviderTemplate(clone);
+                        const compacted = compactProviderTemplate(clone);
+                        return buildShareTemplateWithHashedId(compacted, "provider", String(index), usedProviderShareIds);
                     });
                 const sharePayload = pruneEmptyValues({ version: PROVIDER_SHARE_VERSION, providers: templates });
                 const payload = encodeBase64(JSON.stringify(sharePayload));
@@ -10501,6 +10766,17 @@
             });
         }
 
+        if (btnActionReset) {
+            btnActionReset.addEventListener("click", () => {
+                const ok = confirm("确定要重置主界面按钮模块吗？\n这会覆盖你当前的按钮自定义配置。");
+                if (!ok) return;
+                saveActionTemplates(getDefaultActionTemplates());
+                selectedActionIds.clear();
+                isActionBatchMode = false;
+                renderActionUI();
+            });
+        }
+
         if (btnActionBatch) {
             btnActionBatch.addEventListener("click", () => {
                 isActionBatchMode = !isActionBatchMode;
@@ -10515,9 +10791,13 @@
                     alert("请先选择要分享的按钮。");
                     return;
                 }
+                const usedActionShareIds = new Set();
                 const templates = getActionTemplates()
                     .filter((tpl) => selectedActionIds.has(tpl.id))
-                    .map((tpl) => compactActionTemplate(tpl));
+                    .map((tpl, index) => {
+                        const compacted = compactActionTemplate(tpl);
+                        return buildShareTemplateWithHashedId(compacted, "action", String(index), usedActionShareIds);
+                    });
                 const payload = encodeBase64(JSON.stringify(pruneEmptyValues({ version: ACTION_SHARE_VERSION, actions: templates })));
                 if (!payload) {
                     alert("分享失败，请稍后重试。");
