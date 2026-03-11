@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.2
+// @version      v16.2.1
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -223,6 +223,10 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.2.1 更新日志
+        ## 🔧 问题修复
+        *   丢失的连续对话提示词设置UI回来了
+        ---
         v16.2 更新日志
         ## 🔧 问题修复
         *   修复聊天记录导出失败
@@ -2250,6 +2254,15 @@
         min-width: 260px;
         flex: 1 1 260px;
     }
+    .coolauxv-settings-item-wrap-wide {
+        min-width: 260px;
+        flex: 1 1 260px;
+    }
+    #coolauxv-continuous-chat-prompt-section {
+        flex: 1 1 100%;
+        width: 100%;
+        min-width: 0;
+    }
     .coolauxv-settings-item-head {
         display: flex;
         align-items: center;
@@ -2653,15 +2666,18 @@
 
     .coolauxv-collapse-section {
         overflow: hidden;
+        height: auto;
         max-height: none;
         opacity: 1;
         transform: translateY(0);
-        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+        transition: height 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
                     opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
                     transform 0.25s cubic-bezier(0.2, 0, 0, 1);
-        will-change: max-height, opacity, transform;
+        will-change: height, max-height, opacity, transform;
     }
     .coolauxv-collapse-section.coolauxv-collapsed {
+        height: 0;
         max-height: 0;
         opacity: 0;
         transform: translateY(-4px);
@@ -2939,13 +2955,15 @@
         max-height: none;
         opacity: 1;
         transform: translateY(0);
-        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+        transition: height 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
                     opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
                     transform 0.25s cubic-bezier(0.2, 0, 0, 1);
-        will-change: max-height, opacity, transform;
+        will-change: height, max-height, opacity, transform;
         flex-shrink: 0;
     }
     #coolauxv-main-top-section.coolauxv-top-collapsed {
+        height: 0;
         max-height: 0;
         opacity: 0;
         transform: translateY(-4px);
@@ -2961,12 +2979,14 @@
         max-height: none;
         opacity: 1;
         transform: translateY(0);
-        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+        transition: height 0.25s cubic-bezier(0.2, 0, 0, 1),
+                    max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
                     opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
                     transform 0.25s cubic-bezier(0.2, 0, 0, 1);
-        will-change: max-height, opacity, transform;
+        will-change: height, max-height, opacity, transform;
     }
     #coolauxv-chat-bar.coolauxv-chat-collapsed #coolauxv-chat-body {
+        height: 0;
         max-height: 0;
         opacity: 0;
         transform: translateY(-4px);
@@ -5040,6 +5060,18 @@
                             </label>
                             <div class="coolauxv-settings-item-hint">启用后显示连续对话输入区</div>
                         </div>
+                        <div id="coolauxv-continuous-chat-prompt-section" class="coolauxv-collapse-section coolauxv-settings-item-wrap-wide">
+                            <div class="coolauxv-settings-item coolauxv-settings-item-wide">
+                                <div class="coolauxv-settings-item-head">
+                                    <span style="font-size:13px; color:#555;">连续对话提示词</span>
+                                    <label class="coolauxv-toggle-label" style="font-size:12px; gap:4px;">
+                                        <input type="checkbox" id="coolauxv-cfg-append-chat"> 追加
+                                    </label>
+                                </div>
+                                <textarea id="coolauxv-cfg-prompt-chat" class="coolauxv-setting-input coolauxv-resizable-input" rows="3" placeholder="${DEFAULT_PROMPT_CONTINUOUS_CHAT}"></textarea>
+                                <div class="coolauxv-settings-item-hint">勾选“追加”时会把输入内容追加到默认提示词后面；未勾选时将直接替代默认提示词。</div>
+                            </div>
+                        </div>
                         <div class="coolauxv-settings-item">
                             <label class="coolauxv-toggle-label">
                                 <input type="checkbox" id="coolauxv-cfg-chat-history-persist"> 聊天记录持久化
@@ -5299,6 +5331,9 @@
         const radioBtns = popup.querySelectorAll('input[name="coolauxv_log_level_radio"]');
         const inputNewScreenshot = popup.querySelector("#coolauxv-cfg-new-screenshot");
         const inputContinuousChat = popup.querySelector("#coolauxv-cfg-continuous-chat");
+        const continuousChatPromptSection = popup.querySelector("#coolauxv-continuous-chat-prompt-section");
+        const inputPromptContinuousChat = popup.querySelector("#coolauxv-cfg-prompt-chat");
+        const inputAppendContinuousChat = popup.querySelector("#coolauxv-cfg-append-chat");
         const inputChatHistoryPersist = popup.querySelector("#coolauxv-cfg-chat-history-persist");
         const btnClearChatPersist = popup.querySelector("#coolauxv-btn-clear-chat-persist");
         const btnManageChatPersist = popup.querySelector("#coolauxv-btn-manage-chat-persist");
@@ -8306,15 +8341,19 @@
             if (!section) return;
             if (expanded) {
                 section.dataset.expanding = "";
+                resetCollapsedBoxStyles(section);
                 section.style.display = "block";
                 section.classList.remove("coolauxv-collapsed");
+                section.style.height = "";
                 section.style.maxHeight = "none";
                 section.style.opacity = "1";
                 section.style.transform = "translateY(0)";
             } else {
                 section.dataset.expanding = "";
+                applyCollapsedBoxStyles(section);
                 section.style.display = "none";
                 section.classList.add("coolauxv-collapsed");
+                section.style.height = "0px";
                 section.style.maxHeight = "0px";
                 section.style.opacity = "0";
                 section.style.transform = "translateY(-4px)";
@@ -8326,48 +8365,90 @@
             if (visible) {
                 if (isSectionExpanded(section)) return;
                 section.dataset.expanding = "true";
+                resetCollapsedBoxStyles(section);
                 section.style.display = "block";
                 section.classList.add("coolauxv-collapsed");
+                section.style.height = "0px";
                 section.style.maxHeight = "0px";
                 section.style.opacity = "0";
                 section.style.transform = "translateY(-4px)";
                 requestAnimationFrame(() => {
-                    const targetHeight = section.scrollHeight;
+                    const targetHeight = Math.max(section.getBoundingClientRect().height, section.scrollHeight, 1);
+                    section.style.height = `${targetHeight}px`;
                     section.style.maxHeight = `${targetHeight}px`;
                     section.classList.remove("coolauxv-collapsed");
                     section.style.opacity = "1";
                     section.style.transform = "translateY(0)";
+                    let timeoutId = 0;
                     const onEnd = (e) => {
                         if (e.propertyName !== "max-height") return;
+                        if (timeoutId) {
+                            clearTimeout(timeoutId);
+                            timeoutId = 0;
+                        }
                         if (!section.classList.contains("coolauxv-collapsed")) {
+                            section.style.height = "";
                             section.style.maxHeight = "none";
+                            resetCollapsedBoxStyles(section);
                         }
                         section.dataset.expanding = "";
                         section.removeEventListener("transitionend", onEnd);
                     };
                     section.addEventListener("transitionend", onEnd);
+                    timeoutId = window.setTimeout(() => {
+                        if (timeoutId) {
+                            clearTimeout(timeoutId);
+                            timeoutId = 0;
+                        }
+                        if (!section.classList.contains("coolauxv-collapsed")) {
+                            section.style.height = "";
+                            section.style.maxHeight = "none";
+                            resetCollapsedBoxStyles(section);
+                        }
+                        section.dataset.expanding = "";
+                        section.removeEventListener("transitionend", onEnd);
+                    }, 320);
                 });
                 return;
             }
 
             if (section.style.display === "none") return;
             section.dataset.expanding = "";
-            if (section.style.maxHeight === "none") {
-                section.style.maxHeight = `${section.scrollHeight}px`;
-            }
+            resetCollapsedBoxStyles(section);
+            const currentHeight = Math.max(section.getBoundingClientRect().height, section.scrollHeight, 1);
+            section.style.height = `${currentHeight}px`;
+            section.style.maxHeight = `${currentHeight}px`;
             void section.offsetHeight;
             section.classList.add("coolauxv-collapsed");
+            section.style.height = "0px";
             section.style.maxHeight = "0px";
             section.style.opacity = "0";
             section.style.transform = "translateY(-4px)";
+            let timeoutId = 0;
             const onEnd = (e) => {
                 if (e.propertyName !== "max-height") return;
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = 0;
+                }
                 if (section.classList.contains("coolauxv-collapsed")) {
+                    applyCollapsedBoxStyles(section);
                     section.style.display = "none";
                 }
                 section.removeEventListener("transitionend", onEnd);
             };
             section.addEventListener("transitionend", onEnd);
+            timeoutId = window.setTimeout(() => {
+                if (timeoutId) {
+                    clearTimeout(timeoutId);
+                    timeoutId = 0;
+                }
+                if (section.classList.contains("coolauxv-collapsed")) {
+                    applyCollapsedBoxStyles(section);
+                    section.style.display = "none";
+                }
+                section.removeEventListener("transitionend", onEnd);
+            }, 320);
         };
 
         const updateProviderToggleLabels = () => {
@@ -10975,8 +11056,23 @@
             });
         }
 
+        const syncContinuousChatPromptSectionVisibility = (enabled) => {
+            if (!continuousChatPromptSection) return;
+            const shouldShow = enabled !== undefined
+                ? !!enabled
+                : (inputContinuousChat
+                    ? !!inputContinuousChat.checked
+                    : !!GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT));
+            if (isBasicAnimEnabled()) {
+                setSectionAnimatedVisibility(continuousChatPromptSection, shouldShow);
+            } else {
+                setSectionStateInstant(continuousChatPromptSection, shouldShow);
+            }
+        };
+
         const toggleContinuousChat = () => {
             updateProviderFeatureVisibility();
+            syncContinuousChatPromptSectionVisibility();
         };
 
         const applyBasicAnimSetting = (enabled) => {
@@ -10986,10 +11082,29 @@
             updateChatCollapseUI();
             updateTopSectionCollapseUI();
             setReasoningAnimatedVisibility(hasReasoning && isShowReasoning);
+            syncContinuousChatPromptSectionVisibility();
+        };
+
+        const measureExpandedSectionHeight = (section) => {
+            if (!section) return 1;
+            const prevMaxHeight = section.style.maxHeight;
+            const prevHeight = section.style.height;
+            const prevOverflow = section.style.overflow;
+            resetCollapsedBoxStyles(section);
+            section.style.maxHeight = "none";
+            section.style.height = "";
+            section.style.overflow = "visible";
+            const measured = Math.max(section.getBoundingClientRect().height, section.scrollHeight, 1);
+            section.style.maxHeight = prevMaxHeight;
+            section.style.height = prevHeight;
+            section.style.overflow = prevOverflow;
+            return measured;
         };
 
         const finalizeChatBodyExpand = () => {
             if (!chatBody || isChatCollapsed) return;
+            resetCollapsedBoxStyles(chatBody);
+            chatBody.style.height = "";
             chatBody.style.maxHeight = "none";
             chatBody.style.overflow = "visible";
         };
@@ -10997,11 +11112,15 @@
         const syncChatBodyHeight = () => {
             if (!chatBody || isChatCollapsed) return;
             if (chatBody.style.maxHeight === "none") return;
-            chatBody.style.maxHeight = `${chatBody.scrollHeight}px`;
+            const targetHeight = measureExpandedSectionHeight(chatBody);
+            chatBody.style.maxHeight = `${targetHeight}px`;
+            chatBody.style.height = `${targetHeight}px`;
         };
 
         const finalizeTopSectionExpand = () => {
             if (!topSection || isTopSectionCollapsed) return;
+            resetCollapsedBoxStyles(topSection);
+            topSection.style.height = "";
             topSection.style.maxHeight = "none";
             topSection.style.overflow = "visible";
         };
@@ -11009,7 +11128,9 @@
         const syncTopSectionHeight = () => {
             if (!topSection || isTopSectionCollapsed) return;
             if (topSection.style.maxHeight === "none") return;
-            topSection.style.maxHeight = `${topSection.scrollHeight}px`;
+            const targetHeight = measureExpandedSectionHeight(topSection);
+            topSection.style.maxHeight = `${targetHeight}px`;
+            topSection.style.height = `${targetHeight}px`;
         };
 
         let isTopSectionHoverPreviewing = false;
@@ -11035,22 +11156,30 @@
             clearTopSectionHoverLeaveTimer();
             isTopSectionHoverPreviewing = true;
             if (!isBasicAnimEnabled()) {
+                resetCollapsedBoxStyles(topSection);
                 topSection.style.overflow = "visible";
                 topSection.classList.remove("coolauxv-top-collapsed");
+                topSection.style.height = "";
                 topSection.style.maxHeight = "none";
                 return;
             }
+            resetCollapsedBoxStyles(topSection);
             topSection.style.overflow = "hidden";
             topSection.classList.remove("coolauxv-top-collapsed");
+            topSection.style.height = "0px";
             topSection.style.maxHeight = "0px";
             requestAnimationFrame(() => {
                 if (!isTopSectionHoverPreviewing || !isTopSectionCollapsed) return;
-                topSection.style.maxHeight = `${topSection.scrollHeight}px`;
+                const targetHeight = measureExpandedSectionHeight(topSection);
+                topSection.style.height = `${targetHeight}px`;
+                topSection.style.maxHeight = `${targetHeight}px`;
                 let expandTimeoutId = 0;
                 const onExpandEnd = (e) => {
                     if (e.propertyName !== "max-height") return;
                     cleanupExpand();
                     if (isTopSectionHoverPreviewing && isTopSectionCollapsed) {
+                        resetCollapsedBoxStyles(topSection);
+                        topSection.style.height = "";
                         topSection.style.maxHeight = "none";
                         topSection.style.overflow = "visible";
                     }
@@ -11066,6 +11195,8 @@
                 expandTimeoutId = window.setTimeout(() => {
                     cleanupExpand();
                     if (isTopSectionHoverPreviewing && isTopSectionCollapsed) {
+                        resetCollapsedBoxStyles(topSection);
+                        topSection.style.height = "";
                         topSection.style.maxHeight = "none";
                         topSection.style.overflow = "visible";
                     }
@@ -11077,12 +11208,14 @@
             if (!topSection || !isTopSectionHoverPreviewing) return;
             clearTopSectionHoverLeaveTimer();
             isTopSectionHoverPreviewing = false;
+            resetCollapsedBoxStyles(topSection);
             topSection.style.overflow = "hidden";
-            if (topSection.style.maxHeight === "none") {
-                topSection.style.maxHeight = `${topSection.scrollHeight}px`;
-            }
+            const currentHeight = Math.max(topSection.getBoundingClientRect().height, topSection.scrollHeight, 1);
+            topSection.style.height = `${currentHeight}px`;
+            topSection.style.maxHeight = `${currentHeight}px`;
             void topSection.offsetHeight;
             topSection.classList.add("coolauxv-top-collapsed");
+            topSection.style.height = "0px";
             topSection.style.maxHeight = "0px";
         };
 
@@ -11116,28 +11249,40 @@
                 topSection.classList.toggle("coolauxv-top-collapsed", isTopSectionCollapsed);
                 if (isTopSectionCollapsed) {
                     topSection.style.overflow = "hidden";
+                    applyCollapsedBoxStyles(topSection);
+                    topSection.style.height = "0px";
                     topSection.style.maxHeight = "0px";
                 } else {
+                    resetCollapsedBoxStyles(topSection);
                     topSection.style.overflow = "visible";
+                    topSection.style.height = "";
                     topSection.style.maxHeight = "none";
                 }
                 return;
             }
             topSection.classList.toggle("coolauxv-top-collapsed", isTopSectionCollapsed);
             if (isTopSectionCollapsed) {
+                resetCollapsedBoxStyles(topSection);
                 topSection.style.overflow = "hidden";
-                if (topSection.style.maxHeight === "none") {
-                    topSection.style.maxHeight = `${topSection.scrollHeight}px`;
-                    void topSection.offsetHeight;
-                }
+                const currentHeight = Math.max(topSection.getBoundingClientRect().height, topSection.scrollHeight, 1);
+                topSection.style.height = `${currentHeight}px`;
+                topSection.style.maxHeight = `${currentHeight}px`;
+                void topSection.offsetHeight;
+                topSection.style.height = "0px";
                 topSection.style.maxHeight = "0px";
             } else {
-                const isFlexible = topSection.style.maxHeight === "none";
+                const isFlexible = topSection.style.maxHeight === "none" && !topSection.style.height;
                 if (isFlexible) {
+                    resetCollapsedBoxStyles(topSection);
                     topSection.style.overflow = "visible";
                 } else {
+                    resetCollapsedBoxStyles(topSection);
                     topSection.style.overflow = "hidden";
-                    syncTopSectionHeight();
+                    topSection.style.height = "0px";
+                    topSection.style.maxHeight = "0px";
+                    requestAnimationFrame(() => {
+                        syncTopSectionHeight();
+                    });
                     let expandTimeoutId = 0;
                     const onExpandEnd = (e) => {
                         if (e.propertyName !== "max-height") return;
@@ -11173,9 +11318,13 @@
             if (!isBasicAnimEnabled()) {
                 if (isChatCollapsed) {
                     chatBody.style.overflow = "hidden";
+                    applyCollapsedBoxStyles(chatBody);
+                    chatBody.style.height = "0px";
                     chatBody.style.maxHeight = "0px";
                 } else {
+                    resetCollapsedBoxStyles(chatBody);
                     chatBody.style.overflow = "visible";
+                    chatBody.style.height = "";
                     chatBody.style.maxHeight = "none";
                 }
                 if (resultDiv && wasNearBottom) {
@@ -11188,19 +11337,27 @@
                 return;
             }
             if (isChatCollapsed) {
+                resetCollapsedBoxStyles(chatBody);
                 chatBody.style.overflow = "hidden";
-                if (chatBody.style.maxHeight === "none") {
-                    chatBody.style.maxHeight = `${chatBody.scrollHeight}px`;
-                    void chatBody.offsetHeight;
-                }
+                const currentHeight = Math.max(chatBody.getBoundingClientRect().height, chatBody.scrollHeight, 1);
+                chatBody.style.height = `${currentHeight}px`;
+                chatBody.style.maxHeight = `${currentHeight}px`;
+                void chatBody.offsetHeight;
+                chatBody.style.height = "0px";
                 chatBody.style.maxHeight = "0px";
             } else {
-                const isFlexible = chatBody.style.maxHeight === "none";
+                const isFlexible = chatBody.style.maxHeight === "none" && !chatBody.style.height;
                 if (isFlexible) {
+                    resetCollapsedBoxStyles(chatBody);
                     chatBody.style.overflow = "visible";
                 } else {
+                    resetCollapsedBoxStyles(chatBody);
                     chatBody.style.overflow = "hidden";
-                    syncChatBodyHeight();
+                    chatBody.style.height = "0px";
+                    chatBody.style.maxHeight = "0px";
+                    requestAnimationFrame(() => {
+                        syncChatBodyHeight();
+                    });
                     let expandTimeoutId = 0;
                     const onExpandEnd = (e) => {
                         if (e.propertyName !== "max-height") return;
@@ -11342,7 +11499,11 @@
                 const raw = GM_getValue("coolauxv_anim_speed", DEFAULT_ANIM_SPEED);
                 inputAnimSpeed.value = raw ? String(raw) : String(DEFAULT_ANIM_SPEED);
             }
-            if (inputContinuousChat) inputContinuousChat.checked = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+            const continuousChatEnabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+            if (inputContinuousChat) inputContinuousChat.checked = continuousChatEnabled;
+            syncContinuousChatPromptSectionVisibility(continuousChatEnabled);
+            if (inputPromptContinuousChat) inputPromptContinuousChat.value = GM_getValue("coolauxv_prompt_chat", "");
+            if (inputAppendContinuousChat) inputAppendContinuousChat.checked = GM_getValue("coolauxv_append_chat", false);
             if (inputChatHistoryPersist) inputChatHistoryPersist.checked = GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST);
             if (inputChatEnterSend) inputChatEnterSend.checked = GM_getValue("coolauxv_chat_enter_send", DEFAULT_CHAT_ENTER_SEND);
 
@@ -11857,6 +12018,16 @@
                 const enabled = e.target.checked;
                 GM_setValue("coolauxv_enable_continuous_chat", enabled);
                 toggleContinuousChat();
+            });
+        }
+        if (inputPromptContinuousChat) {
+            inputPromptContinuousChat.addEventListener("input", (e) => {
+                saveConfig("coolauxv_prompt_chat", e.target.value);
+            });
+        }
+        if (inputAppendContinuousChat) {
+            inputAppendContinuousChat.addEventListener("change", (e) => {
+                GM_setValue("coolauxv_append_chat", !!e.target.checked);
             });
         }
         if (inputChatHistoryPersist) {
@@ -13488,6 +13659,28 @@
         element.style.display = "none";
     }
 
+    function applyCollapsedBoxStyles(element) {
+        if (!element) return;
+        element.style.height = "0px";
+        element.style.paddingTop = "0px";
+        element.style.paddingBottom = "0px";
+        element.style.marginTop = "0px";
+        element.style.marginBottom = "0px";
+        element.style.borderTopWidth = "0px";
+        element.style.borderBottomWidth = "0px";
+    }
+
+    function resetCollapsedBoxStyles(element) {
+        if (!element) return;
+        element.style.height = "";
+        element.style.paddingTop = "";
+        element.style.paddingBottom = "";
+        element.style.marginTop = "";
+        element.style.marginBottom = "";
+        element.style.borderTopWidth = "";
+        element.style.borderBottomWidth = "";
+    }
+
     function updateInterruptButtons() {
         if (!popup) return;
         const btnStop = popup.querySelector("#coolauxv-btn-stop");
@@ -13501,6 +13694,7 @@
         if (!section) return;
         if (visible) {
             if (!section.classList.contains("coolauxv-collapsed")) return;
+            resetCollapsedBoxStyles(section);
             section.style.display = "block";
             section.classList.add("coolauxv-collapsed");
             section.style.maxHeight = "0px";
@@ -13516,6 +13710,7 @@
                     if (e.propertyName !== "max-height") return;
                     if (!section.classList.contains("coolauxv-collapsed")) {
                         section.style.maxHeight = "none";
+                        resetCollapsedBoxStyles(section);
                     }
                     section.removeEventListener("transitionend", onEnd);
                 };
@@ -13525,6 +13720,7 @@
         }
 
         if (section.style.display === "none") return;
+        resetCollapsedBoxStyles(section);
         if (section.style.maxHeight === "none") {
             section.style.maxHeight = `${section.scrollHeight}px`;
         }
@@ -13536,6 +13732,7 @@
         const onEnd = (e) => {
             if (e.propertyName !== "max-height") return;
             if (section.classList.contains("coolauxv-collapsed")) {
+                applyCollapsedBoxStyles(section);
                 section.style.display = "none";
             }
             section.removeEventListener("transitionend", onEnd);
@@ -13581,6 +13778,7 @@
         if (!isBasicAnimEnabled()) {
             reasoningWrapper.dataset.lastHeight = "";
             if (visible) {
+                resetCollapsedBoxStyles(reasoningWrapper);
                 if (reasoningWrapper.style.display !== "flex") {
                     reasoningWrapper.style.display = "flex";
                 }
@@ -13592,6 +13790,7 @@
             } else {
                 reasoningWrapper.classList.add("coolauxv-reasoning-collapsed");
                 reasoningWrapper.style.maxHeight = "0px";
+                applyCollapsedBoxStyles(reasoningWrapper);
                 reasoningWrapper.style.display = "none";
             }
             return;
@@ -13600,6 +13799,7 @@
         if (visible) {
             const currentHeight = reasoningWrapper.getBoundingClientRect().height;
             if (!isCollapsed && reasoningWrapper.style.display === "flex" && currentHeight > 0) return;
+            resetCollapsedBoxStyles(reasoningWrapper);
             if (reasoningWrapper.style.display !== "flex") {
                 reasoningWrapper.style.display = "flex";
             }
@@ -13623,6 +13823,7 @@
         const onEnd = (e) => {
             if (e.propertyName !== "max-height") return;
             if (reasoningWrapper.classList.contains("coolauxv-reasoning-collapsed")) {
+                applyCollapsedBoxStyles(reasoningWrapper);
                 reasoningWrapper.style.display = "none";
             }
             reasoningWrapper.removeEventListener("transitionend", onEnd);
