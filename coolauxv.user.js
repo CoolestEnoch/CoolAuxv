@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.3.1
+// @version      v16.3.2
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -224,6 +224,10 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.3.2
+        ## 🔧 问题修复
+        *   修复分隔线显示不够明显的问题
+        ---
         v16.3.1
         ## 🔧 问题修复
         *   修复AI输出没法被正确停止的问题
@@ -3292,6 +3296,20 @@
     .coolauxv-markdown p { margin: 0 0 10px 0; text-align: left !important; text-indent: 0 !important; }
     .coolauxv-markdown ul, .coolauxv-markdown ol { padding-left: 20px; margin: 5px 0 10px 0; text-align: left !important; }
     .coolauxv-markdown h1, .coolauxv-markdown h2, .coolauxv-markdown h3 { font-weight: bold; margin: 15px 0 8px 0; color: #1f2937; line-height: 1.4; text-align: left !important; }
+    .coolauxv-markdown hr, .coolauxv-markdown-body hr {
+        border: 0;
+        border-top: 2px dashed #9ca3af;
+        margin: 14px 0;
+        opacity: 1;
+    }
+    .coolauxv-markdown .coolauxv-chat-turn-divider,
+    .coolauxv-markdown-body .coolauxv-chat-turn-divider {
+        display: block;
+        height: 0;
+        border-top: 2px solid #6b7280;
+        margin: 16px 0 14px 0;
+        opacity: 1;
+    }
     .coolauxv-markdown a, .coolauxv-markdown-body a {
         color: #1d4ed8 !important;
         text-decoration-line: underline !important;
@@ -13221,7 +13239,7 @@
             ? ` <button type="button" class="coolauxv-chat-strip-media-btn" data-chat-record-id="${recordId}" title="仅删除该条消息中的图片">🧹 删图片</button>`
             : "";
         let block = "";
-        if (!isFirst) block += "\n\n---\n\n";
+        if (!isFirst) block += "\n\n<div class=\"coolauxv-chat-turn-divider\" aria-hidden=\"true\"></div>\n\n";
         block += `**👤 用户：**${refreshBtn}${editBtn}${deleteBtn}${stripMediaBtn}\n${safeText}\n`;
         if (imageId) {
             block += `\n<button type="button" class="coolauxv-chat-preview-btn" data-chat-img-id="${imageId}">🔍 预览识屏</button>\n`;
