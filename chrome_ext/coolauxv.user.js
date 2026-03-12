@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.3
+// @version      v16.3.1
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -142,6 +142,11 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.3.1
+        ## 🔧 问题修复
+        *   修复AI输出没法被正确停止的问题
+        *   修复顶部区域、连续对话区域动画消失
+        ---
         v16.3
         ## ✨ 新功能
         *   支持No-History Chat格式的提供商了
@@ -2454,9 +2459,9 @@
         opacity: 1;
         transform: translateX(0);
         overflow: hidden;
-        transition: max-width 0.25s cubic-bezier(0.2, 0, 0, 1),
-                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
-                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+        transition: max-width 0.36s cubic-bezier(0.22, 1, 0.36, 1),
+                    opacity 0.30s cubic-bezier(0.22, 1, 0.36, 1),
+                    transform 0.36s cubic-bezier(0.22, 1, 0.36, 1);
     }
     .coolauxv-batch-toggle-btn.coolauxv-batch-toggle-active .coolauxv-batch-toggle-icon {
         max-width: 0;
@@ -2686,10 +2691,10 @@
         max-height: none;
         opacity: 1;
         transform: translateY(0);
-        transition: height 0.25s cubic-bezier(0.2, 0, 0, 1),
-                    max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
-                    opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
-                    transform 0.25s cubic-bezier(0.2, 0, 0, 1);
+        transition: height 0.40s cubic-bezier(0.22, 1, 0.36, 1),
+                    max-height 0.40s cubic-bezier(0.22, 1, 0.36, 1),
+                    opacity 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+                    transform 0.40s cubic-bezier(0.22, 1, 0.36, 1);
         will-change: height, max-height, opacity, transform;
     }
     .coolauxv-collapse-section.coolauxv-collapsed {
@@ -2966,23 +2971,20 @@
     #coolauxv-main-top-section {
         display: flex;
         flex-direction: column;
-        overflow: visible;
+        overflow: hidden;
         max-height: none;
         opacity: 1;
         transform: translateY(0);
-        transition: height 0.25s cubic-bezier(0.2, 0, 0, 1),
-                    max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
                     opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
                     transform 0.25s cubic-bezier(0.2, 0, 0, 1);
-        will-change: height, max-height, opacity, transform;
+        will-change: max-height, opacity, transform;
         flex-shrink: 0;
     }
     #coolauxv-main-top-section.coolauxv-top-collapsed {
-        height: 0;
         max-height: 0;
         opacity: 0;
         transform: translateY(-4px);
-        overflow: hidden;
         pointer-events: none;
     }
     #coolauxv-chat-body {
@@ -2994,14 +2996,12 @@
         max-height: none;
         opacity: 1;
         transform: translateY(0);
-        transition: height 0.25s cubic-bezier(0.2, 0, 0, 1),
-                    max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
+        transition: max-height 0.25s cubic-bezier(0.2, 0, 0, 1),
                     opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
                     transform 0.25s cubic-bezier(0.2, 0, 0, 1);
-        will-change: height, max-height, opacity, transform;
+        will-change: max-height, opacity, transform;
     }
     #coolauxv-chat-bar.coolauxv-chat-collapsed #coolauxv-chat-body {
-        height: 0;
         max-height: 0;
         opacity: 0;
         transform: translateY(-4px);
@@ -11257,26 +11257,8 @@
             syncContinuousChatPromptSectionVisibility();
         };
 
-        const measureExpandedSectionHeight = (section) => {
-            if (!section) return 1;
-            const prevMaxHeight = section.style.maxHeight;
-            const prevHeight = section.style.height;
-            const prevOverflow = section.style.overflow;
-            resetCollapsedBoxStyles(section);
-            section.style.maxHeight = "none";
-            section.style.height = "";
-            section.style.overflow = "visible";
-            const measured = Math.max(section.getBoundingClientRect().height, section.scrollHeight, 1);
-            section.style.maxHeight = prevMaxHeight;
-            section.style.height = prevHeight;
-            section.style.overflow = prevOverflow;
-            return measured;
-        };
-
         const finalizeChatBodyExpand = () => {
             if (!chatBody || isChatCollapsed) return;
-            resetCollapsedBoxStyles(chatBody);
-            chatBody.style.height = "";
             chatBody.style.maxHeight = "none";
             chatBody.style.overflow = "visible";
         };
@@ -11284,15 +11266,11 @@
         const syncChatBodyHeight = () => {
             if (!chatBody || isChatCollapsed) return;
             if (chatBody.style.maxHeight === "none") return;
-            const targetHeight = measureExpandedSectionHeight(chatBody);
-            chatBody.style.maxHeight = `${targetHeight}px`;
-            chatBody.style.height = `${targetHeight}px`;
+            chatBody.style.maxHeight = `${chatBody.scrollHeight}px`;
         };
 
         const finalizeTopSectionExpand = () => {
             if (!topSection || isTopSectionCollapsed) return;
-            resetCollapsedBoxStyles(topSection);
-            topSection.style.height = "";
             topSection.style.maxHeight = "none";
             topSection.style.overflow = "visible";
         };
@@ -11300,9 +11278,7 @@
         const syncTopSectionHeight = () => {
             if (!topSection || isTopSectionCollapsed) return;
             if (topSection.style.maxHeight === "none") return;
-            const targetHeight = measureExpandedSectionHeight(topSection);
-            topSection.style.maxHeight = `${targetHeight}px`;
-            topSection.style.height = `${targetHeight}px`;
+            topSection.style.maxHeight = `${topSection.scrollHeight}px`;
         };
 
         let isTopSectionHoverPreviewing = false;
@@ -11319,7 +11295,7 @@
                 topSectionHoverLeaveTimer = 0;
                 if (!isTopSectionCollapsed || !isTopSectionHoverPreviewing) return;
                 stopTopSectionHoverPreview();
-            }, 120);
+            }, 50);
         };
 
         const startTopSectionHoverPreview = () => {
@@ -11328,30 +11304,22 @@
             clearTopSectionHoverLeaveTimer();
             isTopSectionHoverPreviewing = true;
             if (!isBasicAnimEnabled()) {
-                resetCollapsedBoxStyles(topSection);
                 topSection.style.overflow = "visible";
                 topSection.classList.remove("coolauxv-top-collapsed");
-                topSection.style.height = "";
                 topSection.style.maxHeight = "none";
                 return;
             }
-            resetCollapsedBoxStyles(topSection);
             topSection.style.overflow = "hidden";
             topSection.classList.remove("coolauxv-top-collapsed");
-            topSection.style.height = "0px";
             topSection.style.maxHeight = "0px";
             requestAnimationFrame(() => {
                 if (!isTopSectionHoverPreviewing || !isTopSectionCollapsed) return;
-                const targetHeight = measureExpandedSectionHeight(topSection);
-                topSection.style.height = `${targetHeight}px`;
-                topSection.style.maxHeight = `${targetHeight}px`;
+                topSection.style.maxHeight = `${topSection.scrollHeight}px`;
                 let expandTimeoutId = 0;
                 const onExpandEnd = (e) => {
                     if (e.propertyName !== "max-height") return;
                     cleanupExpand();
                     if (isTopSectionHoverPreviewing && isTopSectionCollapsed) {
-                        resetCollapsedBoxStyles(topSection);
-                        topSection.style.height = "";
                         topSection.style.maxHeight = "none";
                         topSection.style.overflow = "visible";
                     }
@@ -11367,8 +11335,6 @@
                 expandTimeoutId = window.setTimeout(() => {
                     cleanupExpand();
                     if (isTopSectionHoverPreviewing && isTopSectionCollapsed) {
-                        resetCollapsedBoxStyles(topSection);
-                        topSection.style.height = "";
                         topSection.style.maxHeight = "none";
                         topSection.style.overflow = "visible";
                     }
@@ -11380,14 +11346,12 @@
             if (!topSection || !isTopSectionHoverPreviewing) return;
             clearTopSectionHoverLeaveTimer();
             isTopSectionHoverPreviewing = false;
-            resetCollapsedBoxStyles(topSection);
             topSection.style.overflow = "hidden";
-            const currentHeight = Math.max(topSection.getBoundingClientRect().height, topSection.scrollHeight, 1);
-            topSection.style.height = `${currentHeight}px`;
-            topSection.style.maxHeight = `${currentHeight}px`;
+            if (topSection.style.maxHeight === "none") {
+                topSection.style.maxHeight = `${topSection.scrollHeight}px`;
+            }
             void topSection.offsetHeight;
             topSection.classList.add("coolauxv-top-collapsed");
-            topSection.style.height = "0px";
             topSection.style.maxHeight = "0px";
         };
 
@@ -11421,40 +11385,28 @@
                 topSection.classList.toggle("coolauxv-top-collapsed", isTopSectionCollapsed);
                 if (isTopSectionCollapsed) {
                     topSection.style.overflow = "hidden";
-                    applyCollapsedBoxStyles(topSection);
-                    topSection.style.height = "0px";
                     topSection.style.maxHeight = "0px";
                 } else {
-                    resetCollapsedBoxStyles(topSection);
                     topSection.style.overflow = "visible";
-                    topSection.style.height = "";
                     topSection.style.maxHeight = "none";
                 }
                 return;
             }
             topSection.classList.toggle("coolauxv-top-collapsed", isTopSectionCollapsed);
             if (isTopSectionCollapsed) {
-                resetCollapsedBoxStyles(topSection);
                 topSection.style.overflow = "hidden";
-                const currentHeight = Math.max(topSection.getBoundingClientRect().height, topSection.scrollHeight, 1);
-                topSection.style.height = `${currentHeight}px`;
-                topSection.style.maxHeight = `${currentHeight}px`;
-                void topSection.offsetHeight;
-                topSection.style.height = "0px";
+                if (topSection.style.maxHeight === "none") {
+                    topSection.style.maxHeight = `${topSection.scrollHeight}px`;
+                    void topSection.offsetHeight;
+                }
                 topSection.style.maxHeight = "0px";
             } else {
-                const isFlexible = topSection.style.maxHeight === "none" && !topSection.style.height;
+                const isFlexible = topSection.style.maxHeight === "none";
                 if (isFlexible) {
-                    resetCollapsedBoxStyles(topSection);
                     topSection.style.overflow = "visible";
                 } else {
-                    resetCollapsedBoxStyles(topSection);
                     topSection.style.overflow = "hidden";
-                    topSection.style.height = "0px";
-                    topSection.style.maxHeight = "0px";
-                    requestAnimationFrame(() => {
-                        syncTopSectionHeight();
-                    });
+                    syncTopSectionHeight();
                     let expandTimeoutId = 0;
                     const onExpandEnd = (e) => {
                         if (e.propertyName !== "max-height") return;
@@ -11490,13 +11442,9 @@
             if (!isBasicAnimEnabled()) {
                 if (isChatCollapsed) {
                     chatBody.style.overflow = "hidden";
-                    applyCollapsedBoxStyles(chatBody);
-                    chatBody.style.height = "0px";
                     chatBody.style.maxHeight = "0px";
                 } else {
-                    resetCollapsedBoxStyles(chatBody);
                     chatBody.style.overflow = "visible";
-                    chatBody.style.height = "";
                     chatBody.style.maxHeight = "none";
                 }
                 if (resultDiv && wasNearBottom) {
@@ -11509,27 +11457,19 @@
                 return;
             }
             if (isChatCollapsed) {
-                resetCollapsedBoxStyles(chatBody);
                 chatBody.style.overflow = "hidden";
-                const currentHeight = Math.max(chatBody.getBoundingClientRect().height, chatBody.scrollHeight, 1);
-                chatBody.style.height = `${currentHeight}px`;
-                chatBody.style.maxHeight = `${currentHeight}px`;
-                void chatBody.offsetHeight;
-                chatBody.style.height = "0px";
+                if (chatBody.style.maxHeight === "none") {
+                    chatBody.style.maxHeight = `${chatBody.scrollHeight}px`;
+                    void chatBody.offsetHeight;
+                }
                 chatBody.style.maxHeight = "0px";
             } else {
-                const isFlexible = chatBody.style.maxHeight === "none" && !chatBody.style.height;
+                const isFlexible = chatBody.style.maxHeight === "none";
                 if (isFlexible) {
-                    resetCollapsedBoxStyles(chatBody);
                     chatBody.style.overflow = "visible";
                 } else {
-                    resetCollapsedBoxStyles(chatBody);
                     chatBody.style.overflow = "hidden";
-                    chatBody.style.height = "0px";
-                    chatBody.style.maxHeight = "0px";
-                    requestAnimationFrame(() => {
-                        syncChatBodyHeight();
-                    });
+                    syncChatBodyHeight();
                     let expandTimeoutId = 0;
                     const onExpandEnd = (e) => {
                         if (e.propertyName !== "max-height") return;
@@ -14210,6 +14150,7 @@
 
     function closeWindow() {
         if (isPopupAnimating) return;
+        interruptActiveOutput({ discard: true });
         const enableMinAnim = isMinimizeAnimEnabled();
         if (enableMinAnim) {
             animatePopupSlideOutDown(() => {
@@ -15335,15 +15276,26 @@
         if (gmRequest && gmRequest.abort) gmRequest.abort();
     }
 
-    function interruptActiveOutput() {
-        if (!isRendering) return;
+    function interruptActiveOutput(options = {}) {
+        const discard = !!(options && options.discard);
+        const hasPendingRequest = !!abortController || !!(gmRequest && gmRequest.abort);
+        if (!isRendering && !hasPendingRequest) return;
         ignoreIncomingOutput = true;
         streamErrorHandled = true;
         const actionToken = activeActionToken;
         activeActionToken += 1;
         abortActiveStream();
-        if (streamMode === "chat") {
+        if (!discard && streamMode === "chat" && isRendering) {
             finalizeChatResponse(actionToken);
+        }
+        if (discard) {
+            streamTextBuffer = "";
+            streamReasoningBuffer = "";
+            chatAssistantBuffer = "";
+            openaiStreamHasDelta = false;
+            openaiStreamHasFull = false;
+            chatPartsStreamHasDelta = false;
+            chatPartsStreamHasFull = false;
         }
         stopRenderLoop();
     }
