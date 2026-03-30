@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.3.2
+// @version      v16.4
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -142,6 +142,10 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.3
+        ## ✨ 新功能
+        *   支持Ollama API了
+        ---
         v16.3.2
         ## 🔧 问题修复
         *   修复分隔线显示不够明显的问题
@@ -562,17 +566,19 @@
     const normalizeProviderType = (type) => {
         if (type === "openai-responses") return "openai-responses";
         if (type === "chat-parts") return "chat-parts";
+        if (type === "ollama") return "ollama";
         if (type === "chat-no-history") return "chat-no-history";
         return "chat-completions";
     };
     const isChatCompletionsLikeProviderType = (type) => {
         const normalized = normalizeProviderType(type);
-        return normalized === "chat-completions" || normalized === "chat-no-history";
+        return normalized === "chat-completions" || normalized === "chat-no-history" || normalized === "ollama";
     };
     const getProviderTypeLabel = (type) => {
         const normalized = normalizeProviderType(type);
         if (normalized === "openai-responses") return "OpenAI Responses";
         if (normalized === "chat-parts") return "Chat Parts";
+        if (normalized === "ollama") return "Ollama";
         if (normalized === "chat-no-history") return "No-History Chat";
         return "Chat Completions";
     };
@@ -591,16 +597,24 @@
                 model: "{{model}}"
             };
         }
+        if (normalized === "ollama") {
+            return { model: "{{model}}", stream: true, messages: "{{messages}}" };
+        }
         return { model: "{{model}}", stream: true, messages: "{{messages}}" };
+    };
+    const getDefaultDeltaPathByType = (type) => {
+        const normalized = normalizeProviderType(type);
+        if (normalized === "openai-responses" || normalized === "chat-parts") return "";
+        if (normalized === "chat-no-history") return "content";
+        if (normalized === "ollama") return "message.content";
+        return "choices.0.delta.content";
     };
     const getDefaultStreamTemplateByType = (type) => {
         const normalized = normalizeProviderType(type);
         const parser = normalized === "chat-no-history" ? "chat-completions" : normalized;
         return {
             parser: parser,
-            deltaPath: normalized === "openai-responses" || normalized === "chat-parts"
-                ? ""
-                : (normalized === "chat-no-history" ? "content" : "choices.0.delta.content"),
+            deltaPath: getDefaultDeltaPathByType(normalized),
             reasoningPath: "",
             sessionIdPath: "",
             sessionIdKey: DEFAULT_PROVIDER_SESSION_FIELD_KEY,
@@ -1275,11 +1289,13 @@
             headersTemplate: headersTemplate && typeof headersTemplate === "object" ? headersTemplate : { "Content-Type": "application/json" },
             bodyTemplate: bodyTemplate && typeof bodyTemplate === "object" ? bodyTemplate : getDefaultBodyTemplateByType(normalizedType),
             stream: tpl.stream && typeof tpl.stream === "object" ? {
-                parser: tpl.stream.parser === "openai-responses"
-                    ? "openai-responses"
-                    : (tpl.stream.parser === "chat-parts"
-                        ? "chat-parts"
-                        : (tpl.stream.parser === "chat-completions" ? "chat-completions" : (normalizedType === "chat-no-history" ? "chat-completions" : normalizedType))),
+                parser: (() => {
+                    if (tpl.stream.parser === "openai-responses") return "openai-responses";
+                    if (tpl.stream.parser === "chat-parts") return "chat-parts";
+                    if (tpl.stream.parser === "ollama") return "ollama";
+                    if (tpl.stream.parser === "chat-completions") return "chat-completions";
+                    return normalizedType === "chat-no-history" ? "chat-completions" : normalizedType;
+                })(),
                 deltaPath: tpl.stream.deltaPath !== undefined ? String(tpl.stream.deltaPath) : defaultStream.deltaPath,
                 reasoningPath: tpl.stream.reasoningPath !== undefined ? String(tpl.stream.reasoningPath) : defaultStream.reasoningPath,
                 sessionIdPath: tpl.stream.sessionIdPath !== undefined ? String(tpl.stream.sessionIdPath) : defaultStream.sessionIdPath,
@@ -8461,6 +8477,9 @@
                     model: "{{model}}"
                 };
             }
+            if (type === "ollama") {
+                return { model: "{{model}}", stream: true, messages: "{{messages}}" };
+            }
             return { model: "{{model}}", stream: true, messages: "{{messages}}" };
         };
 
@@ -8831,6 +8850,7 @@
                         <select id="coolauxv-provider-form-type" class="coolauxv-setting-input coolauxv-fixed-input">
                             <option value="chat-completions" ${baseTemplate.type === "chat-completions" ? "selected" : ""}>Chat Completions</option>
                             <option value="chat-no-history" ${baseTemplate.type === "chat-no-history" ? "selected" : ""}>No-History Chat</option>
+                            <option value="ollama" ${baseTemplate.type === "ollama" ? "selected" : ""}>Ollama</option>
                             <option value="chat-parts" ${baseTemplate.type === "chat-parts" ? "selected" : ""}>Chat Parts</option>
                             <option value="openai-responses" ${baseTemplate.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                         </select>
@@ -9143,11 +9163,7 @@
             if (typeInput) {
                 typeInput.addEventListener("change", () => {
                     if (bodyInput) {
-                        const nextType = typeInput.value === "openai-responses"
-                            ? "openai-responses"
-                            : (typeInput.value === "chat-parts"
-                                ? "chat-parts"
-                                : (typeInput.value === "chat-no-history" ? "chat-no-history" : "chat-completions"));
+                        const nextType = normalizeProviderType(typeInput.value);
                         bodyInput.value = JSON.stringify(defaultBodyTemplateForType(nextType), null, 2);
                     }
                     refreshStreamSection();
@@ -9300,11 +9316,7 @@
                     const apiKeyPlaceholder = (box.querySelector("#coolauxv-provider-form-api-key-placeholder") || {}).value || "";
                     const keyLink = (box.querySelector("#coolauxv-provider-form-key-link") || {}).value || "";
                     const keyLinkTitle = (box.querySelector("#coolauxv-provider-form-key-link-title") || {}).value || "";
-                    const type = typeInput && typeInput.value === "openai-responses"
-                        ? "openai-responses"
-                        : (typeInput && typeInput.value === "chat-parts"
-                            ? "chat-parts"
-                            : (typeInput && typeInput.value === "chat-no-history" ? "chat-no-history" : "chat-completions"));
+                    const type = normalizeProviderType(typeInput && typeInput.value);
                     const supportsVision = !!(box.querySelector("#coolauxv-provider-form-vision") || {}).checked;
                     const supportsContinuousChat = !!(box.querySelector("#coolauxv-provider-form-continuous-chat") || {}).checked;
                     const roleSystem = (box.querySelector("#coolauxv-provider-form-role-system") || {}).value || "system";
@@ -9542,6 +9554,7 @@
                                 <select class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="type" data-rerender="true">
                                     <option value="chat-completions" ${provider.type === "chat-completions" ? "selected" : ""}>Chat Completions</option>
                                     <option value="chat-no-history" ${provider.type === "chat-no-history" ? "selected" : ""}>No-History Chat</option>
+                                    <option value="ollama" ${provider.type === "ollama" ? "selected" : ""}>Ollama</option>
                                     <option value="chat-parts" ${provider.type === "chat-parts" ? "selected" : ""}>Chat Parts</option>
                                     <option value="openai-responses" ${provider.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                                 </select>
@@ -10604,15 +10617,11 @@
 
                 if (field === "type") {
                     const previousType = tpl.type;
-                    const nextType = target.value === "openai-responses"
-                        ? "openai-responses"
-                        : (target.value === "chat-parts"
-                            ? "chat-parts"
-                            : (target.value === "chat-no-history" ? "chat-no-history" : "chat-completions"));
+                    const nextType = normalizeProviderType(target.value);
                     tpl.type = nextType;
                     tpl.stream.parser = nextType === "chat-no-history" ? "chat-completions" : nextType;
                     if (isChatCompletionsLikeProviderType(nextType) && !tpl.stream.deltaPath) {
-                        tpl.stream.deltaPath = nextType === "chat-no-history" ? "content" : "choices.0.delta.content";
+                        tpl.stream.deltaPath = getDefaultDeltaPathByType(nextType);
                     }
                     if (previousType !== nextType) {
                         const defaultBody = defaultBodyTemplateForType(previousType);
@@ -12409,6 +12418,17 @@
         return applyTemplateString(template.baseUrl, context);
     };
 
+    const shouldForceGMRequestForUrl = (url) => {
+        if (typeof GM_xmlhttpRequest !== "function") return false;
+        if (typeof location === "undefined" || location.protocol !== "https:") return false;
+        try {
+            const parsed = new URL(String(url || ""), location.href);
+            return parsed.protocol === "http:";
+        } catch (err) {
+            return false;
+        }
+    };
+
     const buildProviderHeaders = (template, context) => {
         if (!template) return { "Content-Type": "application/json" };
         const headers = applyTemplateValue(template.headersTemplate || {}, buildTemplateContext(template, context || {}));
@@ -12672,8 +12692,31 @@
     }
 
     function splitThinkTaggedChunk(rawChunk) {
-        const THINK_OPEN = "<think>";
-        const THINK_CLOSE = "</think>";
+        const THINK_OPEN_VARIANTS = ["<think>", "\\u003cthink\\u003e", "&lt;think&gt;"];
+        const THINK_CLOSE_VARIANTS = ["</think>", "\\u003c/think\\u003e", "&lt;/think&gt;"];
+        const findEarliestTagMatch = (input, tagVariants) => {
+            const lower = input.toLowerCase();
+            let matchedIndex = -1;
+            let matchedLen = 0;
+            for (let i = 0; i < tagVariants.length; i += 1) {
+                const tag = tagVariants[i];
+                const idx = lower.indexOf(tag);
+                if (idx < 0) continue;
+                if (matchedIndex === -1 || idx < matchedIndex) {
+                    matchedIndex = idx;
+                    matchedLen = tag.length;
+                }
+            }
+            return { index: matchedIndex, length: matchedLen };
+        };
+        const getMaxTagPrefixCarryLength = (input, tagVariants) => {
+            let maxCarry = 0;
+            for (let i = 0; i < tagVariants.length; i += 1) {
+                const carryLen = getTagPrefixCarryLength(input, tagVariants[i]);
+                if (carryLen > maxCarry) maxCarry = carryLen;
+            }
+            return maxCarry;
+        };
         let text = `${streamThinkTagCarry}${String(rawChunk === undefined || rawChunk === null ? "" : rawChunk)}`;
         streamThinkTagCarry = "";
         let reasoning = "";
@@ -12681,28 +12724,28 @@
 
         while (text) {
             if (streamThinkTagInReasoning) {
-                const closeIdx = text.indexOf(THINK_CLOSE);
-                if (closeIdx >= 0) {
-                    reasoning += text.slice(0, closeIdx);
-                    text = text.slice(closeIdx + THINK_CLOSE.length);
+                const closeMatch = findEarliestTagMatch(text, THINK_CLOSE_VARIANTS);
+                if (closeMatch.index >= 0) {
+                    reasoning += text.slice(0, closeMatch.index);
+                    text = text.slice(closeMatch.index + closeMatch.length);
                     streamThinkTagInReasoning = false;
                     continue;
                 }
-                const carryLen = getTagPrefixCarryLength(text, THINK_CLOSE);
+                const carryLen = getMaxTagPrefixCarryLength(text, THINK_CLOSE_VARIANTS);
                 const stableText = text.slice(0, text.length - carryLen);
                 reasoning += stableText;
                 streamThinkTagCarry = text.slice(text.length - carryLen);
                 text = "";
                 continue;
             }
-            const openIdx = text.indexOf(THINK_OPEN);
-            if (openIdx >= 0) {
-                content += text.slice(0, openIdx);
-                text = text.slice(openIdx + THINK_OPEN.length);
+            const openMatch = findEarliestTagMatch(text, THINK_OPEN_VARIANTS);
+            if (openMatch.index >= 0) {
+                content += text.slice(0, openMatch.index);
+                text = text.slice(openMatch.index + openMatch.length);
                 streamThinkTagInReasoning = true;
                 continue;
             }
-            const carryLen = getTagPrefixCarryLength(text, THINK_OPEN);
+            const carryLen = getMaxTagPrefixCarryLength(text, THINK_OPEN_VARIANTS);
             const stableText = text.slice(0, text.length - carryLen);
             content += stableText;
             streamThinkTagCarry = text.slice(text.length - carryLen);
@@ -12741,6 +12784,13 @@
         streamTextBuffer += text;
     }
 
+    function appendTaggedContentChunk(template, rawChunk, isChatMode) {
+        if (rawChunk === undefined || rawChunk === null) return;
+        const tagged = parseContentChunkByReasoningTag(template, rawChunk);
+        if (tagged.reasoning) appendReasoningChunk(tagged.reasoning);
+        if (tagged.content) appendContentChunk(tagged.content, isChatMode);
+    }
+
     function captureProviderRuntimeFieldsFromChunk(template, data) {
         if (!template || !data || typeof data !== "object") return;
         const streamCfg = resolveTemplateStreamConfig(template);
@@ -12755,10 +12805,25 @@
     function parseContentChunkByReasoningTag(template, rawChunk) {
         const streamCfg = resolveTemplateStreamConfig(template);
         const reasoningTag = streamCfg && streamCfg.reasoningTag ? String(streamCfg.reasoningTag).trim().toLowerCase() : "";
-        if (reasoningTag !== "think") {
-            return { reasoning: "", content: rawChunk === undefined || rawChunk === null ? "" : String(rawChunk) };
+        const rawText = rawChunk === undefined || rawChunk === null ? "" : String(rawChunk);
+        const parser = streamCfg && streamCfg.parser ? String(streamCfg.parser).trim().toLowerCase() : "";
+        const lowerText = rawText.toLowerCase();
+        const hasThinkToken = lowerText.includes("<think>")
+            || lowerText.includes("\\u003cthink\\u003e")
+            || lowerText.includes("&lt;think&gt;")
+            || !!streamThinkTagCarry
+            || streamThinkTagInReasoning;
+        const shouldUseThinkTag = reasoningTag === "think" || (!reasoningTag && (parser === "ollama" || hasThinkToken));
+        if (!shouldUseThinkTag) {
+            return { reasoning: "", content: rawText };
         }
-        return splitThinkTaggedChunk(rawChunk);
+        return splitThinkTaggedChunk(rawText);
+    }
+
+    function applyFallbackTextWithReasoningTag(template, fallbackText, isChatMode) {
+        const rawText = fallbackText === undefined || fallbackText === null ? "" : String(fallbackText);
+        if (!rawText) return;
+        appendTaggedContentChunk(template, rawText, isChatMode);
     }
 
     function flushReasoningTagRemainderToBuffers(isChatMode) {
@@ -14949,11 +15014,16 @@
 
         const fetchProviderIds = new Set(["zhipu", "openai"]);
         const isFetchPreferred = providerTemplate && fetchProviderIds.has(providerTemplate.id);
+        const shouldForceGmXhr = shouldForceGMRequestForUrl(url);
         const preferGMXhr = typeof GM_xmlhttpRequest === "function"
             && typeof chrome !== "undefined"
             && chrome.runtime
             && chrome.runtime.id
-            && !isFetchPreferred;
+            && (shouldForceGmXhr || !isFetchPreferred);
+
+        if (shouldForceGmXhr) {
+            Logger.info("检测到 HTTPS 页面调用 HTTP Provider，跳过 Fetch，直接使用 GM_xmlhttpRequest。");
+        }
 
         // 策略 A: Fetch (仅在非扩展环境优先使用)
         if (!preferGMXhr) {
@@ -15028,7 +15098,7 @@
                         return;
                     }
                     if (fallback && fallback.text) {
-                        streamTextBuffer = String(fallback.text);
+                        applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, false);
                         renderContent();
                     }
                 }
@@ -15116,7 +15186,7 @@
                         return;
                     }
                     if (fallback && fallback.text) {
-                        streamTextBuffer = String(fallback.text);
+                        applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, false);
                     }
                 }
                 renderContent();
@@ -15235,7 +15305,7 @@
                                     return;
                                 }
                                 if (fallback && fallback.text) {
-                                    streamTextBuffer = String(fallback.text);
+                                    applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, false);
                                     renderContent();
                                 }
                             }
@@ -15584,9 +15654,7 @@
                 const contentText = String(contentChunk);
                 const isDoneChunk = normalizedContentType === "1002" && contentText.trim().toLowerCase() === "[done]";
                 if (!isDoneChunk) {
-                    const tagged = parseContentChunkByReasoningTag(template, contentText);
-                    if (tagged.reasoning) appendReasoningChunk(tagged.reasoning);
-                    if (tagged.content) appendContentChunk(tagged.content, isChatMode);
+                    appendTaggedContentChunk(template, contentText, isChatMode);
                 }
             }
         } catch (e) {
@@ -15700,6 +15768,15 @@
             const text = normalizeNonStreamText(extractChatPartsOutputText(data));
             if (text) return { text };
         }
+        if (parser === "ollama") {
+            const resolvedStream = resolveTemplateStreamConfig(template);
+            const contentPath = resolvedStream.deltaPath || "message.content";
+            const candidate = getValueByPath(data, contentPath);
+            if (typeof candidate === "string" && candidate) {
+                const text = normalizeNonStreamText(candidate);
+                if (text) return { text };
+            }
+        }
 
         let text = "";
         if (Array.isArray(data.choices) && data.choices.length) {
@@ -15725,6 +15802,7 @@
 
         if (!text && typeof data.output_text === "string") text = data.output_text;
         if (!text && typeof data.result === "string") text = data.result;
+        if (!text && data.message && typeof data.message === "object" && typeof data.message.content === "string") text = data.message.content;
         if (!text && typeof data.message === "string") text = data.message;
         if (!text && typeof data.content === "string" && String(data.contentType || "").trim() !== "1002") text = data.content;
         if (!text && typeof data.text === "string") text = data.text;
@@ -15755,12 +15833,7 @@
             if (data && typeof data === "object" && data.type === "text-delta" && typeof data.delta === "string") {
                 if (data.delta) {
                     chatPartsStreamHasDelta = true;
-                    if (isChatMode) {
-                        chatAssistantBuffer += data.delta;
-                        updateChatStreamText();
-                    } else {
-                        streamTextBuffer += data.delta;
-                    }
+                    appendTaggedContentChunk(template, data.delta, isChatMode);
                 }
                 return;
             }
@@ -15768,12 +15841,7 @@
                 if (chatPartsStreamHasDelta || chatPartsStreamHasFull) return;
                 const text = data.text;
                 if (text) {
-                    if (isChatMode) {
-                        chatAssistantBuffer += text;
-                        updateChatStreamText();
-                    } else {
-                        streamTextBuffer += text;
-                    }
+                    appendTaggedContentChunk(template, text, isChatMode);
                     chatPartsStreamHasFull = true;
                 }
                 return;
@@ -15781,12 +15849,7 @@
             if (chatPartsStreamHasDelta || chatPartsStreamHasFull) return;
             const fullText = extractChatPartsOutputText(data);
             if (fullText) {
-                if (isChatMode) {
-                    chatAssistantBuffer += fullText;
-                    updateChatStreamText();
-                } else {
-                    streamTextBuffer += fullText;
-                }
+                appendTaggedContentChunk(template, fullText, isChatMode);
                 chatPartsStreamHasFull = true;
             }
         } catch (e) {
@@ -15806,12 +15869,7 @@
                 const fullText = extractOpenaiOutputText(line);
                 if (fullText) {
                     const isChatMode = streamMode === "chat";
-                    if (isChatMode) {
-                        chatAssistantBuffer += fullText;
-                        updateChatStreamText();
-                    } else {
-                        streamTextBuffer += fullText;
-                    }
+                    appendTaggedContentChunk(template, fullText, isChatMode);
                     openaiStreamHasFull = true;
                 }
             }
@@ -15828,38 +15886,62 @@
                 if (!delta) return;
                 openaiStreamHasDelta = true;
                 const isChatMode = streamMode === "chat";
-                if (isChatMode) {
-                    chatAssistantBuffer += delta;
-                    updateChatStreamText();
-                } else {
-                    streamTextBuffer += delta;
-                }
+                appendTaggedContentChunk(template, delta, isChatMode);
             } else if (data.type === "response.output_text.done" && data.text) {
                 if (openaiStreamHasDelta || openaiStreamHasFull) return;
                 const isChatMode = streamMode === "chat";
-                if (isChatMode) {
-                    chatAssistantBuffer += data.text;
-                    updateChatStreamText();
-                } else {
-                    streamTextBuffer += data.text;
-                }
+                appendTaggedContentChunk(template, data.text, isChatMode);
                 openaiStreamHasFull = true;
             } else if (data.type === "response.completed" && data.response) {
                 if (openaiStreamHasDelta || openaiStreamHasFull) return;
                 const fullText = extractOpenaiOutputText(data.response);
                 if (fullText) {
                     const isChatMode = streamMode === "chat";
-                    if (isChatMode) {
-                        chatAssistantBuffer += fullText;
-                        updateChatStreamText();
-                    } else {
-                        streamTextBuffer += fullText;
-                    }
+                    appendTaggedContentChunk(template, fullText, isChatMode);
                     openaiStreamHasFull = true;
                 }
             }
         } catch (e) {
             Logger.debug("OpenAI JSON Parse Error (Ignore)", line);
+        }
+    }
+
+    function processOllamaStreamLine(template, line) {
+        line = line.trim();
+        if (!line) return;
+        if (streamErrorHandled) return;
+        const providerId = template ? template.id : "ollama";
+        let jsonStr = "";
+        if (line.startsWith("data:")) {
+            jsonStr = line.slice(5).trim();
+        } else if (line.startsWith("{")) {
+            jsonStr = line;
+        } else {
+            return;
+        }
+        if (!jsonStr || jsonStr === "[DONE]") return;
+        try {
+            const data = JSON.parse(jsonStr);
+            const apiErr = parseApiError(data);
+            if (apiErr && handleApiError(providerId, apiErr)) return;
+            captureProviderRuntimeFieldsFromChunk(template, data);
+
+            const streamCfg = resolveTemplateStreamConfig(template);
+            const reasoningPath = streamCfg.reasoningPath || "";
+            const contentPath = streamCfg.deltaPath || "message.content";
+            const isChatMode = streamMode === "chat";
+            const reasoningChunk = reasoningPath ? getValueByPath(data, reasoningPath) : "";
+            let contentChunk = getValueByPath(data, contentPath);
+
+            if ((contentChunk === undefined || contentChunk === null) && typeof data.response === "string") {
+                contentChunk = data.response;
+            }
+            if (reasoningChunk) appendReasoningChunk(reasoningChunk);
+            if (contentChunk !== undefined && contentChunk !== null) {
+                appendTaggedContentChunk(template, String(contentChunk), isChatMode);
+            }
+        } catch (e) {
+            Logger.debug("Ollama JSON Parse Error (Ignore)", line);
         }
     }
 
@@ -15873,6 +15955,10 @@
         }
         if (parser === "chat-parts") {
             processChatPartsStreamLine(template, line);
+            return;
+        }
+        if (parser === "ollama") {
+            processOllamaStreamLine(template, line);
             return;
         }
         processChatCompletionsStreamLine(template, line);
@@ -16505,7 +16591,7 @@
                                     return;
                                 }
                                 if (fallback && fallback.text) {
-                                    streamTextBuffer = String(fallback.text);
+                                    applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, false);
                                     renderContent();
                                 }
                             }
@@ -16708,7 +16794,7 @@
                                     return;
                                 }
                                 if (fallback && fallback.text) {
-                                    chatAssistantBuffer = String(fallback.text);
+                                    applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, true);
                                     updateChatStreamText();
                                     renderContent();
                                 }

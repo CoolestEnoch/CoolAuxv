@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.3.2
+// @version      v16.4
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -224,6 +224,10 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.3
+        ## ✨ 新功能
+        *   支持Ollama API了
+        ---
         v16.3.2
         ## 🔧 问题修复
         *   修复分隔线显示不够明显的问题
@@ -505,17 +509,19 @@
     const normalizeProviderType = (type) => {
         if (type === "openai-responses") return "openai-responses";
         if (type === "chat-parts") return "chat-parts";
+        if (type === "ollama") return "ollama";
         if (type === "chat-no-history") return "chat-no-history";
         return "chat-completions";
     };
     const isChatCompletionsLikeProviderType = (type) => {
         const normalized = normalizeProviderType(type);
-        return normalized === "chat-completions" || normalized === "chat-no-history";
+        return normalized === "chat-completions" || normalized === "chat-no-history" || normalized === "ollama";
     };
     const getProviderTypeLabel = (type) => {
         const normalized = normalizeProviderType(type);
         if (normalized === "openai-responses") return "OpenAI Responses";
         if (normalized === "chat-parts") return "Chat Parts";
+        if (normalized === "ollama") return "Ollama";
         if (normalized === "chat-no-history") return "No-History Chat";
         return "Chat Completions";
     };
@@ -534,16 +540,24 @@
                 model: "{{model}}"
             };
         }
+        if (normalized === "ollama") {
+            return { model: "{{model}}", stream: true, messages: "{{messages}}" };
+        }
         return { model: "{{model}}", stream: true, messages: "{{messages}}" };
+    };
+    const getDefaultDeltaPathByType = (type) => {
+        const normalized = normalizeProviderType(type);
+        if (normalized === "openai-responses" || normalized === "chat-parts") return "";
+        if (normalized === "chat-no-history") return "content";
+        if (normalized === "ollama") return "message.content";
+        return "choices.0.delta.content";
     };
     const getDefaultStreamTemplateByType = (type) => {
         const normalized = normalizeProviderType(type);
         const parser = normalized === "chat-no-history" ? "chat-completions" : normalized;
         return {
             parser: parser,
-            deltaPath: normalized === "openai-responses" || normalized === "chat-parts"
-                ? ""
-                : (normalized === "chat-no-history" ? "content" : "choices.0.delta.content"),
+            deltaPath: getDefaultDeltaPathByType(normalized),
             reasoningPath: "",
             sessionIdPath: "",
             sessionIdKey: DEFAULT_PROVIDER_SESSION_FIELD_KEY,
@@ -1218,11 +1232,13 @@
             headersTemplate: headersTemplate && typeof headersTemplate === "object" ? headersTemplate : { "Content-Type": "application/json" },
             bodyTemplate: bodyTemplate && typeof bodyTemplate === "object" ? bodyTemplate : getDefaultBodyTemplateByType(normalizedType),
             stream: tpl.stream && typeof tpl.stream === "object" ? {
-                parser: tpl.stream.parser === "openai-responses"
-                    ? "openai-responses"
-                    : (tpl.stream.parser === "chat-parts"
-                        ? "chat-parts"
-                        : (tpl.stream.parser === "chat-completions" ? "chat-completions" : (normalizedType === "chat-no-history" ? "chat-completions" : normalizedType))),
+                parser: (() => {
+                    if (tpl.stream.parser === "openai-responses") return "openai-responses";
+                    if (tpl.stream.parser === "chat-parts") return "chat-parts";
+                    if (tpl.stream.parser === "ollama") return "ollama";
+                    if (tpl.stream.parser === "chat-completions") return "chat-completions";
+                    return normalizedType === "chat-no-history" ? "chat-completions" : normalizedType;
+                })(),
                 deltaPath: tpl.stream.deltaPath !== undefined ? String(tpl.stream.deltaPath) : defaultStream.deltaPath,
                 reasoningPath: tpl.stream.reasoningPath !== undefined ? String(tpl.stream.reasoningPath) : defaultStream.reasoningPath,
                 sessionIdPath: tpl.stream.sessionIdPath !== undefined ? String(tpl.stream.sessionIdPath) : defaultStream.sessionIdPath,
@@ -8521,6 +8537,9 @@
                     model: "{{model}}"
                 };
             }
+            if (type === "ollama") {
+                return { model: "{{model}}", stream: true, messages: "{{messages}}" };
+            }
             return { model: "{{model}}", stream: true, messages: "{{messages}}" };
         };
 
@@ -8891,6 +8910,7 @@
                         <select id="coolauxv-provider-form-type" class="coolauxv-setting-input coolauxv-fixed-input">
                             <option value="chat-completions" ${baseTemplate.type === "chat-completions" ? "selected" : ""}>Chat Completions</option>
                             <option value="chat-no-history" ${baseTemplate.type === "chat-no-history" ? "selected" : ""}>No-History Chat</option>
+                            <option value="ollama" ${baseTemplate.type === "ollama" ? "selected" : ""}>Ollama</option>
                             <option value="chat-parts" ${baseTemplate.type === "chat-parts" ? "selected" : ""}>Chat Parts</option>
                             <option value="openai-responses" ${baseTemplate.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                         </select>
@@ -9100,11 +9120,7 @@
             if (typeInput) {
                 typeInput.addEventListener("change", () => {
                     if (bodyInput) {
-                        const nextType = typeInput.value === "openai-responses"
-                            ? "openai-responses"
-                            : (typeInput.value === "chat-parts"
-                                ? "chat-parts"
-                                : (typeInput.value === "chat-no-history" ? "chat-no-history" : "chat-completions"));
+                        const nextType = normalizeProviderType(typeInput.value);
                         bodyInput.value = JSON.stringify(defaultBodyTemplateForType(nextType), null, 2);
                     }
                     refreshStreamSection();
@@ -9393,11 +9409,7 @@
                     const apiKeyPlaceholder = (box.querySelector("#coolauxv-provider-form-api-key-placeholder") || {}).value || "";
                     const keyLink = (box.querySelector("#coolauxv-provider-form-key-link") || {}).value || "";
                     const keyLinkTitle = (box.querySelector("#coolauxv-provider-form-key-link-title") || {}).value || "";
-                    const type = typeInput && typeInput.value === "openai-responses"
-                        ? "openai-responses"
-                        : (typeInput && typeInput.value === "chat-parts"
-                            ? "chat-parts"
-                            : (typeInput && typeInput.value === "chat-no-history" ? "chat-no-history" : "chat-completions"));
+                    const type = normalizeProviderType(typeInput && typeInput.value);
                     const supportsVision = !!(box.querySelector("#coolauxv-provider-form-vision") || {}).checked;
                     const supportsContinuousChat = !!(box.querySelector("#coolauxv-provider-form-continuous-chat") || {}).checked;
                     const roleSystem = (box.querySelector("#coolauxv-provider-form-role-system") || {}).value || "system";
@@ -9634,6 +9646,7 @@
                                 <select class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="type" data-rerender="true">
                                     <option value="chat-completions" ${provider.type === "chat-completions" ? "selected" : ""}>Chat Completions</option>
                                     <option value="chat-no-history" ${provider.type === "chat-no-history" ? "selected" : ""}>No-History Chat</option>
+                                    <option value="ollama" ${provider.type === "ollama" ? "selected" : ""}>Ollama</option>
                                     <option value="chat-parts" ${provider.type === "chat-parts" ? "selected" : ""}>Chat Parts</option>
                                     <option value="openai-responses" ${provider.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                                 </select>
@@ -10696,15 +10709,11 @@
 
                 if (field === "type") {
                     const previousType = tpl.type;
-                    const nextType = target.value === "openai-responses"
-                        ? "openai-responses"
-                        : (target.value === "chat-parts"
-                            ? "chat-parts"
-                            : (target.value === "chat-no-history" ? "chat-no-history" : "chat-completions"));
+                    const nextType = normalizeProviderType(target.value);
                     tpl.type = nextType;
                     tpl.stream.parser = nextType === "chat-no-history" ? "chat-completions" : nextType;
                     if (isChatCompletionsLikeProviderType(nextType) && !tpl.stream.deltaPath) {
-                        tpl.stream.deltaPath = nextType === "chat-no-history" ? "content" : "choices.0.delta.content";
+                        tpl.stream.deltaPath = getDefaultDeltaPathByType(nextType);
                     }
                     if (previousType !== nextType) {
                         const defaultBody = defaultBodyTemplateForType(previousType);
@@ -12739,6 +12748,17 @@
         return applyTemplateString(template.baseUrl, context);
     };
 
+    const shouldForceGMRequestForUrl = (url) => {
+        if (typeof GM_xmlhttpRequest !== "function") return false;
+        if (typeof location === "undefined" || location.protocol !== "https:") return false;
+        try {
+            const parsed = new URL(String(url || ""), location.href);
+            return parsed.protocol === "http:";
+        } catch (err) {
+            return false;
+        }
+    };
+
     const buildProviderHeaders = (template, context) => {
         if (!template) return { "Content-Type": "application/json" };
         const headers = applyTemplateValue(template.headersTemplate || {}, buildTemplateContext(template, context || {}));
@@ -13004,8 +13024,31 @@
     }
 
     function splitThinkTaggedChunk(rawChunk) {
-        const THINK_OPEN = "<think>";
-        const THINK_CLOSE = "</think>";
+        const THINK_OPEN_VARIANTS = ["<think>", "\\u003cthink\\u003e", "&lt;think&gt;"];
+        const THINK_CLOSE_VARIANTS = ["</think>", "\\u003c/think\\u003e", "&lt;/think&gt;"];
+        const findEarliestTagMatch = (input, tagVariants) => {
+            const lower = input.toLowerCase();
+            let matchedIndex = -1;
+            let matchedLen = 0;
+            for (let i = 0; i < tagVariants.length; i += 1) {
+                const tag = tagVariants[i];
+                const idx = lower.indexOf(tag);
+                if (idx < 0) continue;
+                if (matchedIndex === -1 || idx < matchedIndex) {
+                    matchedIndex = idx;
+                    matchedLen = tag.length;
+                }
+            }
+            return { index: matchedIndex, length: matchedLen };
+        };
+        const getMaxTagPrefixCarryLength = (input, tagVariants) => {
+            let maxCarry = 0;
+            for (let i = 0; i < tagVariants.length; i += 1) {
+                const carryLen = getTagPrefixCarryLength(input, tagVariants[i]);
+                if (carryLen > maxCarry) maxCarry = carryLen;
+            }
+            return maxCarry;
+        };
         let text = `${streamThinkTagCarry}${String(rawChunk === undefined || rawChunk === null ? "" : rawChunk)}`;
         streamThinkTagCarry = "";
         let reasoning = "";
@@ -13013,28 +13056,28 @@
 
         while (text) {
             if (streamThinkTagInReasoning) {
-                const closeIdx = text.indexOf(THINK_CLOSE);
-                if (closeIdx >= 0) {
-                    reasoning += text.slice(0, closeIdx);
-                    text = text.slice(closeIdx + THINK_CLOSE.length);
+                const closeMatch = findEarliestTagMatch(text, THINK_CLOSE_VARIANTS);
+                if (closeMatch.index >= 0) {
+                    reasoning += text.slice(0, closeMatch.index);
+                    text = text.slice(closeMatch.index + closeMatch.length);
                     streamThinkTagInReasoning = false;
                     continue;
                 }
-                const carryLen = getTagPrefixCarryLength(text, THINK_CLOSE);
+                const carryLen = getMaxTagPrefixCarryLength(text, THINK_CLOSE_VARIANTS);
                 const stableText = text.slice(0, text.length - carryLen);
                 reasoning += stableText;
                 streamThinkTagCarry = text.slice(text.length - carryLen);
                 text = "";
                 continue;
             }
-            const openIdx = text.indexOf(THINK_OPEN);
-            if (openIdx >= 0) {
-                content += text.slice(0, openIdx);
-                text = text.slice(openIdx + THINK_OPEN.length);
+            const openMatch = findEarliestTagMatch(text, THINK_OPEN_VARIANTS);
+            if (openMatch.index >= 0) {
+                content += text.slice(0, openMatch.index);
+                text = text.slice(openMatch.index + openMatch.length);
                 streamThinkTagInReasoning = true;
                 continue;
             }
-            const carryLen = getTagPrefixCarryLength(text, THINK_OPEN);
+            const carryLen = getMaxTagPrefixCarryLength(text, THINK_OPEN_VARIANTS);
             const stableText = text.slice(0, text.length - carryLen);
             content += stableText;
             streamThinkTagCarry = text.slice(text.length - carryLen);
@@ -13073,6 +13116,13 @@
         streamTextBuffer += text;
     }
 
+    function appendTaggedContentChunk(template, rawChunk, isChatMode) {
+        if (rawChunk === undefined || rawChunk === null) return;
+        const tagged = parseContentChunkByReasoningTag(template, rawChunk);
+        if (tagged.reasoning) appendReasoningChunk(tagged.reasoning);
+        if (tagged.content) appendContentChunk(tagged.content, isChatMode);
+    }
+
     function captureProviderRuntimeFieldsFromChunk(template, data) {
         if (!template || !data || typeof data !== "object") return;
         const streamCfg = resolveTemplateStreamConfig(template);
@@ -13087,10 +13137,25 @@
     function parseContentChunkByReasoningTag(template, rawChunk) {
         const streamCfg = resolveTemplateStreamConfig(template);
         const reasoningTag = streamCfg && streamCfg.reasoningTag ? String(streamCfg.reasoningTag).trim().toLowerCase() : "";
-        if (reasoningTag !== "think") {
-            return { reasoning: "", content: rawChunk === undefined || rawChunk === null ? "" : String(rawChunk) };
+        const rawText = rawChunk === undefined || rawChunk === null ? "" : String(rawChunk);
+        const parser = streamCfg && streamCfg.parser ? String(streamCfg.parser).trim().toLowerCase() : "";
+        const lowerText = rawText.toLowerCase();
+        const hasThinkToken = lowerText.includes("<think>")
+            || lowerText.includes("\\u003cthink\\u003e")
+            || lowerText.includes("&lt;think&gt;")
+            || !!streamThinkTagCarry
+            || streamThinkTagInReasoning;
+        const shouldUseThinkTag = reasoningTag === "think" || (!reasoningTag && (parser === "ollama" || hasThinkToken));
+        if (!shouldUseThinkTag) {
+            return { reasoning: "", content: rawText };
         }
-        return splitThinkTaggedChunk(rawChunk);
+        return splitThinkTaggedChunk(rawText);
+    }
+
+    function applyFallbackTextWithReasoningTag(template, fallbackText, isChatMode) {
+        const rawText = fallbackText === undefined || fallbackText === null ? "" : String(fallbackText);
+        if (!rawText) return;
+        appendTaggedContentChunk(template, rawText, isChatMode);
     }
 
     function flushReasoningTagRemainderToBuffers(isChatMode) {
@@ -15069,80 +15134,158 @@
         Logger.debug(`🚀 [${provider} Request Data]`, requestBody);
 
         const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
+        const shouldForceGmXhr = shouldForceGMRequestForUrl(url);
 
         // 策略 A: Fetch
-        try {
-            Logger.info(`Fetch ${provider} Model: ${config.modelName}`);
-            abortController = new AbortController();
-            const response = await fetch(url, {
-                method: "POST",
-                headers: headers,
-                body: requestBody, // 使用已序列化的字符串
-                signal: abortController.signal
-            });
+        if (!shouldForceGmXhr) {
+            try {
+                Logger.info(`Fetch ${provider} Model: ${config.modelName}`);
+                abortController = new AbortController();
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: headers,
+                    body: requestBody, // 使用已序列化的字符串
+                    signal: abortController.signal
+                });
 
-            if (!response.ok) {
-                if (response.status === 429) {
-                    let apiErr = null;
+                if (!response.ok) {
+                    if (response.status === 429) {
+                        let apiErr = null;
+                        try {
+                            const errJson = await response.json();
+                            logAiRawResponse(provider, config.modelName, resolvedActionId, errJson);
+                            apiErr = parseApiError(errJson);
+                        } catch (e) { }
+                        if (!shouldSuppressResultError()) {
+                            resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
+                                ? getQuotaErrorHTML(provider, apiErr.message)
+                                : get429ErrorHTML();
+                        }
+                        autoExpandChatIfEnabled(actionToken);
+                        return;
+                    }
+                    let rawText = "";
                     try {
-                        const errJson = await response.json();
-                        logAiRawResponse(provider, config.modelName, resolvedActionId, errJson);
-                        apiErr = parseApiError(errJson);
+                        rawText = await response.text();
                     } catch (e) { }
+                    logAiRawResponse(provider, config.modelName, resolvedActionId, rawText);
+                    if (response.status === 401 || response.status === 403) throw new Error("AUTH_INVALID");
+                    throw new Error(`HTTP ${response.status}`);
+                }
+
+                startRenderLoop();
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                let buffer = "";
+                let rawText = "";
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    const chunk = decoder.decode(value, { stream: true });
+                    rawText += chunk;
+                    buffer += chunk;
+                    const lines = buffer.split(/\r?\n/);
+                    buffer = lines.pop();
+                    for (const line of lines) processStreamLine(providerTemplate, line);
+                }
+                if (ignoreIncomingOutput) {
+                    stopRenderLoop();
+                    return;
+                }
+                if (buffer && buffer.trim()) {
+                    processStreamLine(providerTemplate, buffer);
+                }
+                flushReasoningTagRemainderToBuffers(false);
+                if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
+                    const fallback = extractNonStreamResult(providerTemplate, rawText);
+                    if (fallback && fallback.error) {
+                        stopRenderLoop();
+                        if (!shouldSuppressResultError()) {
+                            resultDiv.innerHTML = buildApiErrorHtml(provider, fallback.error);
+                        }
+                        autoExpandChatIfEnabled(actionToken);
+                        return;
+                    }
+                    if (fallback && fallback.text) {
+                        applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, false);
+                        renderContent();
+                    }
+                }
+                stopRenderLoop();
+                historyEntry.assistantText = streamTextBuffer;
+                logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
+                recordHistoryEntry(historyEntry);
+                autoExpandChatIfEnabled(actionToken);
+                return;
+
+            } catch (err) {
+                Logger.warn("Fetch 失败/跨域，准备降级。", err);
+                if (err.message === "AUTH_INVALID") {
                     if (!shouldSuppressResultError()) {
-                        resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
-                            ? getQuotaErrorHTML(provider, apiErr.message)
-                            : get429ErrorHTML();
+                        showInvalidKeyError(resultDiv, provider);
                     }
                     autoExpandChatIfEnabled(actionToken);
                     return;
                 }
-                let rawText = "";
-                try {
-                    rawText = await response.text();
-                } catch (e) { }
-                logAiRawResponse(provider, config.modelName, resolvedActionId, rawText);
-                if (response.status === 401 || response.status === 403) throw new Error("AUTH_INVALID");
-                throw new Error(`HTTP ${response.status}`);
+                if (err.name === 'AbortError') return;
             }
+        } else {
+            Logger.info("检测到 HTTPS 页面调用 HTTP Provider，跳过 Fetch，直接使用 GM_xmlhttpRequest。");
+        }
 
-            startRenderLoop();
+        // 策略 B: GM_xmlhttpRequest
+        Logger.info(`GM_xmlhttpRequest ${provider} Model: ${config.modelName}`);
+        Logger.debug("GM request context (single action)", buildRequestDebugMeta(url, {
+            provider: provider,
+            model: config.modelName,
+            actionId: resolvedActionId
+        }));
 
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder("utf-8");
-            let buffer = "";
-            let rawText = "";
+        let gmStreamBuffer = "";
+        let gmRawText = "";
+        let isStreamModeActive = false;
+        const isMixedProtocolRequest = shouldForceGMRequestForUrl(url);
+        const gmRequestAttempts = isMixedProtocolRequest
+            ? [
+                { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" },
+                { streamMode: "progress", fetchMode: true, label: "onprogress-fetch" },
+                { streamMode: "stream", fetchMode: true, label: "stream-fetch" }
+            ]
+            : [
+                { streamMode: "stream", fetchMode: true, label: "stream-fetch" },
+                { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" }
+            ];
+        let gmAttemptIndex = 0;
+        let gmProgressOffset = 0;
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                const chunk = decoder.decode(value, { stream: true });
-                rawText += chunk;
-                buffer += chunk;
-                const lines = buffer.split(/\r?\n/);
-                buffer = lines.pop();
-                for (const line of lines) processStreamLine(providerTemplate, line);
-            }
+        const flushSingleActionStreamChunk = (chunkText) => {
+            if (!chunkText) return;
+            gmRawText += chunkText;
+            gmStreamBuffer += chunkText;
+            const lines = gmStreamBuffer.split(/\r?\n/);
+            gmStreamBuffer = lines.pop();
+            for (const line of lines) processStreamLine(providerTemplate, line);
+        };
+
+        const finalizeSingleActionStream = () => {
             if (ignoreIncomingOutput) {
                 stopRenderLoop();
                 return;
             }
-            if (buffer && buffer.trim()) {
-                processStreamLine(providerTemplate, buffer);
+            if (gmStreamBuffer && gmStreamBuffer.trim()) {
+                processStreamLine(providerTemplate, gmStreamBuffer);
             }
             flushReasoningTagRemainderToBuffers(false);
             if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
-                const fallback = extractNonStreamResult(providerTemplate, rawText);
+                const fallback = extractNonStreamResult(providerTemplate, gmRawText);
                 if (fallback && fallback.error) {
-                    stopRenderLoop();
-                    if (!shouldSuppressResultError()) {
-                        resultDiv.innerHTML = buildApiErrorHtml(provider, fallback.error);
-                    }
-                    autoExpandChatIfEnabled(actionToken);
+                    handleApiError(provider, fallback.error);
                     return;
                 }
                 if (fallback && fallback.text) {
-                    streamTextBuffer = String(fallback.text);
+                    applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, false);
                     renderContent();
                 }
             }
@@ -15151,175 +15294,229 @@
             logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
             recordHistoryEntry(historyEntry);
             autoExpandChatIfEnabled(actionToken);
-            return;
+        };
 
-        } catch (err) {
-            Logger.warn("Fetch 失败/跨域，准备降级。", err);
-            if (err.message === "AUTH_INVALID") {
-                if (!shouldSuppressResultError()) {
-                    showInvalidKeyError(resultDiv, provider);
-                }
-                autoExpandChatIfEnabled(actionToken);
-                return;
+        const getCurrentSingleActionAttempt = () => gmRequestAttempts[Math.min(gmAttemptIndex, gmRequestAttempts.length - 1)];
+
+        const canRetrySingleActionGmRequest = () => {
+            if (gmAttemptIndex >= gmRequestAttempts.length - 1) return false;
+            if (streamTextBuffer.length > 0 || streamReasoningBuffer.length > 0) return false;
+            if (gmRawText.trim()) return false;
+            return true;
+        };
+
+        const retrySingleActionGmRequest = (reasonLabel, err) => {
+            if (!canRetrySingleActionGmRequest()) return false;
+            const currentAttempt = getCurrentSingleActionAttempt();
+            gmAttemptIndex += 1;
+            const nextAttempt = getCurrentSingleActionAttempt();
+            gmProgressOffset = 0;
+            gmStreamBuffer = "";
+            gmRawText = "";
+            isStreamModeActive = false;
+            Logger.warn(
+                `GM ${reasonLabel}，切换重试策略（single action）：${currentAttempt.label} -> ${nextAttempt.label}`,
+                err ? buildErrorDebugInfo(err) : {}
+            );
+            startSingleActionGmRequest();
+            return true;
+        };
+
+        const startSingleActionGmRequest = () => {
+            const currentAttempt = getCurrentSingleActionAttempt();
+            const currentUseProgressStreamMode = currentAttempt.streamMode === "progress";
+            Logger.info(`GM 请求尝试 ${gmAttemptIndex + 1}/${gmRequestAttempts.length}（single action）：${currentAttempt.label}`);
+            if (currentUseProgressStreamMode && isMixedProtocolRequest) {
+                Logger.info("使用 GM onprogress 流式模式（兼容 HTTPS 页面 -> HTTP Provider）。");
             }
-            if (err.name === 'AbortError') return;
-        }
+            const requestOptions = {
+                method: "POST", url: url,
+                headers: headers,
+                data: requestBody, // 使用已序列化的字符串
+                responseType: currentUseProgressStreamMode ? "" : "stream",
+                timeout: 600000,
 
-        // 策略 B: GM_xmlhttpRequest
-        Logger.info(`GM_xmlhttpRequest ${provider} Model: ${config.modelName}`);
+                onloadstart: (res) => {
+                    Logger.debug("GM onloadstart (single action)", {
+                        status: res && res.status,
+                        statusText: res && res.statusText,
+                        finalUrl: res && res.finalUrl,
+                        hasStreamReader: !!(res && res.response && res.response.getReader),
+                        mode: currentAttempt.label
+                    });
+                    if (currentUseProgressStreamMode) {
+                        isStreamModeActive = true;
+                        startRenderLoop();
+                        return;
+                    }
+                    if (res.response && res.response.getReader) {
+                        isStreamModeActive = true;
+                        startRenderLoop();
 
-        let gmStreamBuffer = "";
-        let gmRawText = "";
-        let isStreamModeActive = false;
+                        const reader = res.response.getReader();
+                        const decoder = new TextDecoder("utf-8");
 
-        gmRequest = GM_xmlhttpRequest({
-            method: "POST", url: url,
-            headers: headers,
-            data: requestBody, // 使用已序列化的字符串
-            responseType: 'stream',
-            timeout: 600000,
-
-            onloadstart: (res) => {
-                if (res.response && res.response.getReader) {
-                    isStreamModeActive = true;
-                    startRenderLoop();
-
-                    const reader = res.response.getReader();
-                    const decoder = new TextDecoder("utf-8");
-
-                    (async function readStream() {
-                        try {
-                            while (true) {
-                                const { done, value } = await reader.read();
-                                if (done) break;
-                                const chunk = decoder.decode(value, { stream: true });
-                                gmRawText += chunk;
-                                gmStreamBuffer += chunk;
-                                const lines = gmStreamBuffer.split(/\r?\n/);
-                                gmStreamBuffer = lines.pop();
-                                for (const line of lines) processStreamLine(providerTemplate, line);
+                        (async function readStream() {
+                            try {
+                                while (true) {
+                                    const { done, value } = await reader.read();
+                                    if (done) break;
+                                    const chunk = decoder.decode(value, { stream: true });
+                                    flushSingleActionStreamChunk(chunk);
+                                }
+                            } catch (e) {
+                                Logger.error("Stream Read Error:", e);
+                            } finally {
+                                finalizeSingleActionStream();
                             }
-                        } catch (e) {
-                            Logger.error("Stream Read Error:", e);
-                        } finally {
-                            if (ignoreIncomingOutput) {
-                                stopRenderLoop();
-                                return;
+                        })();
+                    }
+                },
+
+                onprogress: (res) => {
+                    if (!currentUseProgressStreamMode || ignoreIncomingOutput) return;
+                    const text = res && typeof res.responseText === "string" ? res.responseText : "";
+                    if (!text) return;
+                    if (text.length < gmProgressOffset) {
+                        gmProgressOffset = 0;
+                    }
+                    const chunk = text.slice(gmProgressOffset);
+                    gmProgressOffset = text.length;
+                    flushSingleActionStreamChunk(chunk);
+                },
+
+                onload: (res) => {
+                    if (ignoreIncomingOutput) return;
+                    Logger.debug("GM onload (single action)", {
+                        status: res && res.status,
+                        statusText: res && res.statusText,
+                        finalUrl: res && res.finalUrl,
+                        responseTextLength: res && typeof res.responseText === "string" ? res.responseText.length : 0,
+                        streamed: isStreamModeActive,
+                        mode: currentAttempt.label
+                    });
+                    if (currentUseProgressStreamMode) {
+                        const fullText = res && typeof res.responseText === "string" ? res.responseText : "";
+                        if (fullText.length > gmProgressOffset) {
+                            flushSingleActionStreamChunk(fullText.slice(gmProgressOffset));
+                            gmProgressOffset = fullText.length;
+                        }
+                        if (res.status && res.status !== 200) {
+                            stopRenderLoop();
+                            const apiErr = parseApiError(fullText);
+                            const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: fullText, rawText: fullText };
+                            if (!shouldSuppressResultError()) {
+                                resultDiv.innerHTML = buildApiErrorHtml(provider, err);
                             }
-                            if (gmStreamBuffer && gmStreamBuffer.trim()) {
-                                processStreamLine(providerTemplate, gmStreamBuffer);
+                            autoExpandChatIfEnabled(actionToken);
+                            return;
+                        }
+                        finalizeSingleActionStream();
+                        return;
+                    }
+                    if (!isStreamModeActive) {
+                        stopRenderLoop();
+
+                        if (res.status === 429) {
+                            const resultDiv = popup.querySelector("#coolauxv-result");
+                            logAiRawResponse(provider, config.modelName, resolvedActionId, res.responseText);
+                            const apiErr = parseApiError(res.responseText);
+                            if (resultDiv && !shouldSuppressResultError()) {
+                                resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
+                                    ? getQuotaErrorHTML(provider, apiErr.message)
+                                    : get429ErrorHTML();
                             }
+                            autoExpandChatIfEnabled(actionToken);
+                            return;
+                        }
+
+                        const fullText = res.responseText || (typeof res.response === 'string' ? res.response : "");
+                        logAiRawResponse(provider, config.modelName, resolvedActionId, fullText);
+
+                        if (res.status === 401 || res.status === 403) {
+                            if (!shouldSuppressResultError()) {
+                                showInvalidKeyError(resultDiv, provider);
+                            }
+                            autoExpandChatIfEnabled(actionToken);
+                            return;
+                        }
+
+                        if (res.status !== 200) {
+                            const apiErr = parseApiError(fullText);
+                            const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: fullText, rawText: fullText };
+                            if (!shouldSuppressResultError()) {
+                                resultDiv.innerHTML = buildApiErrorHtml(provider, err);
+                            }
+                            autoExpandChatIfEnabled(actionToken);
+                            return;
+                        }
+                        if (fullText) {
+                            const lines = fullText.split(/\r?\n/);
+                            for (const line of lines) processStreamLine(providerTemplate, line);
                             flushReasoningTagRemainderToBuffers(false);
                             if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
-                                const fallback = extractNonStreamResult(providerTemplate, gmRawText);
+                                const fallback = extractNonStreamResult(providerTemplate, fullText);
                                 if (fallback && fallback.error) {
-                                    handleApiError(provider, fallback.error);
+                                    if (!shouldSuppressResultError()) {
+                                        resultDiv.innerHTML = buildApiErrorHtml(provider, fallback.error);
+                                    }
+                                    autoExpandChatIfEnabled(actionToken);
                                     return;
                                 }
                                 if (fallback && fallback.text) {
-                                    streamTextBuffer = String(fallback.text);
-                                    renderContent();
+                                    applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, false);
                                 }
                             }
-                            stopRenderLoop();
+                            renderContent();
                             historyEntry.assistantText = streamTextBuffer;
                             logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
                             recordHistoryEntry(historyEntry);
                             autoExpandChatIfEnabled(actionToken);
+                        } else {
+                            resultDiv.innerHTML += "<br><small style='color:red'>(流式兼容失败，请检查网络)</small>";
+                            autoExpandChatIfEnabled(actionToken);
                         }
-                    })();
-                }
-            },
+                    }
+                },
 
-            onload: (res) => {
-                if (ignoreIncomingOutput) return;
-                if (!isStreamModeActive) {
+                onerror: (e) => {
+                    if (ignoreIncomingOutput) return;
+                    Logger.error("GM onerror (single action)", buildErrorDebugInfo(e));
+                    if (retrySingleActionGmRequest("onerror", e)) return;
                     stopRenderLoop();
-
-                    if (res.status === 429) {
-                        const resultDiv = popup.querySelector("#coolauxv-result");
-                        logAiRawResponse(provider, config.modelName, resolvedActionId, res.responseText);
-                        const apiErr = parseApiError(res.responseText);
-                        if (resultDiv && !shouldSuppressResultError()) {
-                            resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
-                                ? getQuotaErrorHTML(provider, apiErr.message)
-                                : get429ErrorHTML();
-                        }
-                        autoExpandChatIfEnabled(actionToken);
-                        return;
-                    }
-
-                    const fullText = res.responseText || (typeof res.response === 'string' ? res.response : "");
-                    logAiRawResponse(provider, config.modelName, resolvedActionId, fullText);
-
-                    if (res.status === 401 || res.status === 403) {
-                        if (!shouldSuppressResultError()) {
-                            showInvalidKeyError(resultDiv, provider);
-                        }
-                        autoExpandChatIfEnabled(actionToken);
-                        return;
-                    }
-
-                    if (res.status !== 200) {
-                        const apiErr = parseApiError(fullText);
-                        const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: fullText, rawText: fullText };
-                        if (!shouldSuppressResultError()) {
-                            resultDiv.innerHTML = buildApiErrorHtml(provider, err);
-                        }
-                        autoExpandChatIfEnabled(actionToken);
-                        return;
-                    }
-                    if (fullText) {
-                        const lines = fullText.split(/\r?\n/);
-                        for (const line of lines) processStreamLine(providerTemplate, line);
-                        flushReasoningTagRemainderToBuffers(false);
-                        if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
-                            const fallback = extractNonStreamResult(providerTemplate, fullText);
-                            if (fallback && fallback.error) {
-                                if (!shouldSuppressResultError()) {
-                                    resultDiv.innerHTML = buildApiErrorHtml(provider, fallback.error);
-                                }
-                                autoExpandChatIfEnabled(actionToken);
-                                return;
-                            }
-                            if (fallback && fallback.text) {
-                                streamTextBuffer = String(fallback.text);
-                            }
-                        }
-                        renderContent();
-                        historyEntry.assistantText = streamTextBuffer;
-                        logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
-                        recordHistoryEntry(historyEntry);
-                        autoExpandChatIfEnabled(actionToken);
+                    if (streamTextBuffer.length > 0 || streamReasoningBuffer.length > 0) {
+                        resultDiv.innerHTML += "<br><br><span style='color:red; font-size:12px; font-weight:bold;'>[网络连接中断，但已保留现有内容]</span>";
                     } else {
-                        resultDiv.innerHTML += "<br><small style='color:red'>(流式兼容失败，请检查网络)</small>";
-                        autoExpandChatIfEnabled(actionToken);
+                        resultDiv.innerHTML = buildNetworkFailureHtml(provider, url, e);
                     }
-                }
-            },
+                    autoExpandChatIfEnabled(actionToken);
+                },
 
-            onerror: (e) => {
-                if (ignoreIncomingOutput) return;
-                stopRenderLoop();
-                if (streamTextBuffer.length > 0 || streamReasoningBuffer.length > 0) {
-                    resultDiv.innerHTML += "<br><br><span style='color:red; font-size:12px; font-weight:bold;'>[网络连接中断，但已保留现有内容]</span>";
-                } else {
-                    resultDiv.innerHTML = "<span style='color:red'>网络连接彻底失败</span>";
+                ontimeout: () => {
+                    if (ignoreIncomingOutput) return;
+                    Logger.error("GM ontimeout (single action)", buildRequestDebugMeta(url, {
+                        provider: provider,
+                        model: config.modelName,
+                        actionId: resolvedActionId,
+                        mode: currentAttempt.label
+                    }));
+                    if (retrySingleActionGmRequest("ontimeout", { status: 408, statusText: "timeout" })) return;
+                    stopRenderLoop();
+                    if (streamTextBuffer.length > 0) {
+                        resultDiv.innerHTML += "<br><span style='color:red'>[请求超时，已保留内容]</span>";
+                    } else {
+                        resultDiv.innerHTML = "<span style='color:red'>请求超时 (Timeout)</span>";
+                    }
+                    autoExpandChatIfEnabled(actionToken);
                 }
-                autoExpandChatIfEnabled(actionToken);
-            },
-
-            ontimeout: () => {
-                if (ignoreIncomingOutput) return;
-                stopRenderLoop();
-                if (streamTextBuffer.length > 0) {
-                    resultDiv.innerHTML += "<br><span style='color:red'>[请求超时，已保留内容]</span>";
-                } else {
-                    resultDiv.innerHTML = "<span style='color:red'>请求超时 (Timeout)</span>";
-                }
-                autoExpandChatIfEnabled(actionToken);
+            };
+            if (typeof currentAttempt.fetchMode === "boolean") {
+                requestOptions.fetch = currentAttempt.fetchMode;
             }
-        });
+            gmRequest = GM_xmlhttpRequest(requestOptions);
+        };
+
+        startSingleActionGmRequest();
     }
 
 
@@ -15521,6 +15718,103 @@
         Logger.debug(prefix, output);
     }
 
+    function buildRequestDebugMeta(url, extra = {}) {
+        let targetProtocol = "";
+        let targetHost = "";
+        let targetPath = "";
+        try {
+            const parsed = new URL(String(url || ""), location.href);
+            targetProtocol = parsed.protocol || "";
+            targetHost = parsed.host || "";
+            targetPath = parsed.pathname || "";
+        } catch (e) { }
+        return Object.assign({
+            pageProtocol: typeof location !== "undefined" ? location.protocol : "",
+            targetProtocol: targetProtocol,
+            targetHost: targetHost,
+            targetPath: targetPath,
+            hasGMXmlhttpRequest: typeof GM_xmlhttpRequest === "function"
+        }, extra || {});
+    }
+
+    function buildErrorDebugInfo(err) {
+        if (!err) return { raw: "" };
+        const info = {
+            type: err.type || "",
+            name: err.name || "",
+            message: err.message || ""
+        };
+        if (typeof err.status !== "undefined") info.status = err.status;
+        if (typeof err.statusText !== "undefined") info.statusText = err.statusText;
+        if (typeof err.readyState !== "undefined") info.readyState = err.readyState;
+        if (typeof err.responseText === "string") info.responseTextLength = err.responseText.length;
+        if (typeof err.finalUrl === "string") info.finalUrl = err.finalUrl;
+        try {
+            info.raw = String(err);
+        } catch (e) {
+            info.raw = "";
+        }
+        return info;
+    }
+
+    function buildNetworkFailureHtml(provider, requestUrl, err) {
+        const info = buildErrorDebugInfo(err);
+        let targetProtocol = "";
+        let targetHost = "";
+        try {
+            const parsed = new URL(String(requestUrl || ""), location.href);
+            targetProtocol = parsed.protocol || "";
+            targetHost = parsed.host || "";
+        } catch (e) { }
+
+        const lower = `${info.message || ""} ${info.statusText || ""} ${info.type || ""} ${info.name || ""} ${info.raw || ""}`.toLowerCase();
+        const isHttpsPage = typeof location !== "undefined" && location.protocol === "https:";
+        const statusNumber = Number(info.status);
+        const hasStatusNumber = Number.isFinite(statusNumber);
+        const isNetworkLike = lower.includes("networkerror")
+            || lower.includes("failed to fetch")
+            || lower.includes("network request failed")
+            || (hasStatusNumber && (statusNumber === 0 || statusNumber === 408));
+        const isHttpProviderOnHttpsPage = isHttpsPage && targetProtocol === "http:";
+        const isTlsLikely = targetProtocol === "https:" && (isNetworkLike || lower.includes("ssl") || lower.includes("tls") || lower.includes("cert"));
+
+        let summary = "网络请求失败";
+        let advice = "请检查 Provider 的 Base URL、网络连通性和防火墙设置。";
+
+        if (isHttpProviderOnHttpsPage) {
+            summary = "HTTPS 页面访问 HTTP Provider 失败";
+            advice = "浏览器或脚本管理器可能拦截了混合协议请求。请优先改用 HTTPS Provider；若必须使用 HTTP，请检查脚本管理器是否允许不安全请求/混合内容，或用本地反向代理把 HTTP 转为 HTTPS。";
+        } else if (isTlsLikely) {
+            summary = "HTTPS Provider 握手失败";
+            advice = "常见原因是证书过期/证书链异常/系统时间不正确。请先修复证书，或在受控内网中临时改为 HTTP 地址。";
+        } else if (hasStatusNumber && statusNumber === 408) {
+            summary = "网络请求超时";
+            advice = "请确认 Provider 在线且响应正常，再重试。";
+        }
+
+        const detailParts = [];
+        if (hasStatusNumber) detailParts.push(`status=${statusNumber}`);
+        if (info.statusText) detailParts.push(`statusText=${info.statusText}`);
+        if (info.message) detailParts.push(`message=${info.message}`);
+        if (targetHost) detailParts.push(`target=${targetHost}`);
+        const detail = detailParts.join(" | ");
+        const detailHtml = detail
+            ? `<div style="font-size:12px; color:#8a6d3b; margin-top:6px; word-break:break-word;">${escapeHTML(detail)}</div>`
+            : "";
+
+        return `
+            <div style="border: 1px solid #fcd34d; background-color: #fffbeb; padding: 10px; border-radius: 6px; margin-top: 5px;">
+                <div style="display:flex; align-items:center; color: #b45309; font-weight: bold; margin-bottom: 5px;">
+                    <span style="font-size:18px; margin-right:6px;">⚠️</span> ${escapeHTML(getProviderLabel(provider))}：${summary}
+                </div>
+                <div style="font-size: 13px; color: #666; line-height: 1.5;">
+                    ${advice}
+                </div>
+                ${detailHtml}
+            </div>
+        `;
+    }
+
     function logAiRawStreamLine(template, line) {
         const output = formatRawLogPayload(line);
         if (!output.trim()) return;
@@ -15573,12 +15867,7 @@
                 const fullText = extractChatCompletionsOutputText(line);
                 if (fullText) {
                     const isChatMode = streamMode === "chat";
-                    if (isChatMode) {
-                        chatAssistantBuffer += fullText;
-                        updateChatStreamText();
-                    } else {
-                        streamTextBuffer += fullText;
-                    }
+                    appendTaggedContentChunk(template, fullText, isChatMode);
                 } else {
                     handleApiError(providerId, { type: "unknown", message: "", raw: line, rawText: line });
                 }
@@ -15605,9 +15894,7 @@
                 const contentText = String(contentChunk);
                 const isDoneChunk = normalizedContentType === "1002" && contentText.trim().toLowerCase() === "[done]";
                 if (!isDoneChunk) {
-                    const tagged = parseContentChunkByReasoningTag(template, contentText);
-                    if (tagged.reasoning) appendReasoningChunk(tagged.reasoning);
-                    if (tagged.content) appendContentChunk(tagged.content, isChatMode);
+                    appendTaggedContentChunk(template, contentText, isChatMode);
                 }
             }
         } catch (e) {
@@ -15739,6 +16026,15 @@
             const text = normalizeNonStreamText(extractChatPartsOutputText(data));
             if (text) return { text };
         }
+        if (parser === "ollama") {
+            const resolvedStream = resolveTemplateStreamConfig(template);
+            const contentPath = resolvedStream.deltaPath || "message.content";
+            const candidate = getValueByPath(data, contentPath);
+            if (typeof candidate === "string" && candidate) {
+                const text = normalizeNonStreamText(candidate);
+                if (text) return { text };
+            }
+        }
 
         let text = "";
         if (Array.isArray(data.choices) && data.choices.length) {
@@ -15764,6 +16060,7 @@
 
         if (!text && typeof data.output_text === "string") text = data.output_text;
         if (!text && typeof data.result === "string") text = data.result;
+        if (!text && data.message && typeof data.message === "object" && typeof data.message.content === "string") text = data.message.content;
         if (!text && typeof data.message === "string") text = data.message;
         if (!text && typeof data.content === "string" && String(data.contentType || "").trim() !== "1002") text = data.content;
         if (!text && typeof data.text === "string") text = data.text;
@@ -15794,12 +16091,7 @@
             if (data && typeof data === "object" && data.type === "text-delta" && typeof data.delta === "string") {
                 if (data.delta) {
                     chatPartsStreamHasDelta = true;
-                    if (isChatMode) {
-                        chatAssistantBuffer += data.delta;
-                        updateChatStreamText();
-                    } else {
-                        streamTextBuffer += data.delta;
-                    }
+                    appendTaggedContentChunk(template, data.delta, isChatMode);
                 }
                 return;
             }
@@ -15807,12 +16099,7 @@
                 if (chatPartsStreamHasDelta || chatPartsStreamHasFull) return;
                 const text = data.text;
                 if (text) {
-                    if (isChatMode) {
-                        chatAssistantBuffer += text;
-                        updateChatStreamText();
-                    } else {
-                        streamTextBuffer += text;
-                    }
+                    appendTaggedContentChunk(template, text, isChatMode);
                     chatPartsStreamHasFull = true;
                 }
                 return;
@@ -15820,12 +16107,7 @@
             if (chatPartsStreamHasDelta || chatPartsStreamHasFull) return;
             const fullText = extractChatPartsOutputText(data);
             if (fullText) {
-                if (isChatMode) {
-                    chatAssistantBuffer += fullText;
-                    updateChatStreamText();
-                } else {
-                    streamTextBuffer += fullText;
-                }
+                appendTaggedContentChunk(template, fullText, isChatMode);
                 chatPartsStreamHasFull = true;
             }
         } catch (e) {
@@ -15845,12 +16127,7 @@
                 const fullText = extractOpenaiOutputText(line);
                 if (fullText) {
                     const isChatMode = streamMode === "chat";
-                    if (isChatMode) {
-                        chatAssistantBuffer += fullText;
-                        updateChatStreamText();
-                    } else {
-                        streamTextBuffer += fullText;
-                    }
+                    appendTaggedContentChunk(template, fullText, isChatMode);
                     openaiStreamHasFull = true;
                 } else {
                     handleApiError(providerId, { type: "unknown", message: "", raw: line, rawText: line });
@@ -15869,38 +16146,62 @@
                 if (!delta) return;
                 openaiStreamHasDelta = true;
                 const isChatMode = streamMode === "chat";
-                if (isChatMode) {
-                    chatAssistantBuffer += delta;
-                    updateChatStreamText();
-                } else {
-                    streamTextBuffer += delta;
-                }
+                appendTaggedContentChunk(template, delta, isChatMode);
             } else if (data.type === "response.output_text.done" && data.text) {
                 if (openaiStreamHasDelta || openaiStreamHasFull) return;
                 const isChatMode = streamMode === "chat";
-                if (isChatMode) {
-                    chatAssistantBuffer += data.text;
-                    updateChatStreamText();
-                } else {
-                    streamTextBuffer += data.text;
-                }
+                appendTaggedContentChunk(template, data.text, isChatMode);
                 openaiStreamHasFull = true;
             } else if (data.type === "response.completed" && data.response) {
                 if (openaiStreamHasDelta || openaiStreamHasFull) return;
                 const fullText = extractOpenaiOutputText(data.response);
                 if (fullText) {
                     const isChatMode = streamMode === "chat";
-                    if (isChatMode) {
-                        chatAssistantBuffer += fullText;
-                        updateChatStreamText();
-                    } else {
-                        streamTextBuffer += fullText;
-                    }
+                    appendTaggedContentChunk(template, fullText, isChatMode);
                     openaiStreamHasFull = true;
                 }
             }
         } catch (e) {
             Logger.debug("OpenAI JSON Parse Error (Ignore)", line);
+        }
+    }
+
+    function processOllamaStreamLine(template, line) {
+        line = line.trim();
+        if (!line) return;
+        if (streamErrorHandled) return;
+        const providerId = template ? template.id : "ollama";
+        let jsonStr = "";
+        if (line.startsWith("data:")) {
+            jsonStr = line.slice(5).trim();
+        } else if (line.startsWith("{")) {
+            jsonStr = line;
+        } else {
+            return;
+        }
+        if (!jsonStr || jsonStr === "[DONE]") return;
+        try {
+            const data = JSON.parse(jsonStr);
+            const apiErr = parseApiError(data);
+            if (apiErr && handleApiError(providerId, apiErr)) return;
+            captureProviderRuntimeFieldsFromChunk(template, data);
+
+            const streamCfg = resolveTemplateStreamConfig(template);
+            const reasoningPath = streamCfg.reasoningPath || "";
+            const contentPath = streamCfg.deltaPath || "message.content";
+            const isChatMode = streamMode === "chat";
+            const reasoningChunk = reasoningPath ? getValueByPath(data, reasoningPath) : "";
+            let contentChunk = getValueByPath(data, contentPath);
+
+            if ((contentChunk === undefined || contentChunk === null) && typeof data.response === "string") {
+                contentChunk = data.response;
+            }
+            if (reasoningChunk) appendReasoningChunk(reasoningChunk);
+            if (contentChunk !== undefined && contentChunk !== null) {
+                appendTaggedContentChunk(template, String(contentChunk), isChatMode);
+            }
+        } catch (e) {
+            Logger.debug("Ollama JSON Parse Error (Ignore)", line);
         }
     }
 
@@ -15914,6 +16215,10 @@
         }
         if (parser === "chat-parts") {
             processChatPartsStreamLine(template, line);
+            return;
+        }
+        if (parser === "ollama") {
+            processOllamaStreamLine(template, line);
             return;
         }
         processChatCompletionsStreamLine(template, line);
@@ -16495,6 +16800,11 @@
         if (gmRequest && gmRequest.abort) gmRequest.abort();
 
         Logger.info(`Starting Vision API Request (${resolvedActionId})...`);
+        Logger.debug("GM request context (vision)", buildRequestDebugMeta(url, {
+            provider: provider,
+            model: config.modelVision,
+            actionId: resolvedActionId
+        }));
 
         gmRequest = GM_xmlhttpRequest({
             method: "POST",
@@ -16505,6 +16815,12 @@
             timeout: 120000,
 
             onloadstart: (res) => {
+                Logger.debug("GM onloadstart (vision)", {
+                    status: res && res.status,
+                    statusText: res && res.statusText,
+                    finalUrl: res && res.finalUrl,
+                    hasStreamReader: !!(res && res.response && res.response.getReader)
+                });
                 if (res.response && res.response.getReader) {
                     startRenderLoop();
                     const reader = res.response.getReader();
@@ -16545,7 +16861,7 @@
                                     return;
                                 }
                                 if (fallback && fallback.text) {
-                                    streamTextBuffer = String(fallback.text);
+                                    applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, false);
                                     renderContent();
                                 }
                             }
@@ -16560,6 +16876,12 @@
             },
             onload: (res) => {
                 if (ignoreIncomingOutput) return;
+                Logger.debug("GM onload (vision)", {
+                    status: res && res.status,
+                    statusText: res && res.statusText,
+                    finalUrl: res && res.finalUrl,
+                    responseTextLength: res && typeof res.responseText === "string" ? res.responseText.length : 0
+                });
                 logAiRawResponse(provider, config.modelVision, resolvedActionId, res.responseText);
                 if (res.status === 429) {
                     stopRenderLoop();
@@ -16596,8 +16918,9 @@
             },
             onerror: (e) => {
                 if (ignoreIncomingOutput) return;
+                Logger.error("GM onerror (vision)", buildErrorDebugInfo(e));
                 stopRenderLoop();
-                resultDiv.innerHTML = "<span style='color:red'>网络连接失败</span>";
+                resultDiv.innerHTML = buildNetworkFailureHtml(provider, url, e);
                 autoExpandChatIfEnabled(actionToken);
             }
         });
@@ -16694,228 +17017,361 @@
         Logger.debug(`💬 [${provider} Chat Request]`, requestBody);
 
         const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
+        const shouldForceGmXhr = shouldForceGMRequestForUrl(url);
 
         // 策略 A: Fetch (优先，避免缺少 @connect 时无法访问)
-        try {
-            Logger.info(`Fetch ${provider} Chat Model: ${config.modelVision}`);
-            abortController = new AbortController();
-            const response = await fetch(url, {
-                method: "POST",
-                headers: headers,
-                body: requestBody,
-                signal: abortController.signal
-            });
+        if (!shouldForceGmXhr) {
+            try {
+                Logger.info(`Fetch ${provider} Chat Model: ${config.modelVision}`);
+                abortController = new AbortController();
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: headers,
+                    body: requestBody,
+                    signal: abortController.signal
+                });
 
-            if (!response.ok) {
-                stopRenderLoop();
-                finalizeChatResponse(actionToken);
-                if (response.status === 429) {
-                    let apiErr = null;
-                    try {
-                        const errJson = await response.json();
-                        logAiRawResponse(provider, config.modelVision, "chat", errJson);
-                        apiErr = parseApiError(errJson);
-                    } catch (e) { }
-                    const html = (apiErr && isQuotaError(apiErr))
-                        ? getQuotaErrorHTML(provider, apiErr.message)
-                        : get429ErrorHTML();
-                    appendChatError(html, { allowHtml: true, recordAsAssistant: true });
-                    return;
-                }
-                if (response.status === 401 || response.status === 403) {
+                if (!response.ok) {
+                    stopRenderLoop();
+                    finalizeChatResponse(actionToken);
+                    if (response.status === 429) {
+                        let apiErr = null;
+                        try {
+                            const errJson = await response.json();
+                            logAiRawResponse(provider, config.modelVision, "chat", errJson);
+                            apiErr = parseApiError(errJson);
+                        } catch (e) { }
+                        const html = (apiErr && isQuotaError(apiErr))
+                            ? getQuotaErrorHTML(provider, apiErr.message)
+                            : get429ErrorHTML();
+                        appendChatError(html, { allowHtml: true, recordAsAssistant: true });
+                        return;
+                    }
+                    if (response.status === 401 || response.status === 403) {
+                        let rawText = "";
+                        try {
+                            rawText = await response.text();
+                        } catch (e) { }
+                        logAiRawResponse(provider, config.modelVision, "chat", rawText);
+                        appendChatError(getInvalidKeyErrorHTML(provider), { allowHtml: true });
+                        return;
+                    }
                     let rawText = "";
                     try {
                         rawText = await response.text();
                     } catch (e) { }
                     logAiRawResponse(provider, config.modelVision, "chat", rawText);
-                    appendChatError(getInvalidKeyErrorHTML(provider), { allowHtml: true });
+                    const apiErr = parseApiError(rawText);
+                    const err = apiErr || { type: "http_error", message: `HTTP ${response.status}`, raw: rawText, rawText: rawText };
+                    appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
                     return;
                 }
+
+                startRenderLoop();
                 let rawText = "";
-                try {
-                    rawText = await response.text();
-                } catch (e) { }
-                logAiRawResponse(provider, config.modelVision, "chat", rawText);
-                const apiErr = parseApiError(rawText);
-                const err = apiErr || { type: "http_error", message: `HTTP ${response.status}`, raw: rawText, rawText: rawText };
-                appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
+                if (response.body && response.body.getReader) {
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder("utf-8");
+                    let buffer = "";
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        const chunk = decoder.decode(value, { stream: true });
+                        rawText += chunk;
+                        buffer += chunk;
+                        const lines = buffer.split(/\r?\n/);
+                        buffer = lines.pop();
+                        for (const line of lines) processStreamLine(providerTemplate, line);
+                    }
+                    if (ignoreIncomingOutput) {
+                        stopRenderLoop();
+                        return;
+                    }
+                    if (buffer && buffer.trim()) {
+                        processStreamLine(providerTemplate, buffer);
+                    }
+                    flushReasoningTagRemainderToBuffers(true);
+                } else {
+                    const fullText = await response.text();
+                    rawText = fullText || "";
+                    if (fullText) {
+                        const lines = fullText.split(/\r?\n/);
+                        for (const line of lines) processStreamLine(providerTemplate, line);
+                    }
+                    flushReasoningTagRemainderToBuffers(true);
+                }
+                if (!chatAssistantBuffer.trim()) {
+                    const fallback = extractNonStreamResult(providerTemplate, rawText);
+                    if (fallback && fallback.error) {
+                        stopRenderLoop();
+                        finalizeChatResponse(actionToken);
+                        appendChatError(buildApiErrorHtml(provider, fallback.error), { allowHtml: true });
+                        return;
+                    }
+                    if (fallback && fallback.text) {
+                        applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, true);
+                        updateChatStreamText();
+                        renderContent();
+                    }
+                }
+                stopRenderLoop();
+                finalizeChatResponse(actionToken);
+                return;
+            } catch (err) {
+                Logger.warn("Chat Fetch 失败/跨域，准备降级。", err);
+                if (err.name === 'AbortError') return;
+            }
+        } else {
+            Logger.info("检测到 HTTPS 页面调用 HTTP Provider，聊天请求跳过 Fetch，直接使用 GM_xmlhttpRequest。");
+        }
+
+        let chatStreamActive = false;
+        const isMixedProtocolChatRequest = shouldForceGMRequestForUrl(url);
+        const chatGmRequestAttempts = isMixedProtocolChatRequest
+            ? [
+                { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" },
+                { streamMode: "progress", fetchMode: true, label: "onprogress-fetch" },
+                { streamMode: "stream", fetchMode: true, label: "stream-fetch" }
+            ]
+            : [
+                { streamMode: "stream", fetchMode: true, label: "stream-fetch" },
+                { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" }
+            ];
+        let chatGmAttemptIndex = 0;
+        let chatProgressOffset = 0;
+        let chatRawText = "";
+        let chatBuffer = "";
+
+        const flushChatStreamChunk = (chunkText) => {
+            if (!chunkText) return;
+            chatRawText += chunkText;
+            chatBuffer += chunkText;
+            const lines = chatBuffer.split(/\r?\n/);
+            chatBuffer = lines.pop();
+            for (const line of lines) processStreamLine(providerTemplate, line);
+        };
+
+        const finalizeChatStream = (actionTokenValue, streamErr) => {
+            if (ignoreIncomingOutput) {
+                stopRenderLoop();
                 return;
             }
-
-            startRenderLoop();
-            let rawText = "";
-            if (response.body && response.body.getReader) {
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder("utf-8");
-                let buffer = "";
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    const chunk = decoder.decode(value, { stream: true });
-                    rawText += chunk;
-                    buffer += chunk;
-                    const lines = buffer.split(/\r?\n/);
-                    buffer = lines.pop();
-                    for (const line of lines) processStreamLine(providerTemplate, line);
-                }
-                if (ignoreIncomingOutput) {
-                    stopRenderLoop();
-                    return;
-                }
-                if (buffer && buffer.trim()) {
-                    processStreamLine(providerTemplate, buffer);
-                }
-                flushReasoningTagRemainderToBuffers(true);
-            } else {
-                const fullText = await response.text();
-                rawText = fullText || "";
-                if (fullText) {
-                    const lines = fullText.split(/\r?\n/);
-                    for (const line of lines) processStreamLine(providerTemplate, line);
-                }
-                flushReasoningTagRemainderToBuffers(true);
+            if (chatBuffer && chatBuffer.trim()) {
+                processStreamLine(providerTemplate, chatBuffer);
             }
+            flushReasoningTagRemainderToBuffers(true);
             if (!chatAssistantBuffer.trim()) {
-                const fallback = extractNonStreamResult(providerTemplate, rawText);
+                const fallback = extractNonStreamResult(providerTemplate, chatRawText);
                 if (fallback && fallback.error) {
-                    stopRenderLoop();
-                    finalizeChatResponse(actionToken);
-                    appendChatError(buildApiErrorHtml(provider, fallback.error), { allowHtml: true });
+                    handleApiError(provider, fallback.error);
                     return;
                 }
                 if (fallback && fallback.text) {
-                    chatAssistantBuffer = String(fallback.text);
+                    applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, true);
                     updateChatStreamText();
                     renderContent();
                 }
             }
             stopRenderLoop();
-            finalizeChatResponse(actionToken);
-            return;
-        } catch (err) {
-            Logger.warn("Chat Fetch 失败/跨域，准备降级。", err);
-            if (err.name === 'AbortError') return;
-        }
+            finalizeChatResponse(actionTokenValue);
+            if (streamErr) appendChatError(streamErr);
+        };
 
-        let chatStreamActive = false;
+        Logger.debug("GM request context (chat)", buildRequestDebugMeta(url, {
+            provider: provider,
+            model: config.modelVision,
+            mode: "chat"
+        }));
 
-        gmRequest = GM_xmlhttpRequest({
-            method: "POST",
-            url: url,
-            headers: headers,
-            data: requestBody,
-            responseType: 'stream',
-            timeout: 600000,
+        const getCurrentChatAttempt = () => chatGmRequestAttempts[Math.min(chatGmAttemptIndex, chatGmRequestAttempts.length - 1)];
 
-            onloadstart: (res) => {
-                if (res.response && res.response.getReader) {
-                    chatStreamActive = true;
-                    startRenderLoop();
-                    const reader = res.response.getReader();
-                    const decoder = new TextDecoder("utf-8");
-                    let buffer = "";
-                    let rawText = "";
+        const canRetryChatGmRequest = () => {
+            if (chatGmAttemptIndex >= chatGmRequestAttempts.length - 1) return false;
+            if (chatAssistantBuffer.trim()) return false;
+            if (streamReasoningBuffer.trim()) return false;
+            if (chatRawText.trim()) return false;
+            return true;
+        };
 
-                    (async function readStream() {
-                        let streamErr = "";
-                        try {
-                            while (true) {
-                                const { done, value } = await reader.read();
-                                if (done) break;
-                                const chunk = decoder.decode(value, { stream: true });
-                                rawText += chunk;
-                                buffer += chunk;
-                                const lines = buffer.split(/\r?\n/);
-                                buffer = lines.pop();
-                                for (const line of lines) processStreamLine(providerTemplate, line);
-                            }
-                        } catch (e) {
-                            Logger.error("Chat Stream Error", e);
-                            streamErr = `流读取错误: ${e.message}`;
-                        } finally {
-                            if (ignoreIncomingOutput) {
-                                stopRenderLoop();
-                                return;
-                            }
-                            if (buffer && buffer.trim()) {
-                                processStreamLine(providerTemplate, buffer);
-                            }
-                            flushReasoningTagRemainderToBuffers(true);
-                            if (!chatAssistantBuffer.trim()) {
-                                const fallback = extractNonStreamResult(providerTemplate, rawText);
-                                if (fallback && fallback.error) {
-                                    handleApiError(provider, fallback.error);
-                                    return;
+        const retryChatGmRequest = (reasonLabel, err) => {
+            if (!canRetryChatGmRequest()) return false;
+            const currentAttempt = getCurrentChatAttempt();
+            chatGmAttemptIndex += 1;
+            const nextAttempt = getCurrentChatAttempt();
+            chatProgressOffset = 0;
+            chatRawText = "";
+            chatBuffer = "";
+            chatStreamActive = false;
+            Logger.warn(
+                `Chat GM ${reasonLabel}，切换重试策略：${currentAttempt.label} -> ${nextAttempt.label}`,
+                err ? buildErrorDebugInfo(err) : {}
+            );
+            startChatGmRequest();
+            return true;
+        };
+
+        const startChatGmRequest = () => {
+            const currentAttempt = getCurrentChatAttempt();
+            const currentUseProgressStreamMode = currentAttempt.streamMode === "progress";
+            Logger.info(`GM 请求尝试 ${chatGmAttemptIndex + 1}/${chatGmRequestAttempts.length}（chat）：${currentAttempt.label}`);
+            if (currentUseProgressStreamMode && isMixedProtocolChatRequest) {
+                Logger.info("Chat 使用 GM onprogress 流式模式（兼容 HTTPS 页面 -> HTTP Provider）。");
+            }
+
+            const requestOptions = {
+                method: "POST",
+                url: url,
+                headers: headers,
+                data: requestBody,
+                responseType: currentUseProgressStreamMode ? "" : "stream",
+                timeout: 600000,
+
+                onloadstart: (res) => {
+                    Logger.debug("GM onloadstart (chat)", {
+                        status: res && res.status,
+                        statusText: res && res.statusText,
+                        finalUrl: res && res.finalUrl,
+                        hasStreamReader: !!(res && res.response && res.response.getReader),
+                        mode: currentAttempt.label
+                    });
+                    if (currentUseProgressStreamMode) {
+                        chatStreamActive = true;
+                        startRenderLoop();
+                        return;
+                    }
+                    if (res.response && res.response.getReader) {
+                        chatStreamActive = true;
+                        startRenderLoop();
+                        const reader = res.response.getReader();
+                        const decoder = new TextDecoder("utf-8");
+
+                        (async function readStream() {
+                            let streamErr = "";
+                            try {
+                                while (true) {
+                                    const { done, value } = await reader.read();
+                                    if (done) break;
+                                    const chunk = decoder.decode(value, { stream: true });
+                                    flushChatStreamChunk(chunk);
                                 }
-                                if (fallback && fallback.text) {
-                                    chatAssistantBuffer = String(fallback.text);
-                                    updateChatStreamText();
-                                    renderContent();
-                                }
+                            } catch (e) {
+                                Logger.error("Chat Stream Error", e);
+                                streamErr = `流读取错误: ${e.message}`;
+                            } finally {
+                                finalizeChatStream(actionToken, streamErr);
                             }
+                        })();
+                    }
+                },
+
+                onprogress: (res) => {
+                    if (!currentUseProgressStreamMode || ignoreIncomingOutput) return;
+                    const text = res && typeof res.responseText === "string" ? res.responseText : "";
+                    if (!text) return;
+                    if (text.length < chatProgressOffset) {
+                        chatProgressOffset = 0;
+                    }
+                    const chunk = text.slice(chatProgressOffset);
+                    chatProgressOffset = text.length;
+                    flushChatStreamChunk(chunk);
+                },
+                onload: (res) => {
+                    if (ignoreIncomingOutput) return;
+                    Logger.debug("GM onload (chat)", {
+                        status: res && res.status,
+                        statusText: res && res.statusText,
+                        finalUrl: res && res.finalUrl,
+                        responseTextLength: res && typeof res.responseText === "string" ? res.responseText.length : 0,
+                        streamed: chatStreamActive,
+                        mode: currentAttempt.label
+                    });
+                    if (currentUseProgressStreamMode) {
+                        const fullText = res && typeof res.responseText === "string" ? res.responseText : "";
+                        if (fullText.length > chatProgressOffset) {
+                            flushChatStreamChunk(fullText.slice(chatProgressOffset));
+                            chatProgressOffset = fullText.length;
+                        }
+                        if (res.status && res.status !== 200) {
                             stopRenderLoop();
                             finalizeChatResponse(actionToken);
-                            if (streamErr) appendChatError(streamErr);
+                            logAiRawResponse(provider, config.modelVision, "chat", fullText);
+                            const apiErr = parseApiError(fullText);
+                            const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: fullText, rawText: fullText };
+                            appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
+                            return;
                         }
-                    })();
-                }
-            },
-            onload: (res) => {
-                if (ignoreIncomingOutput) return;
-                if (chatStreamActive) {
+                        finalizeChatStream(actionToken, "");
+                        return;
+                    }
+                    if (chatStreamActive) {
+                        if (streamErrorHandled) return;
+                        if (res.status === 200) return;
+                        logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
+                        const apiErr = parseApiError(res.responseText);
+                        const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
+                        streamErrorHandled = true;
+                        stopRenderLoop();
+                        finalizeChatResponse(actionToken);
+                        appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
+                        return;
+                    }
+                    if (res.status === 429) {
+                        stopRenderLoop();
+                        finalizeChatResponse(actionToken);
+                        logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
+                        const apiErr = parseApiError(res.responseText);
+                        const html = (apiErr && isQuotaError(apiErr))
+                            ? getQuotaErrorHTML(provider, apiErr.message)
+                            : get429ErrorHTML();
+                        appendChatError(html, { allowHtml: true, recordAsAssistant: true });
+                        return;
+                    }
+                    if (res.status === 401 || res.status === 403) {
+                        stopRenderLoop();
+                        finalizeChatResponse(actionToken);
+                        logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
+                        appendChatError(getInvalidKeyErrorHTML(provider), { allowHtml: true });
+                        return;
+                    }
+                    if (res.status !== 200) {
+                        stopRenderLoop();
+                        finalizeChatResponse(actionToken);
+                        logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
+                        const apiErr = parseApiError(res.responseText);
+                        const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
+                        appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
+                    }
+                },
+                onerror: (e) => {
+                    if (ignoreIncomingOutput) return;
                     if (streamErrorHandled) return;
-                    if (res.status === 200) return;
-                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
-                    const apiErr = parseApiError(res.responseText);
-                    const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
-                    streamErrorHandled = true;
+                    Logger.error("GM onerror (chat)", buildErrorDebugInfo(e));
+                    if (retryChatGmRequest("onerror", e)) return;
                     stopRenderLoop();
                     finalizeChatResponse(actionToken);
-                    appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
-                    return;
-                }
-                if (res.status === 429) {
+                    appendChatError(buildNetworkFailureHtml(provider, url, e), { allowHtml: true });
+                },
+                ontimeout: () => {
+                    if (ignoreIncomingOutput) return;
+                    if (streamErrorHandled) return;
+                    Logger.error("GM ontimeout (chat)", buildRequestDebugMeta(url, {
+                        provider: provider,
+                        model: config.modelVision,
+                        mode: `chat/${currentAttempt.label}`
+                    }));
+                    if (retryChatGmRequest("ontimeout", { status: 408, statusText: "timeout" })) return;
                     stopRenderLoop();
                     finalizeChatResponse(actionToken);
-                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
-                    const apiErr = parseApiError(res.responseText);
-                    const html = (apiErr && isQuotaError(apiErr))
-                        ? getQuotaErrorHTML(provider, apiErr.message)
-                        : get429ErrorHTML();
-                    appendChatError(html, { allowHtml: true, recordAsAssistant: true });
-                    return;
+                    appendChatError("请求超时 (Timeout)");
                 }
-                if (res.status === 401 || res.status === 403) {
-                    stopRenderLoop();
-                    finalizeChatResponse(actionToken);
-                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
-                    appendChatError(getInvalidKeyErrorHTML(provider), { allowHtml: true });
-                    return;
-                }
-                if (res.status !== 200) {
-                    stopRenderLoop();
-                    finalizeChatResponse(actionToken);
-                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
-                    const apiErr = parseApiError(res.responseText);
-                    const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
-                    appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
-                }
-            },
-            onerror: () => {
-                if (ignoreIncomingOutput) return;
-                if (streamErrorHandled) return;
-                stopRenderLoop();
-                finalizeChatResponse(actionToken);
-                appendChatError("网络连接失败");
-            },
-            ontimeout: () => {
-                if (ignoreIncomingOutput) return;
-                if (streamErrorHandled) return;
-                stopRenderLoop();
-                finalizeChatResponse(actionToken);
-                appendChatError("请求超时 (Timeout)");
+            };
+            if (typeof currentAttempt.fetchMode === "boolean") {
+                requestOptions.fetch = currentAttempt.fetchMode;
             }
-        });
+            gmRequest = GM_xmlhttpRequest(requestOptions);
+        };
+
+        startChatGmRequest();
     }
 
     function getNoKeyErrorHTML(provider) {
