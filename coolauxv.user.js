@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.4
+// @version      v16.4.1
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -224,7 +224,11 @@
     ];
 
     const LATEST_CHANGELOG = `
-        v16.3
+        v16.4.1
+        ## 🎨 界面
+        *   右下角"智"改为"💡"
+        ---
+        v16.4
         ## ✨ 新功能
         *   支持Ollama API了
         ---
@@ -4771,7 +4775,7 @@
             document.body.appendChild(cursorBtn);
 
             floatBall = document.createElement("div");
-            floatBall.innerText = "智";
+            floatBall.innerText = "💡";
             Object.assign(floatBall.style, {
                 display: "none", position: "fixed", bottom: "100px", right: "20px",
                 width: "50px", height: "50px", background: "linear-gradient(135deg, #a516e8, #6610f2)",
