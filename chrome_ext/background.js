@@ -5,6 +5,13 @@ const PROVIDER_SECRET_STORAGE_KEY = "coolauxv_provider_custom_secrets_v1";
 const DNR_RULE_ID_BASE = 20000;
 const DNR_RULE_ID_LIMIT = 500;
 
+const FETCH_FORBIDDEN_HEADERS = new Set([
+  "accept-charset", "accept-encoding", "access-control-request-headers",
+  "access-control-request-method", "connection", "content-length",
+  "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive",
+  "origin", "referer", "te", "trailer", "transfer-encoding", "upgrade", "via"
+]);
+
 const isOurViewer = (url) => typeof url === "string" && url.startsWith(VIEWER_URL);
 
 const normalizePdfUrlCandidate = (value) => {
@@ -264,39 +271,57 @@ const loadProviderStorageSnapshot = () => new Promise((resolve) => {
   });
 });
 
+const resolveHeadersTemplate = (tpl, secrets) => {
+  if (!tpl || !tpl.headersTemplate) return {};
+  let headers = tpl.headersTemplate;
+  if (typeof headers === "string") {
+    try { headers = JSON.parse(headers); } catch (e) { return {}; }
+  }
+  if (!headers || typeof headers !== "object") return {};
+  const context = Object.assign({}, buildTemplateContext(tpl, secrets), { apiKey: tpl.apiKey || "" });
+  const resolved = {};
+  Object.keys(headers).forEach((key) => {
+    const raw = headers[key];
+    if (raw === undefined || raw === null) return;
+    const value = applyTemplateString(String(raw), context).trim();
+    const normalizedKey = String(key || "").toLowerCase().trim();
+    if (value && normalizedKey) resolved[normalizedKey] = value;
+  });
+  return resolved;
+};
+
 const updateOriginStripRules = async () => {
   if (!chrome.declarativeNetRequest) {
     return;
   }
   const snapshot = await loadProviderStorageSnapshot();
-  const domains = new Set();
+  const domainHeaders = new Map();
   snapshot.templates.forEach((tpl) => {
     const url = resolveTemplateBaseUrl(tpl, snapshot.secrets);
-    if (url && url.hostname) {
-      domains.add(url.hostname);
-    }
+    if (!url || !url.hostname) return;
+    const headers = resolveHeadersTemplate(tpl, snapshot.secrets);
+    const entry = domainHeaders.get(url.hostname) || {};
+    Object.keys(headers).forEach((key) => {
+      if (!entry[key]) entry[key] = headers[key];
+    });
+    if (Object.keys(entry).length) domainHeaders.set(url.hostname, entry);
   });
   const addRules = [];
   let idx = 0;
-  for (const domain of domains) {
-    if (idx >= DNR_RULE_ID_LIMIT) {
-      break;
+  for (const [domain, headers] of domainHeaders) {
+    if (idx >= DNR_RULE_ID_LIMIT) break;
+    const requestHeaders = Object.keys(headers).map((key) => ({
+      header: key, operation: "set", value: headers[key]
+    }));
+    if (requestHeaders.length) {
+      addRules.push({
+        id: DNR_RULE_ID_BASE + idx,
+        priority: 1,
+        action: { type: "modifyHeaders", requestHeaders },
+        condition: { requestDomains: [domain], resourceTypes: ["xmlhttprequest", "other"] }
+      });
+      idx += 1;
     }
-    addRules.push({
-      id: DNR_RULE_ID_BASE + idx,
-      priority: 1,
-      action: {
-        type: "modifyHeaders",
-        requestHeaders: [
-          { header: "origin", operation: "remove" }
-        ]
-      },
-      condition: {
-        requestDomains: [domain],
-        resourceTypes: ["xmlhttprequest"]
-      }
-    });
-    idx += 1;
   }
   const existing = await chrome.declarativeNetRequest.getDynamicRules();
   const removeRuleIds = existing
@@ -318,7 +343,7 @@ const scheduleOriginStripRuleUpdate = () => {
     updateOriginStripRules().catch((err) => {
       console.warn("CoolAuxv DNR update failed", err);
     });
-  }, 200);
+  }, 50);
 };
 
 const maybeRedirectBuiltinViewer = (tabId, url) => {
@@ -420,13 +445,30 @@ chrome.runtime.onConnect.addListener((port) => {
     }
 
     controller = new AbortController();
+    const safeHeaders = {};
+    const forbiddenHeaders = {};
+    Object.keys(msg.headers || {}).forEach((key) => {
+      const lowerKey = String(key || "").toLowerCase().trim();
+      if (FETCH_FORBIDDEN_HEADERS.has(lowerKey)) {
+        forbiddenHeaders[lowerKey] = msg.headers[key];
+      } else {
+        safeHeaders[key] = msg.headers[key];
+      }
+    });
+    if (Object.keys(forbiddenHeaders).length) {
+      log("debug", "Request has fetch-forbidden headers, relying on DNR rules", forbiddenHeaders);
+    }
     const requestInit = {
       method: msg.method || "GET",
-      headers: msg.headers || {},
+      headers: safeHeaders,
       body: msg.data,
       signal: controller.signal,
       credentials: "omit"
     };
+    if (forbiddenHeaders.referer) {
+      requestInit.referrer = forbiddenHeaders.referer;
+      requestInit.referrerPolicy = "unsafe-url";
+    }
 
     try {
       const response = await fetch(msg.url, requestInit);
@@ -509,6 +551,159 @@ chrome.runtime.onConnect.addListener((port) => {
   });
 });
 
+// --- debugger-based custom header injection ---
+
+const pendingDebuggerRequests = new Map(); // debugId -> {port, tabId, forbiddenHeaders}
+const tabDebuggerRefs = new Map(); // tabId -> count
+
+const detachTabDebugger = async (tabId) => {
+  const count = (tabDebuggerRefs.get(tabId) || 0) - 1;
+  if (count <= 0) {
+    tabDebuggerRefs.delete(tabId);
+    try {
+      await chrome.debugger.detach({ tabId });
+    } catch (e) {
+      // ignore detach errors
+    }
+  } else {
+    tabDebuggerRefs.set(tabId, count);
+  }
+};
+
+const attachTabDebugger = async (tabId) => {
+  const count = tabDebuggerRefs.get(tabId) || 0;
+  if (count > 0) {
+    tabDebuggerRefs.set(tabId, count + 1);
+    return; // already attached
+  }
+  await chrome.debugger.attach({ tabId }, "1.3");
+  tabDebuggerRefs.set(tabId, 1);
+  await chrome.debugger.sendCommand({ tabId }, "Fetch.enable", {
+    patterns: [{ requestStage: "Request" }]
+  });
+};
+
+chrome.debugger.onEvent.addListener(async (source, method, params) => {
+  if (method !== "Fetch.requestPaused") return;
+  const tabId = source.tabId;
+  if (!tabId) return;
+
+  const headers = params.request.headers || {};
+  const markerKey = Object.keys(headers).find(
+    (k) => k.toLowerCase() === "x-coolauxv-debug-id"
+  );
+  const debugId = markerKey ? headers[markerKey] : null;
+  if (!debugId || !pendingDebuggerRequests.has(debugId)) {
+    // Not our request, continue unmodified
+    try {
+      await chrome.debugger.sendCommand({ tabId }, "Fetch.continueRequest", {
+        requestId: params.requestId,
+        headers: Object.keys(headers).map((name) => ({ name, value: headers[name] }))
+      });
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+  const pending = pendingDebuggerRequests.get(debugId);
+  pendingDebuggerRequests.delete(debugId);
+
+  // Build modified headers: existing minus marker + forbidden headers
+  const modifiedHeaders = [];
+  Object.keys(headers).forEach((name) => {
+    if (name.toLowerCase() === "x-coolauxv-debug-id") return;
+    modifiedHeaders.push({ name, value: headers[name] });
+  });
+  Object.keys(pending.forbiddenHeaders || {}).forEach((name) => {
+    const lower = name.toLowerCase();
+    const idx = modifiedHeaders.findIndex((h) => h.name.toLowerCase() === lower);
+    if (idx >= 0) {
+      modifiedHeaders[idx].value = pending.forbiddenHeaders[name];
+    } else {
+      modifiedHeaders.push({ name, value: pending.forbiddenHeaders[name] });
+    }
+  });
+
+  console.log("[CoolAuxv] debugger: intercepted request, injecting forbidden headers:", Object.keys(pending.forbiddenHeaders));
+  log("debug", "Injecting forbidden headers via debugger", {
+    debugId,
+    url: params.request.url,
+    headers: Object.keys(pending.forbiddenHeaders)
+  });
+
+  try {
+    await chrome.debugger.sendCommand({ tabId }, "Fetch.continueRequest", {
+      requestId: params.requestId,
+      headers: modifiedHeaders
+    });
+  } catch (e) {
+    log("warn", "Fetch.continueRequest failed", e);
+  }
+
+  await detachTabDebugger(tabId);
+});
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (!port || port.name !== "coolauxv-gm-xhr-debugger") {
+    return;
+  }
+
+  let tabId = null;
+  let active = true;
+
+  port.onMessage.addListener(async (msg) => {
+    if (!msg || !active) return;
+    if (msg.type !== "setup") return;
+
+    tabId = port.sender && port.sender.tab ? port.sender.tab.id : null;
+    console.log("[CoolAuxv] debugger setup: tabId=", tabId, "hasDebugger=", !!chrome.debugger);
+
+    if (!tabId) {
+      console.error("[CoolAuxv] debugger: no tab id from sender");
+      port.postMessage({ type: "error", message: "no tab id" });
+      return;
+    }
+
+    if (!chrome.debugger) {
+      console.error("[CoolAuxv] debugger: chrome.debugger API not available. Check chrome://extensions — 'debugger' permission may not be granted");
+      port.postMessage({ type: "error", message: "debugger API not available" });
+      return;
+    }
+
+    const debugId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    pendingDebuggerRequests.set(debugId, {
+      port,
+      tabId,
+      forbiddenHeaders: msg.forbiddenHeaders || {}
+    });
+
+    try {
+      console.log("[CoolAuxv] debugger: attempting attach to tab", tabId);
+      await attachTabDebugger(tabId);
+      console.log("[CoolAuxv] debugger: attach OK, Fetch.enable done");
+      port.postMessage({ type: "debugger_ready", debugId });
+    } catch (err) {
+      console.error("[CoolAuxv] debugger: attach FAILED:", err.message, err.stack);
+      pendingDebuggerRequests.delete(debugId);
+      port.postMessage({ type: "error", message: err.message || "debugger attach failed" });
+    }
+  });
+
+  port.onDisconnect.addListener(async () => {
+    active = false;
+    // Clean up any pending requests for this port
+    for (const [debugId, pending] of pendingDebuggerRequests) {
+      if (pending.port === port) {
+        pendingDebuggerRequests.delete(debugId);
+      }
+    }
+    if (tabId) {
+      try { await detachTabDebugger(tabId); } catch (e) { /* ignore */ }
+    }
+  });
+});
+
+// --- end debugger-based custom header injection ---
+
 chrome.runtime.onInstalled.addListener(() => {
   scheduleOriginStripRuleUpdate();
 });
@@ -522,4 +717,6 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-scheduleOriginStripRuleUpdate();
+updateOriginStripRules().catch((err) => {
+  console.warn("CoolAuxv DNR initial setup failed", err);
+});

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.4.1
+// @version      v16.4.2
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -19,6 +19,7 @@
 // @require      https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js
 // @require      https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js
 // @require      https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js
+// @require      https://cdn.jsdelivr.net/npm/mermaid@9.4.3/dist/mermaid.min.js
 // @resource     katexCSS https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css
 // @connect      open.bigmodel.cn
 // @connect      api.openai.com
@@ -30,9 +31,136 @@
 // ==/UserScript==
 
 
-
 (function () {
     'use strict';
+
+    const BRIDGE_SOURCE_EXT = "coolauxv-extension";
+    const BRIDGE_SOURCE_US = "coolauxv-userscript";
+    const BRIDGE_PING_TYPE = "coolauxv_bridge_ping";
+    const BRIDGE_READY_TYPE = "coolauxv_bridge_ready";
+    const BRIDGE_REQUEST_TYPE = "coolauxv_bridge_request";
+    const BRIDGE_RESPONSE_TYPE = "coolauxv_bridge_response";
+    const BRIDGE_DETECT_TIMEOUT_MS = 800;
+
+    let extensionDetected = false;
+    let bridgeToken = "";
+    let startMainTimer = null;
+    let uiStarted = false;
+    let requestBridgeCleanup = () => { };
+
+    const isCoolauxvKey = (key) => typeof key === "string" && key.startsWith("coolauxv_");
+
+    const generateBridgeToken = () => {
+        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    };
+
+    const generateRequestId = () => {
+        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    };
+
+    const generateMessageId = () => {
+        return `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    };
+
+    const postBridgeMessage = (payload) => {
+        window.postMessage({ source: BRIDGE_SOURCE_US, ...payload }, "*");
+    };
+
+    const markExtensionDetected = () => {
+        if (extensionDetected) {
+            return;
+        }
+        extensionDetected = true;
+        if (startMainTimer) {
+            clearTimeout(startMainTimer);
+            startMainTimer = null;
+        }
+        if (uiStarted) {
+            requestBridgeCleanup();
+        }
+    };
+
+    const getBridgeKeys = () => {
+        if (typeof GM_listValues !== "function") {
+            return [];
+        }
+        return GM_listValues().filter(isCoolauxvKey);
+    };
+
+    const handleBridgeRequest = (data) => {
+        if (!bridgeToken || data.token !== bridgeToken) {
+            return;
+        }
+        const id = data.id;
+        const action = data.action;
+        const response = { type: BRIDGE_RESPONSE_TYPE, id: id, ok: true };
+        try {
+            if (action === "get") {
+                const key = data.key;
+                const fallback = data.defaultValue;
+                response.value = isCoolauxvKey(key) ? GM_getValue(key, fallback) : fallback;
+            } else if (action === "set") {
+                const key = data.key;
+                if (isCoolauxvKey(key)) {
+                    GM_setValue(key, data.value);
+                }
+            } else if (action === "delete") {
+                const key = data.key;
+                if (isCoolauxvKey(key)) {
+                    GM_deleteValue(key);
+                }
+            } else if (action === "list") {
+                response.value = getBridgeKeys();
+            } else if (action === "dump") {
+                const dump = {};
+                const keys = getBridgeKeys();
+                keys.forEach((key) => {
+                    dump[key] = GM_getValue(key);
+                });
+                response.value = dump;
+            } else if (action === "clear") {
+                const keys = getBridgeKeys();
+                keys.forEach((key) => GM_deleteValue(key));
+                response.value = keys.length;
+            } else {
+                response.ok = false;
+                response.error = "unknown action";
+            }
+        } catch (err) {
+            response.ok = false;
+            response.error = err ? err.message || String(err) : "error";
+        }
+        postBridgeMessage(response);
+    };
+
+    const setupBridgeServer = () => {
+        window.addEventListener("message", (event) => {
+            if (event.source !== window) {
+                return;
+            }
+            const data = event.data;
+            if (!data || data.source !== BRIDGE_SOURCE_EXT) {
+                return;
+            }
+            if (data.type === BRIDGE_PING_TYPE) {
+                if (!bridgeToken) {
+                    bridgeToken = generateBridgeToken();
+                }
+                markExtensionDetected();
+                postBridgeMessage({
+                    type: BRIDGE_READY_TYPE,
+                    nonce: data.nonce,
+                    token: bridgeToken,
+                    protocol: 1
+                });
+                return;
+            }
+            if (data.type === BRIDGE_REQUEST_TYPE) {
+                markExtensionDetected();
+                handleBridgeRequest(data);
+            }
+        });
+    };
 
     // ========================================================================
     // 全局配置与常量
@@ -55,19 +183,11 @@
     const CHAT_QUEUE_MAX_SIZE = 100;
     const DEFAULT_KEY_LINK_TITLE = "获取 KEY";
     const DEFAULT_PROVIDER_SESSION_FIELD_KEY = "conversationId";
-    const getRuntimeScriptVersion = () => {
-        const gmInfo = (typeof GM_info !== "undefined" && GM_info) ? GM_info : globalThis.GM_info;
+    const getScriptVersion = () => {
+        const gmInfo = (typeof GM_info !== "undefined" && GM_info) ? GM_info : (globalThis && globalThis.GM_info);
         if (gmInfo && gmInfo.script && gmInfo.script.version) {
             return String(gmInfo.script.version);
         }
-        try {
-            if (globalThis.chrome && chrome.runtime && typeof chrome.runtime.getManifest === "function") {
-                const manifest = chrome.runtime.getManifest();
-                if (manifest && manifest.version) {
-                    return String(manifest.version);
-                }
-            }
-        } catch (e) { }
         return "";
     };
 
@@ -95,44 +215,6 @@
     const POPUP_ANIM_EASE_IN = "cubic-bezier(0.4, 0, 1, 1)";
     const POPUP_ANIM_EASE_OUT = "cubic-bezier(0, 0, 0.2, 1)";
     const DEFAULT_ANIM_SPEED = 1;
-    const PDF_VIEWER_PATH_RE = /\/pdfjs\/web\/viewer\.html$/i;
-
-    const normalizePdfSourceUrl = (value) => {
-        if (!value) return "";
-        const raw = String(value).trim();
-        if (!raw) return "";
-        const candidates = [raw];
-        try {
-            candidates.push(decodeURIComponent(raw));
-        } catch (e) { }
-        for (const candidate of candidates) {
-            try {
-                const parsed = new URL(candidate);
-                if (["http:", "https:", "file:"].includes(parsed.protocol)) {
-                    return parsed.href;
-                }
-            } catch (e) { }
-        }
-        return "";
-    };
-
-    const getHijackedPdfSourceUrl = () => {
-        try {
-            if (!(globalThis.chrome && chrome.runtime && chrome.runtime.id)) return "";
-            const current = new URL(location.href);
-            if (current.protocol !== "chrome-extension:") return "";
-            if (current.host !== chrome.runtime.id) return "";
-            if (!PDF_VIEWER_PATH_RE.test(current.pathname || "")) return "";
-            const source = current.searchParams.get("file")
-                || current.searchParams.get("src")
-                || current.searchParams.get("url")
-                || "";
-            return normalizePdfSourceUrl(source);
-        } catch (e) {
-            return "";
-        }
-    };
-    const HIJACKED_PDF_SOURCE_URL = getHijackedPdfSourceUrl();
 
     const DEFAULT_ACTION_TEMPLATE_BASE64_LIST = [
         "eyJpZCI6InRyYW5zbGF0ZSIsImxhYmVsIjoi57+76K+RIiwic3lzdGVtUHJvbXB0Ijoi5L2g5piv5LiA5Liq57+76K+R5byV5pOO44CC5bCG55So5oi36L6T5YWl55u05o6l57+76K+R5oiQ5Lit5paH44CC5aaC5p6c6L6T5YWl5piv5Lit5paH5YiZ6K+R5Li66Iux5paH44CC5LiN6KaB6L6T5Ye65Lu75L2V5aSa5L2Z55qE6Kej6YeK44CCIiwiY29sb3IiOiJyZ2IoMjQ5LCAyNTAsIDI1MSkiLCJ2aXNpb25Qcm9tcHRPcmRlciI6ImFmdGVyIn0=",
@@ -142,7 +224,11 @@
     ];
 
     const LATEST_CHANGELOG = `
-        v16.4.1
+        v16.4.2
+        ## ✨ 新功能
+        *   油猴插件支持覆写Header了
+        ---
+	v16.4.1
         ## 🎨 界面
         *   右下角"智"改为"💡"
         ---
@@ -251,8 +337,6 @@
     const chatMermaidRenderPending = new Map();
     let chatMermaidCacheVersion = 0;
     let mermaidLocalRendererInitialized = false;
-    let mermaidLoadPromise = null;
-    const MERMAID_RENDERER_UNAVAILABLE_CODE = "renderer_unavailable";
 
     const normalizeMermaidCode = (code) => String(code || "").replace(/\r\n?/g, "\n").trim();
 
@@ -297,51 +381,6 @@
         return null;
     };
 
-    const ensureMermaidRuntimeLoaded = async () => {
-        if (getLocalMermaidRenderer()) return true;
-        if (mermaidLoadPromise) return mermaidLoadPromise;
-        mermaidLoadPromise = (async () => {
-            if (!(globalThis.chrome && chrome.runtime && typeof chrome.runtime.getURL === "function")) {
-                Logger.debug("[Mermaid]", "runtime load skipped: chrome.runtime.getURL unavailable");
-                return false;
-            }
-            const url = chrome.runtime.getURL("vendor/mermaid.min.js");
-            Logger.debug("[Mermaid]", "runtime import mermaid from extension url", { url: url });
-            try {
-                await import(url);
-            } catch (err) {
-                Logger.debug("[Mermaid]", "runtime import failed", err && (err.message || String(err)));
-            }
-            let loaded = !!getLocalMermaidRenderer();
-            if (!loaded) {
-                Logger.debug("[Mermaid]", "runtime fallback: fetch + blob import", { url: url });
-                try {
-                    const resp = await fetch(url, { cache: "no-store" });
-                    if (!resp.ok) {
-                        throw new Error(`HTTP ${resp.status}`);
-                    }
-                    const source = await resp.text();
-                    const blobUrl = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
-                    try {
-                        await import(blobUrl);
-                    } finally {
-                        URL.revokeObjectURL(blobUrl);
-                    }
-                } catch (err) {
-                    Logger.debug("[Mermaid]", "runtime fallback import failed", err && (err.message || String(err)));
-                }
-            }
-            loaded = !!getLocalMermaidRenderer();
-            Logger.debug("[Mermaid]", "runtime import finished", { loaded: loaded });
-            return loaded;
-        })();
-        const ok = await mermaidLoadPromise;
-        if (!ok) {
-            mermaidLoadPromise = null;
-        }
-        return ok;
-    };
-
     const initLocalMermaidRendererIfNeeded = (renderer) => {
         if (!renderer || mermaidLocalRendererInitialized) return;
         const mermaidInitConfig = {
@@ -353,47 +392,26 @@
             }
         };
         if (typeof renderer.initialize === "function") {
-            Logger.debug("[Mermaid]", "init renderer via mermaid.initialize", {
-                version: renderer.version || "",
-                hasMermaidAPI: !!renderer.mermaidAPI
-            });
             renderer.initialize(mermaidInitConfig);
             mermaidLocalRendererInitialized = true;
             return;
         }
         if (renderer.mermaidAPI && typeof renderer.mermaidAPI.initialize === "function") {
-            Logger.debug("[Mermaid]", "init renderer via mermaidAPI.initialize", {
-                version: renderer.version || "",
-                hasMermaidAPI: !!renderer.mermaidAPI
-            });
             renderer.mermaidAPI.initialize(mermaidInitConfig);
             mermaidLocalRendererInitialized = true;
         }
     };
 
-    const requestMermaidSvgByLocal = async (code) => {
-        let renderer = getLocalMermaidRenderer();
-        if (!renderer) {
-            await ensureMermaidRuntimeLoaded();
-            renderer = getLocalMermaidRenderer();
-        }
+    const requestMermaidSvgByLocal = (code) => {
         return new Promise((resolve, reject) => {
+            const renderer = getLocalMermaidRenderer();
             if (!renderer) {
-                Logger.debug("[Mermaid]", "local renderer unavailable", {
-                    hasGlobalMermaid: !!(globalThis && globalThis.mermaid),
-                    typeofModule: typeof module,
-                    hasModuleExports: typeof module !== "undefined" && module && !!module.exports,
-                    hasExportsObj: typeof exports !== "undefined" && !!exports
-                });
-                const unavailableErr = new Error("Mermaid local renderer unavailable");
-                unavailableErr.code = MERMAID_RENDERER_UNAVAILABLE_CODE;
-                reject(unavailableErr);
+                reject(new Error("Mermaid local renderer unavailable"));
                 return;
             }
             try {
                 initLocalMermaidRendererIfNeeded(renderer);
             } catch (err) {
-                Logger.debug("[Mermaid]", "renderer init failed", err && (err.message || String(err)));
                 reject(err);
                 return;
             }
@@ -401,20 +419,10 @@
                 ? renderer.mermaidAPI
                 : renderer;
             if (!renderApi || typeof renderApi.render !== "function") {
-                Logger.debug("[Mermaid]", "render api unavailable", {
-                    hasRendererRender: !!(renderer && renderer.render),
-                    hasMermaidApiRender: !!(renderer && renderer.mermaidAPI && renderer.mermaidAPI.render)
-                });
                 reject(new Error("Mermaid render API unavailable"));
                 return;
             }
             const renderId = `coolauxv-mermaid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-            Logger.debug("[Mermaid]", "start local render", {
-                renderId: renderId,
-                codeLength: code.length,
-                renderArity: renderApi.render.length,
-                version: renderer.version || ""
-            });
             const resolveSvg = (value) => {
                 let svgText = "";
                 if (typeof value === "string") {
@@ -423,17 +431,9 @@
                     svgText = value.svg;
                 }
                 if (svgText && svgText.includes("<svg")) {
-                    Logger.debug("[Mermaid]", "local render success", {
-                        renderId: renderId,
-                        svgLength: svgText.length
-                    });
                     resolve(svgText);
                     return;
                 }
-                Logger.debug("[Mermaid]", "local render invalid svg", {
-                    renderId: renderId,
-                    valueType: typeof value
-                });
                 reject(new Error("Mermaid local render returned invalid svg"));
             };
             try {
@@ -447,21 +447,11 @@
                 if (renderResult && typeof renderResult.then === "function") {
                     renderResult.then((output) => {
                         resolveSvg(output);
-                    }).catch((err) => {
-                        Logger.debug("[Mermaid]", "local render promise rejected", {
-                            renderId: renderId,
-                            error: err && (err.message || String(err))
-                        });
-                        reject(err);
-                    });
+                    }).catch((err) => reject(err));
                     return;
                 }
                 resolveSvg(renderResult);
             } catch (err) {
-                Logger.debug("[Mermaid]", "local render threw", {
-                    renderId: renderId,
-                    error: err && (err.message || String(err))
-                });
                 reject(err);
             }
         });
@@ -488,66 +478,29 @@
 
     const ensureMermaidSvgCached = (code) => {
         const normalized = normalizeMermaidCode(code);
-        if (!normalized) {
-            Logger.debug("[Mermaid]", "skip empty mermaid block");
-            return Promise.resolve("");
-        }
+        if (!normalized) return Promise.resolve("");
         if (chatMermaidSvgCache.has(normalized)) {
             const cached = chatMermaidSvgCache.get(normalized);
-            Logger.debug("[Mermaid]", "cache hit", {
-                codeLength: normalized.length,
-                cachedType: typeof cached
-            });
             return Promise.resolve(typeof cached === "string" ? cached : "");
         }
         if (chatMermaidRenderPending.has(normalized)) {
-            Logger.debug("[Mermaid]", "reuse pending render", {
-                codeLength: normalized.length
-            });
             return chatMermaidRenderPending.get(normalized);
         }
         const requestVersion = chatMermaidCacheVersion;
-        Logger.debug("[Mermaid]", "cache miss -> render", {
-            codeLength: normalized.length,
-            cacheVersion: requestVersion
-        });
         const task = requestMermaidSvgByLocal(normalized)
             .then((svgText) => {
                 if (requestVersion !== chatMermaidCacheVersion) return "";
                 if (svgText) {
                     chatMermaidSvgCache.set(normalized, svgText);
-                    Logger.debug("[Mermaid]", "cache store success", {
-                        codeLength: normalized.length,
-                        svgLength: svgText.length
-                    });
                     return svgText;
                 }
                 chatMermaidSvgCache.set(normalized, MERMAID_RENDER_FAILED);
-                Logger.debug("[Mermaid]", "cache store failed marker (empty svg)", {
-                    codeLength: normalized.length
-                });
                 return "";
             })
             .catch((err) => {
                 if (requestVersion === chatMermaidCacheVersion) {
-                    const isTemporaryUnavailable = err && err.code === MERMAID_RENDERER_UNAVAILABLE_CODE;
-                    if (isTemporaryUnavailable) {
-                        Logger.debug("[Mermaid]", "render unavailable; keep codeblock and wait next chance", {
-                            codeLength: normalized.length,
-                            error: err && (err.message || String(err))
-                        });
-                    } else {
-                        chatMermaidSvgCache.set(normalized, MERMAID_RENDER_FAILED);
-                        Logger.debug("[Mermaid]", "cache store failed marker (error)", {
-                            codeLength: normalized.length,
-                            error: err && (err.message || String(err))
-                        });
-                    }
-                } else {
-                    Logger.debug("[Mermaid]", "skip cache write due cache version changed", {
-                        codeLength: normalized.length,
-                        error: err && (err.message || String(err))
-                    });
+                    chatMermaidSvgCache.set(normalized, MERMAID_RENDER_FAILED);
+                    Logger.warn("CoolAuxv Mermaid 渲染失败:", err);
                 }
                 return "";
             })
@@ -561,12 +514,6 @@
     const cloneDeep = (obj) => JSON.parse(JSON.stringify(obj));
 
     const normalizeProviderId = (id) => String(id || "").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-");
-    const generateRequestId = () => {
-        return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    };
-    const generateMessageId = () => {
-        return `msg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    };
     const normalizeProviderType = (type) => {
         if (type === "openai-responses") return "openai-responses";
         if (type === "chat-parts") return "chat-parts";
@@ -1679,20 +1626,19 @@
             <div class="coolauxv-sub-label" style="font-size: 12px; color: #999; margin: 8px 0 4px 0;">${className}</div>
             <div class="coolauxv-tag-container">
                 ${buckets[className].map((m) => {
-            const modelId = m.id || m.name || "";
-            const c = stringToColorStyles(m.tag || modelId || "");
-            return `
-                <div class="coolauxv-model-btn" data-provider-id="${providerId}" data-group-id="${group.id}" data-val="${modelId}" data-tag="${m.tag || ""}"
-                     style="background:${c.bg}; border: 1px solid ${c.border}; color:${c.text};">
-                    <span class="coolauxv-model-name">${modelId}</span>
-                    <span class="coolauxv-model-tag" style="color:${c.tag}">${m.tag || ""}</span>
-                </div>
-                `;
-        }).join("")}
+                    const modelId = m.id || m.name || "";
+                    const c = stringToColorStyles(m.tag || modelId || "");
+                    return `
+                        <div class="coolauxv-model-btn" data-provider-id="${providerId}" data-group-id="${group.id}" data-val="${modelId}" data-tag="${m.tag || ""}"
+                             style="background:${c.bg}; border: 1px solid ${c.border}; color:${c.text};">
+                            <span class="coolauxv-model-name">${modelId}</span>
+                            <span class="coolauxv-model-tag" style="color:${c.tag}">${m.tag || ""}</span>
+                        </div>
+                    `;
+                }).join("")}
             </div>
         `).join("");
     };
-
 
     // ========================================================================
     // 日志工具
@@ -1730,6 +1676,104 @@
         warn: (...args) => Logger._print('warn', null, args),
         error: (...args) => Logger._print('error', null, args)
     };
+
+    // ========================================================================
+    // 特殊逻辑：PDF.js Viewer 注入 (接收端 - 极速版)
+    // ========================================================================
+    function initPdfReceiver() {
+        if (!location.href.includes("mozilla.github.io/pdf.js/web/viewer.html")) {
+            return;
+        }
+        const isBlur = GM_getValue("coolauxv_enable_blur_glass", false);
+        const appWindow = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+
+        // 1. 创建进度悬浮窗
+        const loader = document.createElement("div");
+        loader.id = "coolauxv-pdf-loader";
+        Object.assign(loader.style, {
+            position: "fixed", top: "20px", left: "50%", transform: "translateX(-50%)",
+            padding: "12px 24px", borderRadius: "12px", zIndex: "9999",
+            display: "none", // 默认显示
+            flexDirection: "column", alignItems: "center", gap: "8px",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.2)", transition: "all 0.3s ease",
+            background: isBlur ? "rgba(255, 255, 255, 0.65)" : "rgba(255, 255, 255, 0.95)",
+            backdropFilter: isBlur ? "blur(12px)" : "none",
+            border: "1px solid rgba(255,255,255,0.5)",
+            color: "#333", fontSize: "14px", fontWeight: "600"
+        });
+
+        loader.innerHTML = `
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span class="coolauxv-spinner">⚡</span>
+                <span>正在打开文件...</span>
+            </div>
+            <style>@keyframes spin { 100% { transform: rotate(360deg); } } .coolauxv-spinner { display:inline-block; animation: spin 1s linear infinite; }</style>
+        `;
+        document.body.appendChild(loader);
+
+        // 2. 主动握手逻辑
+        // 只要页面加载了，就疯狂告诉 opener 我准备好了 (每100ms发一次，直到收到数据为止，防止丢包)
+        const readyInterval = setInterval(() => {
+            if (window.opener) {
+                window.opener.postMessage({ type: "PDF_I_AM_READY" }, "*");
+            }
+        }, 100);
+
+        window.addEventListener("message", async (event) => {
+            // 收到数据
+            if (event.data && event.data.type === "OPEN_PDF_BLOB") {
+                clearInterval(readyInterval); // 停止呼叫
+                loader.style.display = "flex";
+
+                const buildPageData = (buffer) => {
+                    try {
+                        return new appWindow.Uint8Array(buffer);
+                    } catch (err) {
+                        const sandboxData = new Uint8Array(buffer);
+                        const pageData = new appWindow.Uint8Array(sandboxData.length);
+                        pageData.set(sandboxData);
+                        return pageData;
+                    }
+                };
+
+                try {
+                    // 等待 App 初始化
+                    const waitForApp = () => new Promise(resolve => {
+                        const check = () => {
+                            if (appWindow.PDFViewerApplication && appWindow.PDFViewerApplication.open) resolve(appWindow.PDFViewerApplication);
+                            else setTimeout(check, 50); // 缩短检查间隔
+                        };
+                        check();
+                    });
+                    const pdfApp = await waitForApp();
+
+                    // 优先零拷贝视图，失败再回退深拷贝
+                    const pageData = buildPageData(event.data.buffer);
+                    await pdfApp.open(pageData);
+
+                    // 成功回执
+                    if (event.source) event.source.postMessage({ type: "PDF_OPENED_ACK" }, "*");
+
+                    // 隐藏 Loader
+                    loader.innerHTML = "✅ 加载完成";
+                    setTimeout(() => { loader.style.opacity = "0"; setTimeout(() => loader.style.display = "none", 300); }, 800);
+
+                } catch (e) {
+                    Logger.error(e);
+                    // 兼容模式兜底
+                    try {
+                        const pageData = buildPageData(event.data.buffer);
+                        await appWindow.PDFViewerApplication.open({ data: pageData });
+                        if (event.source) event.source.postMessage({ type: "PDF_OPENED_ACK" }, "*");
+                        loader.style.display = "none";
+                    } catch (e2) {
+                        alert("错误: " + e.message);
+                    }
+                }
+            }
+        });
+        // return;
+    }
 
     const PDFJS_CUSTOM_SCALE_CONTAINER_ID = "coolauxv-pdfjs-custom-scale-container";
     const PDFJS_CUSTOM_SCALE_INPUT_ID = "coolauxv-pdfjs-custom-scale-input";
@@ -2048,8 +2092,11 @@
         }, { once: true });
     };
 
+
+
     // --- 1. 样式注入 ---
-    const styles = `
+    const ensureStyles = () => {
+        const styles = `
     /* ============================
        样式隔离与重置核心
        ============================ */
@@ -2122,26 +2169,6 @@
     .coolauxv-ctrl-btn { padding: 0 4px; font-size: 18px; color: #666; cursor: pointer; transition: color 0.2s; line-height: 1; }
     .coolauxv-ctrl-btn:hover { color: #3b82f6; }
     #coolauxv-quit:hover { color: #ef4444; }
-    #coolauxv-pdf-origin-info {
-        display: none;
-        align-items: center;
-        justify-content: center;
-        width: 16px;
-        height: 16px;
-        border-radius: 50%;
-        border: 1px solid #cbd5e1;
-        font-size: 11px;
-        font-weight: 700;
-        line-height: 1;
-        color: #475569;
-        background: #fff;
-        padding: 0;
-    }
-    #coolauxv-pdf-origin-info:hover {
-        color: #1d4ed8;
-        border-color: #93c5fd;
-        background: #eff6ff;
-    }
     #coolauxv-settings-btn {
         display: inline-flex;
         align-items: center;
@@ -2778,6 +2805,7 @@
     .coolauxv-model-tag { font-size: 10px; margin-top: 1px; }
 
     .coolauxv-sub-label { font-size: 11px; color: #888; width: 100%; margin: 8px 0 4px 0; font-weight: normal; text-align: left !important; }
+    .coolauxv-sub-label-inline { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 
     .coolauxv-back-btn { margin-top: 20px; padding: 10px; background: #f3f4f6; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-weight: bold; text-align: center !important; color: #555; }
     .coolauxv-reset-btn {
@@ -3764,10 +3792,11 @@
 
     `;
 
-    GM_addStyle(styles);
+        GM_addStyle(styles);
 
-    const katexCSS = GM_getResourceText("katexCSS");
-    if (katexCSS) GM_addStyle(katexCSS);
+        const katexCSS = GM_getResourceText("katexCSS");
+        if (katexCSS) GM_addStyle(katexCSS);
+    };
 
     // --- 2. 状态变量 ---
     let popup, floatBall, cursorBtn;
@@ -3782,6 +3811,13 @@
     let isViewSwitching = false;
     let viewSwitchTimer = null;
     let isPopupAnimating = false;
+
+    requestBridgeCleanup = () => {
+        isQuitted = true;
+        if (popup) popup.style.display = "none";
+        if (floatBall) floatBall.style.display = "none";
+        if (cursorBtn) cursorBtn.style.display = "none";
+    };
 
     const VIEW_EDGES = ["left", "right", "top", "bottom"];
     const getRandomViewEdge = () => VIEW_EDGES[Math.floor(Math.random() * VIEW_EDGES.length)];
@@ -4690,6 +4726,10 @@
 
     function initUI() {
         try {
+            if (extensionDetected) {
+                requestBridgeCleanup();
+                return;
+            }
             cursorBtn = document.createElement("div");
             cursorBtn.id = "coolauxv-translate-icon";
             cursorBtn.innerText = "译";
@@ -4907,7 +4947,6 @@
                 </div>
               </div>
               <div style="display:flex; gap:6px; align-items:center;">
-                <span id="coolauxv-pdf-origin-info" class="coolauxv-ctrl-btn" title="点击复制原 PDF 链接">i</span>
                 <span id="coolauxv-quit" class="coolauxv-ctrl-btn" title="退出">⏻</span>
                 <span id="coolauxv-min" class="coolauxv-ctrl-btn" title="最小化">－</span>
                 <span id="coolauxv-close" class="coolauxv-ctrl-btn" title="关闭">×</span>
@@ -4975,8 +5014,8 @@
                       <div id="coolauxv-chat-body">
                           <textarea id="coolauxv-chat-input" placeholder="连续对话输入..."></textarea>
                           <div id="coolauxv-chat-actions">
-                              <button id="coolauxv-btn-screenshot-chat" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
                               <button id="coolauxv-btn-chat-image-file" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.45; white-space:nowrap;" title="选择本地图片">🖼 本地</button>
+                              <button id="coolauxv-btn-screenshot-chat" class="coolauxv-action-btn coolauxv-btn-blue" style="flex:0.4; white-space:nowrap;" title="截取屏幕并分析">📷 识屏</button>
                               <button id="coolauxv-btn-preview-chat" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; font-size:14px;" title="预览截图">🔍</button>
                               <button id="coolauxv-btn-clear-chat-shot" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; font-size:14px;" title="清除识屏">🗑</button>
                               <button id="coolauxv-btn-chat-stop" class="coolauxv-action-btn coolauxv-animated-visibility" style="display:none; flex:0.5; background:#fee2e2; color:#b91c1c; border-color:#fecaca;" title="打断当前输出">⏹ 停止</button>
@@ -4994,13 +5033,14 @@
                 <h3 style="margin-top:0; border-bottom:1px solid #eee; padding-bottom:10px;">
                     <div style="display:flex; align-items:baseline; gap:8px; flex-wrap:wrap;">
                         <span>⚙️ 配置设置</span>
-                        <span style="font-size:12px; color:#999; font-weight:normal;">版本 ${getRuntimeScriptVersion() || "未知"}</span>
+                        <span style="font-size:12px; color:#999; font-weight:normal;">版本 ${getScriptVersion() || "未知"}</span>
                     </div>
                     <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
                         <a href="https://github.com/CoolestEnoch/CoolAuxv" target="_blank" class="coolauxv-github-btn" title="查看源码与文档">
                             <svg height="16" width="16" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
                             CoolAuxv (GitHub)
                         </a>
+                        <a href="https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js" class="coolauxv-github-btn" title="检查更新">检查更新</a>
                         <a href="https://github.com/CoolestEnoch/CoolAuxv/commits/main" target="_blank" class="coolauxv-github-btn" title="查看历史版本更新日志">更新日志</a>
                     </div>
                 </h3>
@@ -5071,6 +5111,26 @@
                         ${logRadioHTML}
                     </div>
                 </div>
+
+                <div class="coolauxv-setting-group">
+                    <label class="coolauxv-setting-label">PDF 阅读工具 (PDF.js Onilne)</label>
+                    <div class="coolauxv-input-wrapper">
+                        <input type="text" id="coolauxv-pdf-url" class="coolauxv-setting-input" placeholder="输入在线 PDF 链接...">
+                        <span class="coolauxv-clear-icon" id="coolauxv-btn-clear-pdf">×</span>
+                    </div>
+                    <div style="display:flex; gap:10px; margin-top:8px;">
+                        <!-- 在线链接按钮：默认风格 -->
+                        <button id="coolauxv-btn-pdf-link" class="coolauxv-action-btn" style="flex:1;">🌐 打开网络链接</button>
+
+                        <!-- 本地加载按钮：主色调风格 (浅蓝) -->
+                        <button id="coolauxv-btn-pdf-local-online" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">🚀 在线加载本地文件</button>
+
+                        <input type="file" id="coolauxv-input-pdf-file" accept=".pdf" style="display:none;">
+                    </div>
+
+                    <div style="font-size:11px; color:#999; margin-top:4px;">提示：本地文件将通过内存传输至 Mozilla 在线阅读器渲染，不消耗流量。</div>
+                </div>
+
 
                 <div class="coolauxv-setting-group">
                     <label class="coolauxv-setting-label">杂项 (Miscellaneous)</label>
@@ -5399,6 +5459,10 @@
         const selectionActionRadioGroup = popup.querySelector("#coolauxv-selection-action-radio-group");
         const inputWidth = popup.querySelector("#coolauxv-cfg-width");
         const inputHeight = popup.querySelector("#coolauxv-cfg-height");
+        const inputPdfUrl = popup.querySelector("#coolauxv-pdf-url");
+        const btnPdfLink = popup.querySelector("#coolauxv-btn-pdf-link");
+        const inputPdfFile = popup.querySelector("#coolauxv-input-pdf-file");
+        const btnPdfLocalOnline = popup.querySelector("#coolauxv-btn-pdf-local-online");
         const inputBlurGlass = popup.querySelector("#coolauxv-cfg-blur-glass");
         const inputPersistentBall = popup.querySelector("#coolauxv-cfg-persistent-ball");
         const inputDraggableBall = popup.querySelector("#coolauxv-cfg-draggable-ball");
@@ -8803,8 +8867,8 @@
                 <div id="coolauxv-provider-form-body" style="flex:1; overflow-y:auto; padding-right:4px;">
                     <div id="coolauxv-provider-form-manual" style="display:flex; flex-direction:column; gap:10px;">
                         <div style="font-size:12px; font-weight:700; color:#666;">基础信息</div>
-                        <div class="coolauxv-sub-label">显示名称 ({{providerLabel}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">显示名称 ({{providerLabel}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="label" ${displayCheck("label")}> 默认展示
                             </label>
                         </div>
@@ -8814,30 +8878,30 @@
                         <input type="text" id="coolauxv-provider-form-id" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="例如：my-provider" value="${escapeAttr(baseTemplate.id)}" ${idReadonly}>
                         <div id="coolauxv-provider-id-warning" style="display:none; margin-top:-4px; font-size:12px; color:#dc2626;">Provider ID 已存在，请更换其他 ID。</div>
 
-                        <div class="coolauxv-sub-label">Base URL ({{baseUrl}}，支持 {{key_name}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">Base URL ({{baseUrl}}，支持 {{key_name}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="baseUrl" ${displayCheck("baseUrl")}> 默认展示
                             </label>
                         </div>
                         <input type="text" id="coolauxv-provider-form-base-url" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="https://api.example.com/v1/chat/completions" value="${escapeAttr(baseTemplate.baseUrl)}">
 
                         <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">鉴权与链接</div>
-                        <div class="coolauxv-sub-label">API KEY ({{apiKey}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">API KEY ({{apiKey}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="apiKey" ${displayCheck("apiKey")}> 默认展示
                             </label>
                         </div>
                         <div style="font-size:11px; color:#888; margin-bottom:8px;">API KEY 请在主界面填写。</div>
 
-                        <div class="coolauxv-sub-label">API KEY Placeholder ({{apiKeyPlaceholder}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">API KEY Placeholder ({{apiKeyPlaceholder}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="apiKeyPlaceholder" ${displayCheck("apiKeyPlaceholder")}> 默认展示
                             </label>
                         </div>
                         <input type="text" id="coolauxv-provider-form-api-key-placeholder" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="默认占位符" value="${escapeAttr(baseTemplate.apiKeyPlaceholder || "")}">
 
-                        <div class="coolauxv-sub-label">KEY 获取链接 ({{keyLink}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">KEY 获取链接 ({{keyLink}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="keyLink" ${displayCheck("keyLink")}> 默认展示
                             </label>
                         </div>
@@ -8846,8 +8910,8 @@
                         <input type="text" id="coolauxv-provider-form-key-link-title" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="${DEFAULT_KEY_LINK_TITLE}" value="${escapeAttr(baseTemplate.keyLinkTitle || DEFAULT_KEY_LINK_TITLE)}">
 
                         <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">协议与角色</div>
-                        <div class="coolauxv-sub-label">协议类型 ({{providerType}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">协议类型 ({{providerType}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="type" ${displayCheck("type")}> 默认展示
                             </label>
                         </div>
@@ -8859,8 +8923,8 @@
                             <option value="openai-responses" ${baseTemplate.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                         </select>
 
-                        <div class="coolauxv-sub-label">支持识图 ({{supportsVision}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">支持识图 ({{supportsVision}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="supportsVision" ${displayCheck("supportsVision")}> 默认展示
                             </label>
                         </div>
@@ -8868,8 +8932,8 @@
                             <input type="checkbox" id="coolauxv-provider-form-vision" ${baseTemplate.supportsVision ? "checked" : ""}> 允许识图
                         </label>
 
-                        <div class="coolauxv-sub-label">连续对话 ({{supportsContinuousChat}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">连续对话 ({{supportsContinuousChat}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="supportsContinuousChat" ${displayCheck("supportsContinuousChat")}> 默认展示
                             </label>
                         </div>
@@ -8877,8 +8941,8 @@
                             <input type="checkbox" id="coolauxv-provider-form-continuous-chat" ${baseTemplate.supportsContinuousChat === false ? "" : "checked"}> 允许连续对话
                         </label>
 
-                        <div class="coolauxv-sub-label">角色名 ({{roleSystem}} / {{roleUser}} / {{roleAssistant}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">角色名 ({{roleSystem}} / {{roleUser}} / {{roleAssistant}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="roles" ${displayCheck("roles")}> 默认展示
                             </label>
                         </div>
@@ -8890,8 +8954,8 @@
 
                         <div id="coolauxv-provider-stream-section">
                             <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">流式解析</div>
-                            <div class="coolauxv-sub-label">响应解析 ({{deltaPath}} / {{reasoningPath}} / {{sessionIdPath}} / {{sessionIdKey}} / {{reasoningTag}})
-                                <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                            <div class="coolauxv-sub-label coolauxv-sub-label-inline">响应解析 ({{deltaPath}} / {{reasoningPath}} / {{sessionIdPath}} / {{sessionIdKey}} / {{reasoningTag}})
+                                <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                     <input type="checkbox" data-display-key="streamDelta" ${displayCheck("streamDelta")}> Delta 默认展示
                                 </label>
                                 <label class="coolauxv-toggle-label" style="margin-left:6px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
@@ -8922,29 +8986,29 @@
 
                         <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">模板</div>
                         <div style="font-size:11px; color:#888;">内置变量：{{model}} / {{messages}} / {{latestUserText}} / {{latestUserInputText}} / {{latestSystemPrompt}} / {{conversationId}} / {{requestId}} / {{sessionId}} / {{trigger}}</div>
-                        <div class="coolauxv-sub-label">请求头模板 (JSON, {{headersTemplate}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">请求头模板 (JSON, {{headersTemplate}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="headersTemplate" ${displayCheck("headersTemplate")}> 默认展示
                             </label>
                         </div>
                         <textarea id="coolauxv-provider-form-headers" class="coolauxv-setting-input coolauxv-resizable-input" rows="4">${escapeText(headersJson)}</textarea>
 
-                        <div class="coolauxv-sub-label">请求体模板 (JSON, {{bodyTemplate}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">请求体模板 (JSON, {{bodyTemplate}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="bodyTemplate" ${displayCheck("bodyTemplate")}> 默认展示
                             </label>
                         </div>
                         <textarea id="coolauxv-provider-form-body-template" class="coolauxv-setting-input coolauxv-resizable-input" rows="4">${escapeText(bodyJson)}</textarea>
 
                         <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">模型与自定义字段</div>
-                        <div class="coolauxv-sub-label">模型配置 ({{modelGroups}})
-                            <label class="coolauxv-toggle-label" style="margin-left:8px; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">模型配置 ({{modelGroups}})
+                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="modelGroups" ${displayCheck("modelGroups")}> 默认展示
                             </label>
                         </div>
                         <div id="coolauxv-provider-form-model-groups"></div>
                         <button type="button" id="coolauxv-provider-add-group" class="coolauxv-action-btn" style="margin-top:6px;">➕ 添加分类</button>
-                        <div class="coolauxv-sub-label">自定义字段 (key => {{key}})</div>
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">自定义字段 (key => {{key}})</div>
                         <div id="coolauxv-provider-form-custom-fields"></div>
                         <button type="button" id="coolauxv-provider-add-custom-field" class="coolauxv-action-btn" style="margin-top:6px;">➕ 添加字段</button>
                         <div style="font-size:11px; color:#888;">可在请求头/请求体/Base URL 中使用 {{key}}。未打码字段可在此处填写，打码字段请在提供商列表中填写。</div>
@@ -8987,20 +9051,18 @@
             const typeInput = box.querySelector("#coolauxv-provider-form-type");
             const headersInput = box.querySelector("#coolauxv-provider-form-headers");
             const bodyInput = box.querySelector("#coolauxv-provider-form-body-template");
-            const deltaPathInput = box.querySelector("#coolauxv-provider-form-delta-path");
-            const reasoningPathInput = box.querySelector("#coolauxv-provider-form-reasoning-path");
             const streamSection = box.querySelector("#coolauxv-provider-stream-section");
             const streamTip = box.querySelector("#coolauxv-provider-stream-tip");
             const closeBtn = box.querySelector("#coolauxv-provider-modal-close");
             const cancelBtn = box.querySelector("#coolauxv-provider-modal-cancel");
             const submitBtn = box.querySelector("#coolauxv-provider-modal-submit");
             const base64Input = box.querySelector("#coolauxv-provider-form-base64-input");
-            const modelGroupsContainer = box.querySelector("#coolauxv-provider-form-model-groups");
+            const modelGroupContainer = box.querySelector("#coolauxv-provider-form-model-groups");
             const addGroupBtn = box.querySelector("#coolauxv-provider-add-group");
             const customFieldContainer = box.querySelector("#coolauxv-provider-form-custom-fields");
             const addCustomFieldBtn = box.querySelector("#coolauxv-provider-add-custom-field");
 
-            let modeType = "manual";
+            let modeTab = "manual";
             let idTouched = false;
 
             const isDuplicateProviderId = (candidateId) => {
@@ -9010,7 +9072,7 @@
 
             const updateProviderIdState = () => {
                 if (!idInput || !submitBtn || !idWarning) return;
-                if (modeType !== "manual") {
+                if (modeTab !== "manual") {
                     idWarning.style.display = "none";
                     submitBtn.disabled = false;
                     return;
@@ -9022,11 +9084,11 @@
             };
 
             const setMode = (nextMode) => {
-                modeType = nextMode;
-                manualSection.style.display = modeType === "manual" ? "block" : "none";
-                base64Section.style.display = modeType === "base64" ? "block" : "none";
-                btnManual.classList.toggle("coolauxv-btn-primary", modeType === "manual");
-                btnBase64.classList.toggle("coolauxv-btn-primary", modeType === "base64");
+                modeTab = nextMode;
+                if (manualSection) manualSection.style.display = modeTab === "manual" ? "block" : "none";
+                if (base64Section) base64Section.style.display = modeTab === "base64" ? "block" : "none";
+                if (btnManual) btnManual.classList.toggle("coolauxv-btn-primary", modeTab === "manual");
+                if (btnBase64) btnBase64.classList.toggle("coolauxv-btn-primary", modeTab === "base64");
                 updateProviderIdState();
             };
 
@@ -9045,30 +9107,61 @@
                 setStreamSectionDisabled(isChatParts);
             };
 
-            const renderModelGroupsEditor = () => {
-                if (!modelGroupsContainer) return;
-                modelGroupsContainer.innerHTML = modelGroups.map((group, groupIndex) => {
-                    const modelsHtml = group.models.map((model, modelIndex) => `
-                        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:6px;">
-                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" data-group-idx="${groupIndex}" data-model-idx="${modelIndex}" data-model-field="id" placeholder="模型名称" value="${escapeAttr(model.id || "")}">
-                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" data-group-idx="${groupIndex}" data-model-idx="${modelIndex}" data-model-field="class" placeholder="子类别" value="${escapeAttr(model.class || "")}">
-                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" data-group-idx="${groupIndex}" data-model-idx="${modelIndex}" data-model-field="tag" placeholder="Tag" value="${escapeAttr(model.tag || "")}">
-                            <button type="button" class="coolauxv-action-btn" data-action="remove-model" data-group-idx="${groupIndex}" data-model-idx="${modelIndex}" style="padding:4px 10px;">删除</button>
+            setMode("manual");
+            refreshStreamSection();
+
+            if (labelInput && idInput && mode !== "edit") {
+                labelInput.addEventListener("input", () => {
+                    if (idTouched) return;
+                    const normalized = normalizeProviderId(labelInput.value);
+                    if (normalized) idInput.value = normalized;
+                    updateProviderIdState();
+                });
+                idInput.addEventListener("input", () => {
+                    idTouched = true;
+                    updateProviderIdState();
+                });
+            } else if (idInput) {
+                idInput.addEventListener("input", updateProviderIdState);
+            }
+
+            if (typeInput) {
+                typeInput.addEventListener("change", () => {
+                    if (bodyInput) {
+                        const nextType = normalizeProviderType(typeInput.value);
+                        bodyInput.value = JSON.stringify(defaultBodyTemplateForType(nextType), null, 2);
+                    }
+                    refreshStreamSection();
+                });
+            }
+
+            const renderModelGroups = () => {
+                if (!modelGroupContainer) return;
+                modelGroupContainer.innerHTML = modelGroups.map((group, groupIndex) => {
+                    const modelsHtml = (group.models || []).map((model, modelIndex) => `
+                        <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;" data-group-index="${groupIndex}" data-model-index="${modelIndex}">
+                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1;" data-field="model.id" placeholder="名称" value="${escapeAttr(model.id || model.name || "")}">
+                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1;" data-field="model.class" placeholder="子类别" value="${escapeAttr(model.class || "")}">
+                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1;" data-field="model.tag" placeholder="Tag" value="${escapeAttr(model.tag || "")}">
+                            <button type="button" class="coolauxv-action-btn" data-action="remove-model" style="padding:4px 8px;">×</button>
                         </div>
                     `).join("");
-
+                    const typeSelected = group.type === "vision" ? "vision" : "text";
                     return `
-                        <div style="border:1px solid #eee; border-radius:8px; padding:10px; margin-bottom:10px;">
-                            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
-                                <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" data-group-idx="${groupIndex}" data-group-field="label" placeholder="分类名称" value="${escapeAttr(group.label)}">
-                                <select class="coolauxv-setting-input coolauxv-fixed-input" data-group-idx="${groupIndex}" data-group-field="type">
-                                    <option value="text" ${group.type !== "vision" ? "selected" : ""}>通用模型</option>
-                                    <option value="vision" ${group.type === "vision" ? "selected" : ""}>视觉模型</option>
+                        <div style="border:1px solid #eee; border-radius:8px; padding:8px; margin-bottom:10px;" data-group-index="${groupIndex}">
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1;" data-field="label" placeholder="分类名称" value="${escapeAttr(group.label || "")}">
+                                <select class="coolauxv-setting-input coolauxv-fixed-input" data-field="type" style="min-width:140px;">
+                                    <option value="text" ${typeSelected === "text" ? "selected" : ""}>通用模型</option>
+                                    <option value="vision" ${typeSelected === "vision" ? "selected" : ""}>视觉模型</option>
                                 </select>
-                                <button type="button" class="coolauxv-action-btn" data-action="remove-group" data-group-idx="${groupIndex}" style="padding:4px 10px;">删除分类</button>
+                                <button type="button" class="coolauxv-action-btn" data-action="remove-group" style="padding:4px 8px;">删除分类</button>
                             </div>
-                            ${modelsHtml || `<div style="font-size:12px; color:#999; margin-top:6px;">暂无模型，请添加。</div>`}
-                            <button type="button" class="coolauxv-action-btn" data-action="add-model" data-group-idx="${groupIndex}" style="margin-top:8px;">➕ 添加模型</button>
+                            <div style="font-size:11px; color:#888; margin-top:6px;">默认模型为该分类的第一项</div>
+                            <div style="margin-top:6px;">
+                                ${modelsHtml || `<div style="font-size:12px; color:#999;">暂无模型，请添加</div>`}
+                            </div>
+                            <button type="button" class="coolauxv-action-btn" data-action="add-model" style="margin-top:6px; padding:4px 8px;">➕ 添加模型</button>
                         </div>
                     `;
                 }).join("");
@@ -9095,21 +9188,161 @@
                 `).join("");
             };
 
-            const ensureModelGroup = () => {
-                if (!modelGroups.length) {
-                    modelGroups = [{ id: "general", label: "通用模型", type: "text", models: [] }];
-                }
+            if (addGroupBtn) {
+                addGroupBtn.onclick = () => {
+                    modelGroups.push({ label: "通用模型", type: "text", models: [] });
+                    renderModelGroups();
+                };
+            }
+
+            if (addCustomFieldBtn) {
+                addCustomFieldBtn.onclick = () => {
+                    customFieldList.push({ key: "", value: "", display: true, masked: false });
+                    renderCustomFields();
+                };
+            }
+
+            if (modelGroupContainer) {
+                modelGroupContainer.addEventListener("click", (e) => {
+                    const target = e.target;
+                    if (!target) return;
+                    const action = target.dataset.action;
+                    if (!action) return;
+                    const groupEl = target.closest("[data-group-index]");
+                    if (!groupEl) return;
+                    const groupIndex = Number(groupEl.dataset.groupIndex);
+                    const group = modelGroups[groupIndex];
+                    if (!group) return;
+                    if (action === "add-model") {
+                        group.models = group.models || [];
+                        group.models.push({ id: "", class: "", tag: "" });
+                        renderModelGroups();
+                    } else if (action === "remove-group") {
+                        modelGroups.splice(groupIndex, 1);
+                        if (!modelGroups.length) {
+                            modelGroups.push({ label: "通用模型", type: "text", models: [] });
+                        }
+                        renderModelGroups();
+                    } else if (action === "remove-model") {
+                        const modelEl = target.closest("[data-model-index]");
+                        if (!modelEl) return;
+                        const modelIndex = Number(modelEl.dataset.modelIndex);
+                        if (!Number.isFinite(modelIndex)) return;
+                        group.models = group.models || [];
+                        group.models.splice(modelIndex, 1);
+                        renderModelGroups();
+                    }
+                });
+
+                modelGroupContainer.addEventListener("input", (e) => {
+                    const target = e.target;
+                    if (!target || !target.dataset) return;
+                    const field = target.dataset.field;
+                    if (!field) return;
+                    const groupEl = target.closest("[data-group-index]");
+                    if (!groupEl) return;
+                    const groupIndex = Number(groupEl.dataset.groupIndex);
+                    const group = modelGroups[groupIndex];
+                    if (!group) return;
+                    if (field === "label") {
+                        group.label = target.value;
+                        return;
+                    }
+                    if (field === "type") {
+                        group.type = target.value === "vision" ? "vision" : "text";
+                        return;
+                    }
+                    if (field.startsWith("model.")) {
+                        const modelEl = target.closest("[data-model-index]");
+                        if (!modelEl) return;
+                        const modelIndex = Number(modelEl.dataset.modelIndex);
+                        if (!Number.isFinite(modelIndex)) return;
+                        group.models = group.models || [];
+                        const model = group.models[modelIndex];
+                        if (!model) return;
+                        const key = field.split(".")[1];
+                        if (key === "id") model.id = target.value;
+                        if (key === "class") model.class = target.value;
+                        if (key === "tag") model.tag = target.value;
+                    }
+                });
+            }
+
+            if (customFieldContainer) {
+                customFieldContainer.addEventListener("click", (e) => {
+                    const target = e.target;
+                    if (!target) return;
+                    const action = target.dataset.action;
+                    if (action !== "remove-custom") return;
+                    const row = target.closest("[data-custom-index]");
+                    if (!row) return;
+                    const index = Number(row.dataset.customIndex);
+                    if (!Number.isFinite(index)) return;
+                    customFieldList.splice(index, 1);
+                    renderCustomFields();
+                });
+
+                customFieldContainer.addEventListener("input", (e) => {
+                    const target = e.target;
+                    if (!target || !target.dataset) return;
+                    const field = target.dataset.field;
+                    if (!field) return;
+                    const row = target.closest("[data-custom-index]");
+                    if (!row) return;
+                    const index = Number(row.dataset.customIndex);
+                    if (!Number.isFinite(index)) return;
+                    const item = customFieldList[index];
+                    if (!item) return;
+                    if (field === "custom.key") item.key = target.value;
+                    if (field === "custom.value") item.value = target.value;
+                    if (field === "custom.display") item.display = target.checked;
+                    if (field === "custom.masked") {
+                        item.masked = target.checked;
+                        renderCustomFields();
+                    }
+                });
+            }
+
+            renderModelGroups();
+            renderCustomFields();
+
+            if (btnManual) btnManual.onclick = () => setMode("manual");
+            if (btnBase64) btnBase64.onclick = () => setMode("base64");
+            if (closeBtn) closeBtn.onclick = closeModal;
+            if (cancelBtn) cancelBtn.onclick = closeModal;
+            overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
+
+            const buildDisplayState = () => {
+                const display = Object.assign({}, displayState);
+                box.querySelectorAll("[data-display-key]").forEach((input) => {
+                    const key = input.dataset.displayKey;
+                    if (!key) return;
+                    display[key] = !!input.checked;
+                });
+                return display;
             };
 
             const buildModelGroupsPayload = () => {
-                ensureModelGroup();
-                return normalizeModelGroups({ modelGroups: modelGroups }).map((group, idx) => {
-                    const nextGroup = Object.assign({}, group);
-                    if (!nextGroup.id) {
-                        nextGroup.id = normalizeProviderId(`${nextGroup.label || "group"}-${idx + 1}`);
+                let groups = modelGroups.map((group, idx) => {
+                    const label = String(group.label || "").trim() || `模型分类${idx + 1}`;
+                    const type = group.type === "vision" ? "vision" : "text";
+                    const models = (group.models || []).map(normalizeModelItem).filter(Boolean);
+                    let selectedModel = String(group.selectedModel || "").trim();
+                    if ((!selectedModel || !models.some((m) => m.id === selectedModel)) && models.length) {
+                        selectedModel = models[0].id;
                     }
-                    return nextGroup;
-                });
+                    return {
+                        id: normalizeProviderId(group.id || label),
+                        label: label,
+                        type: type,
+                        models: models,
+                        selectedModel: selectedModel
+                    };
+                }).filter(Boolean);
+                if (!groups.length) {
+                    groups = [{ id: "general", label: "通用模型", type: "text", models: [], selectedModel: "" }];
+                }
+                return groups;
             };
 
             const buildCustomFieldsPayload = () => {
@@ -9135,145 +9368,9 @@
                 return output;
             };
 
-            const buildDisplayState = () => {
-                const next = Object.assign({}, displayState);
-                box.querySelectorAll("[data-display-key]").forEach((checkbox) => {
-                    const key = checkbox.dataset.displayKey;
-                    next[key] = !!checkbox.checked;
-                });
-                return next;
-            };
-
-            setMode("manual");
-            renderModelGroupsEditor();
-            renderCustomFields();
-            refreshStreamSection();
-
-            if (labelInput && idInput) {
-                labelInput.addEventListener("input", () => {
-                    if (idTouched || mode === "edit") return;
-                    const normalized = normalizeProviderId(labelInput.value);
-                    if (normalized) idInput.value = normalized;
-                    updateProviderIdState();
-                });
-                idInput.addEventListener("input", () => {
-                    idTouched = true;
-                    updateProviderIdState();
-                });
-            } else if (idInput) {
-                idInput.addEventListener("input", updateProviderIdState);
-            }
-
-            if (typeInput) {
-                typeInput.addEventListener("change", () => {
-                    if (bodyInput) {
-                        const nextType = normalizeProviderType(typeInput.value);
-                        bodyInput.value = JSON.stringify(defaultBodyTemplateForType(nextType), null, 2);
-                    }
-                    refreshStreamSection();
-                });
-            }
-
-            if (btnManual) btnManual.onclick = () => setMode("manual");
-            if (btnBase64) btnBase64.onclick = () => setMode("base64");
-            if (closeBtn) closeBtn.onclick = closeModal;
-            if (cancelBtn) cancelBtn.onclick = closeModal;
-            overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
-
-            if (modelGroupsContainer) {
-                modelGroupsContainer.addEventListener("click", (e) => {
-                    const target = e.target;
-                    if (!target || !(target instanceof HTMLElement)) return;
-                    const action = target.dataset.action;
-                    const groupIdx = parseInt(target.dataset.groupIdx || "", 10);
-                    if (Number.isNaN(groupIdx)) return;
-                    if (action === "add-model") {
-                        modelGroups[groupIdx].models.push({ id: "", class: "", tag: "" });
-                        renderModelGroupsEditor();
-                    }
-                    if (action === "remove-model") {
-                        const modelIdx = parseInt(target.dataset.modelIdx || "", 10);
-                        if (Number.isNaN(modelIdx)) return;
-                        modelGroups[groupIdx].models.splice(modelIdx, 1);
-                        renderModelGroupsEditor();
-                    }
-                    if (action === "remove-group") {
-                        modelGroups.splice(groupIdx, 1);
-                        renderModelGroupsEditor();
-                    }
-                });
-
-                modelGroupsContainer.addEventListener("input", (e) => {
-                    const target = e.target;
-                    if (!target || !(target instanceof HTMLInputElement) && !(target instanceof HTMLSelectElement)) return;
-                    const groupIdx = parseInt(target.dataset.groupIdx || "", 10);
-                    if (Number.isNaN(groupIdx)) return;
-                    if (target.dataset.groupField) {
-                        const field = target.dataset.groupField;
-                        modelGroups[groupIdx][field] = target.value;
-                        return;
-                    }
-                    const modelIdx = parseInt(target.dataset.modelIdx || "", 10);
-                    if (Number.isNaN(modelIdx)) return;
-                    const field = target.dataset.modelField;
-                    if (field) {
-                        modelGroups[groupIdx].models[modelIdx][field] = target.value;
-                    }
-                });
-            }
-
-            if (customFieldContainer) {
-                customFieldContainer.addEventListener("click", (e) => {
-                    const target = e.target;
-                    if (!target || !(target instanceof HTMLElement)) return;
-                    const action = target.dataset.action;
-                    if (action !== "remove-custom") return;
-                    const row = target.closest("[data-custom-index]");
-                    if (!row) return;
-                    const index = Number(row.dataset.customIndex);
-                    if (!Number.isFinite(index)) return;
-                    customFieldList.splice(index, 1);
-                    renderCustomFields();
-                });
-
-                customFieldContainer.addEventListener("input", (e) => {
-                    const target = e.target;
-                    if (!target || !(target instanceof HTMLInputElement)) return;
-                    const field = target.dataset.field;
-                    if (!field) return;
-                    const row = target.closest("[data-custom-index]");
-                    if (!row) return;
-                    const index = Number(row.dataset.customIndex);
-                    if (!Number.isFinite(index)) return;
-                    const item = customFieldList[index];
-                    if (!item) return;
-                    if (field === "custom.key") item.key = target.value;
-                    if (field === "custom.value") item.value = target.value;
-                    if (field === "custom.display") item.display = target.checked;
-                    if (field === "custom.masked") {
-                        item.masked = target.checked;
-                        renderCustomFields();
-                    }
-                });
-            }
-
-            if (addGroupBtn) {
-                addGroupBtn.onclick = () => {
-                    modelGroups.push({ id: "", label: "新分类", type: "text", models: [] });
-                    renderModelGroupsEditor();
-                };
-            }
-
-            if (addCustomFieldBtn) {
-                addCustomFieldBtn.onclick = () => {
-                    customFieldList.push({ key: "", value: "", display: true, masked: false });
-                    renderCustomFields();
-                };
-            }
-
             if (submitBtn) {
                 submitBtn.onclick = () => {
-                    if (modeType === "base64") {
+                    if (modeTab === "base64") {
                         const raw = (base64Input && base64Input.value || "").trim();
                         if (!raw) {
                             alert("请先粘贴 Base64 文本。");
@@ -9299,8 +9396,8 @@
                         }
                         const merged = imported.map((item) => mergeProviderDefaults(item));
                         const cleaned = pruneEmptyValues(merged);
-                        const templates = getProviderTemplates().concat(cleaned);
-                        saveProviderTemplates(templates);
+                        const nextTemplates = getProviderTemplates().concat(cleaned);
+                        saveProviderTemplates(nextTemplates);
                         sanitizeMaskedCustomFields(getProviderTemplates());
                         renderProviderUI();
                         closeModal();
@@ -9326,8 +9423,8 @@
                     const roleSystem = (box.querySelector("#coolauxv-provider-form-role-system") || {}).value || "system";
                     const roleUser = (box.querySelector("#coolauxv-provider-form-role-user") || {}).value || "user";
                     const roleAssistant = (box.querySelector("#coolauxv-provider-form-role-assistant") || {}).value || "assistant";
-                    const deltaPath = (deltaPathInput && deltaPathInput.value || "").trim() || "choices.0.delta.content";
-                    const reasoningPath = (reasoningPathInput && reasoningPathInput.value || "").trim();
+                    const deltaPath = (box.querySelector("#coolauxv-provider-form-delta-path") || {}).value || "";
+                    const reasoningPath = (box.querySelector("#coolauxv-provider-form-reasoning-path") || {}).value || "";
                     const sessionIdPath = (box.querySelector("#coolauxv-provider-form-session-id-path") || {}).value || "";
                     const sessionIdKey = (box.querySelector("#coolauxv-provider-form-session-id-key") || {}).value || DEFAULT_PROVIDER_SESSION_FIELD_KEY;
                     const reasoningTag = (box.querySelector("#coolauxv-provider-form-reasoning-tag") || {}).value || "";
@@ -9435,7 +9532,6 @@
                 };
             }
         };
-
         const renderProviderRadioGroup = (templates, currentProviderId) => {
             if (!providerRadioGroup) return;
             providerRadioGroup.innerHTML = templates.map((provider) => {
@@ -9809,11 +9905,11 @@
             updateBatchModeUI();
             syncAllClearButtons();
             attachProviderClearButtons();
-            updateVisionButtons(defaultProviderId);
             if (GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS)) {
                 const modelBtns = popup.querySelectorAll(".coolauxv-model-btn");
                 modelBtns.forEach((btn) => btn.classList.add("coolauxv-blur-glass-style-btn"));
             }
+            updateProviderFeatureVisibility();
         };
 
         const getActionStyleTokens = (colorValue) => {
@@ -9873,7 +9969,7 @@
             if (!template) return "";
             const compacted = compactActionTemplate(template);
             const payload = buildShareTemplateWithHashedId(compacted, "action");
-            return encodeBase64(JSON.stringify(payload));
+            return encodeBase64(JSON.stringify(pruneEmptyValues(payload)));
         };
 
         const parseActionImportPayload = (base64Input) => {
@@ -10429,7 +10525,7 @@
                     applyModelProviderUI(providerId);
                 }
                 syncChatProvider(providerId);
-                updateVisionButtons(providerId);
+                updateProviderFeatureVisibility();
                 const expandedCount = Array.from(providerSectionStates.values()).filter(Boolean).length;
                 providerSectionStates.forEach((_, id) => {
                     if (id === providerId) providerSectionStates.set(id, true);
@@ -10654,6 +10750,7 @@
                 if (field === "supportsVision") {
                     tpl.supportsVision = target.checked;
                     saveProviderTemplates(templates);
+                    updateProviderFeatureVisibility();
                     renderProviderUI();
                     return;
                 }
@@ -10748,14 +10845,7 @@
                 }
                 if (field.startsWith("stream.")) {
                     const streamKey = field.split(".")[1];
-                    const rawValue = target.value.trim();
-                    if (streamKey === "sessionIdKey") {
-                        tpl.stream[streamKey] = normalizeTemplateKey(rawValue) || DEFAULT_PROVIDER_SESSION_FIELD_KEY;
-                    } else if (streamKey === "reasoningTag") {
-                        tpl.stream[streamKey] = rawValue.toLowerCase();
-                    } else {
-                        tpl.stream[streamKey] = rawValue;
-                    }
+                    tpl.stream[streamKey] = target.value.trim();
                     saveProviderTemplates(templates);
                     return;
                 }
@@ -11260,22 +11350,9 @@
             }
         };
 
-        const toggleContinuousChat = (enabled) => {
-            if (!chatBar) {
-                syncContinuousChatPromptSectionVisibility(enabled);
-                return;
-            }
-            chatBar.style.display = enabled ? "flex" : "none";
-            const btnChatHistory = popup.querySelector("#coolauxv-chat-history-btn");
-            const persistEnabled = GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST);
-            if (btnChatHistory) {
-                btnChatHistory.style.display = enabled && persistEnabled ? "inline-block" : "none";
-            }
-            syncContinuousChatPromptSectionVisibility(enabled);
-            if (enabled) {
-                isChatCollapsed = true;
-                requestAnimationFrame(() => updateChatCollapseUI());
-            }
+        const toggleContinuousChat = () => {
+            updateProviderFeatureVisibility();
+            syncContinuousChatPromptSectionVisibility();
         };
 
         const applyBasicAnimSetting = (enabled) => {
@@ -11689,7 +11766,7 @@
             if (inputContinuousChat) {
                 const enabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
                 inputContinuousChat.checked = enabled;
-                toggleContinuousChat(enabled);
+                toggleContinuousChat();
             }
             if (inputChatHistoryPersist) {
                 const persistEnabled = GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST);
@@ -12160,7 +12237,7 @@
             inputContinuousChat.addEventListener("change", (e) => {
                 const enabled = e.target.checked;
                 GM_setValue("coolauxv_enable_continuous_chat", enabled);
-                toggleContinuousChat(enabled);
+                toggleContinuousChat();
             });
         }
         if (inputPromptContinuousChat) {
@@ -12177,7 +12254,7 @@
             inputChatHistoryPersist.addEventListener("change", (e) => {
                 const enabled = e.target.checked;
                 GM_setValue("coolauxv_chat_history_persist", enabled);
-                toggleContinuousChat(GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT));
+                updateProviderFeatureVisibility();
             });
         }
         if (btnClearChatPersist) {
@@ -12264,6 +12341,105 @@
             });
         };
 
+        // 功能1：打开网络链接
+        if (btnPdfLink && inputPdfUrl) {
+            btnPdfLink.onclick = () => {
+                const url = inputPdfUrl.value.trim();
+                if (!url) return alert("请先输入链接");
+                window.open(`https://mozilla.github.io/pdf.js/web/viewer.html?file=${encodeURIComponent(url)}`, '_blank');
+            };
+        }
+
+        // 功能2：在线加载本地文件 (跨窗口通信版)
+        // 修正后的“在线加载本地文件”逻辑 (极速发送端)
+        if (btnPdfLocalOnline && inputPdfFile) {
+            btnPdfLocalOnline.onclick = () => inputPdfFile.click();
+
+            inputPdfFile.onchange = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                inputPdfFile.value = '';
+
+                const originalBtnText = "🚀 在线加载本地文件";
+                let buffer = null;
+                let isViewerReady = false;
+                let isSent = false;
+                let readyTimeoutId = null;
+
+                const viewerWin = window.open("https://mozilla.github.io/pdf.js/web/viewer.html?file=", "_blank");
+                if (!viewerWin) {
+                    alert("请允许弹窗");
+                    btnPdfLocalOnline.innerText = originalBtnText;
+                    return;
+                }
+
+                const cleanup = () => {
+                    window.removeEventListener("message", msgHandler);
+                    if (readyTimeoutId) {
+                        clearTimeout(readyTimeoutId);
+                        readyTimeoutId = null;
+                    }
+                };
+
+                const trySend = () => {
+                    if (isSent || !buffer || !isViewerReady) return;
+                    isSent = true;
+                    btnPdfLocalOnline.innerText = "⚡ 数据发送中...";
+                    viewerWin.postMessage({ type: "OPEN_PDF_BLOB", buffer: buffer }, "*", [buffer]);
+                    btnPdfLocalOnline.innerText = "⚡ 数据已发送";
+                };
+
+                const startReadyTimeout = () => {
+                    if (readyTimeoutId) return;
+                    readyTimeoutId = setTimeout(() => {
+                        if (!isSent) {
+                            cleanup();
+                            btnPdfLocalOnline.innerText = "❌ 连接超时";
+                            setTimeout(() => btnPdfLocalOnline.innerText = originalBtnText, 2000);
+                        }
+                    }, 8000);
+                };
+
+                const msgHandler = (event) => {
+                    if (event.source !== viewerWin) return;
+                    if (event.data && event.data.type === "PDF_I_AM_READY") {
+                        isViewerReady = true;
+                        if (readyTimeoutId) {
+                            clearTimeout(readyTimeoutId);
+                            readyTimeoutId = null;
+                        }
+                        trySend();
+                    }
+                    if (event.data && event.data.type === "PDF_OPENED_ACK") {
+                        cleanup();
+                        btnPdfLocalOnline.innerText = "✅ 完成";
+                        setTimeout(() => btnPdfLocalOnline.innerText = originalBtnText, 2000);
+                    }
+                };
+
+                window.addEventListener("message", msgHandler);
+
+                const reader = new FileReader();
+                btnPdfLocalOnline.innerText = "读取文件中...";
+                reader.onload = (evt) => {
+                    buffer = evt.target.result;
+                    if (!isViewerReady) {
+                        btnPdfLocalOnline.innerText = "等待新窗口...";
+                        startReadyTimeout();
+                    }
+                    trySend();
+                };
+                reader.onerror = () => {
+                    cleanup();
+                    btnPdfLocalOnline.innerText = "❌ 读取失败";
+                    setTimeout(() => btnPdfLocalOnline.innerText = originalBtnText, 2000);
+                };
+                reader.readAsArrayBuffer(file);
+            };
+        }
+
+
+
         // 流体玻璃
         if (inputBlurGlass) {
             inputBlurGlass.addEventListener("change", (e) => {
@@ -12322,7 +12498,7 @@
         }
 
         toggleBlurGlass(GM_getValue("coolauxv_enable_blur_glass", DEFAULT_ENABLE_BLUR_GLASS));
-        toggleContinuousChat(GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT));
+        toggleContinuousChat();
         updateChatCollapseUI();
         updateTopSectionCollapseUI();
     }
@@ -12346,6 +12522,164 @@
         if (!tpl || !tpl.keyLink) return "";
         const context = buildTemplateContext(tpl, { apiKey: tpl.apiKey || "" });
         return applyTemplateString(tpl.keyLink, context).trim();
+    };
+
+    const isProviderSupportsVision = (providerId) => {
+        const tpl = getProviderTemplateSafe(providerId);
+        return !!(tpl && tpl.supportsVision);
+    };
+
+    const isProviderSupportsContinuousChat = (providerId) => {
+        const tpl = getProviderTemplateSafe(providerId);
+        return tpl ? tpl.supportsContinuousChat !== false : true;
+    };
+
+    const isContinuousChatEnabled = (providerId) => {
+        const enabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+        if (!enabled) return false;
+        const resolvedId = resolveProviderId(providerId || GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), getProviderTemplates());
+        return isProviderSupportsContinuousChat(resolvedId);
+    };
+
+    function updateProviderFeatureVisibility() {
+        if (!popup) return;
+        const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), getProviderTemplates());
+        const supportsVision = isProviderSupportsVision(providerId);
+        const supportsContinuousChat = isProviderSupportsContinuousChat(providerId);
+
+        const btnShotMain = popup.querySelector("#coolauxv-btn-screenshot");
+        const btnShotChat = popup.querySelector("#coolauxv-btn-screenshot-chat");
+        const btnMainImageFile = popup.querySelector("#coolauxv-btn-image-file");
+        const btnMainClear = popup.querySelector("#coolauxv-btn-clear-shot");
+        const btnChatImageFile = popup.querySelector("#coolauxv-btn-chat-image-file");
+        const btnPreview = popup.querySelector("#coolauxv-btn-preview");
+        const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
+        const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
+
+        const setDisplay = (el, show, defaultDisplay) => {
+            if (!el) return;
+            el.style.display = show ? (defaultDisplay || "") : "none";
+        };
+
+        setDisplay(btnShotMain, supportsVision);
+        setDisplay(btnShotChat, supportsVision);
+        setDisplay(btnMainImageFile, supportsVision);
+        setDisplay(btnChatImageFile, supportsVision);
+
+        if (!supportsVision) {
+            capturedImageBase64 = "";
+            chatCapturedImageBase64 = "";
+            setAnimatedVisibility(btnPreview, false);
+            setAnimatedVisibility(btnMainClear, false);
+            setAnimatedVisibility(btnChatPreview, false);
+            setAnimatedVisibility(btnChatClear, false);
+        } else {
+            setAnimatedVisibility(btnPreview, !!capturedImageBase64);
+            setAnimatedVisibility(btnMainClear, !!capturedImageBase64);
+            setAnimatedVisibility(btnChatPreview, !!chatCapturedImageBase64);
+            setAnimatedVisibility(btnChatClear, !!chatCapturedImageBase64);
+        }
+
+        const chatBar = popup.querySelector("#coolauxv-chat-bar");
+        const btnChatHistory = popup.querySelector("#coolauxv-chat-history-btn");
+        if (chatBar) {
+            const shouldShowChat = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT) && supportsContinuousChat;
+            const persistEnabled = GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST);
+            chatBar.style.display = shouldShowChat ? "flex" : "none";
+            if (btnChatHistory) {
+                btnChatHistory.style.display = shouldShowChat && persistEnabled ? "inline-block" : "none";
+            }
+            if (!shouldShowChat) {
+                isChatCollapsed = true;
+            }
+            updateChatCollapseUI();
+        }
+    }
+
+    const readImageFileAsDataUrl = (file) => new Promise((resolve, reject) => {
+        if (!file) {
+            reject(new Error("empty file"));
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
+        reader.onerror = () => reject(new Error("read image failed"));
+        reader.readAsDataURL(file);
+    });
+
+    const applyMainImageCapture = (dataUrl) => {
+        const imageUrl = String(dataUrl || "").trim();
+        if (!imageUrl) return false;
+        const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), getProviderTemplates());
+        if (!isProviderSupportsVision(providerId)) {
+            alert("当前提供商不支持识图，无法插入图片。");
+            return false;
+        }
+        capturedImageBase64 = imageUrl;
+        const btnPreview = popup ? popup.querySelector("#coolauxv-btn-preview") : null;
+        const btnMainClear = popup ? popup.querySelector("#coolauxv-btn-clear-shot") : null;
+        setAnimatedVisibility(btnPreview, true);
+        setAnimatedVisibility(btnMainClear, true);
+        const input = popup ? popup.querySelector("#coolauxv-input") : null;
+        if (input && !input.value.trim()) {
+            const config = getActiveConfig();
+            input.value = config.promptVision || "";
+        }
+        return true;
+    };
+
+    const loadMainImageFromFile = async (file) => {
+        if (!file) return false;
+        if (!String(file.type || "").startsWith("image/")) {
+            alert("仅支持图片文件。");
+            return false;
+        }
+        try {
+            const dataUrl = await readImageFileAsDataUrl(file);
+            if (!dataUrl) {
+                alert("读取图片失败，请重试。");
+                return false;
+            }
+            return applyMainImageCapture(dataUrl);
+        } catch (e) {
+            alert("读取图片失败，请重试。");
+            return false;
+        }
+    };
+
+    const applyChatImageCapture = (dataUrl) => {
+        const imageUrl = String(dataUrl || "").trim();
+        if (!imageUrl) return false;
+        const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), getProviderTemplates());
+        if (!isProviderSupportsVision(providerId)) {
+            alert("当前提供商不支持识图，无法插入图片。");
+            return false;
+        }
+        chatCapturedImageBase64 = imageUrl;
+        const btnChatPreview = popup ? popup.querySelector("#coolauxv-btn-preview-chat") : null;
+        const btnChatClear = popup ? popup.querySelector("#coolauxv-btn-clear-chat-shot") : null;
+        setAnimatedVisibility(btnChatPreview, true);
+        setAnimatedVisibility(btnChatClear, true);
+        return true;
+    };
+
+    const loadChatImageFromFile = async (file) => {
+        if (!file) return false;
+        if (!String(file.type || "").startsWith("image/")) {
+            alert("仅支持图片文件。");
+            return false;
+        }
+        try {
+            const dataUrl = await readImageFileAsDataUrl(file);
+            if (!dataUrl) {
+                alert("读取图片失败，请重试。");
+                return false;
+            }
+            return applyChatImageCapture(dataUrl);
+        } catch (e) {
+            alert("读取图片失败，请重试。");
+            return false;
+        }
     };
 
     const applyTemplateString = (value, context) => {
@@ -12447,6 +12781,13 @@
         return cleaned;
     };
 
+    const hasCustomHeaders = (headers) => {
+        const keys = Object.keys(headers || {});
+        if (keys.length === 0) return false;
+        if (keys.length === 1 && String(keys[0]).toLowerCase() === "content-type") return false;
+        return true;
+    };
+
     const isMissingProviderConfig = (template) => {
         if (!template || !template.baseUrl) return true;
         const context = buildTemplateContext(template, { apiKey: template.apiKey || "" });
@@ -12485,6 +12826,8 @@
             apiKey: provider ? provider.apiKey : "",
             modelName: modelName,
             modelVision: modelVision,
+            supportsVision: !!(provider && provider.supportsVision),
+            supportsContinuousChat: provider ? provider.supportsContinuousChat !== false : true,
             promptTrans: translateAction ? translateAction.systemPrompt : getDefaultActionPromptById("translate"),
             promptExplain: explainAction ? explainAction.systemPrompt : getDefaultActionPromptById("explain"),
             promptVision: buildLegacyPromptWithAppend("coolauxv_prompt_vision", "coolauxv_append_vision", DEFAULT_PROMPT_VISION),
@@ -13346,7 +13689,7 @@
 
     function collapseChatIfEnabled() {
         if (!popup) return;
-        const enabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+        const enabled = isContinuousChatEnabled();
         if (!enabled) return;
         const chatBar = popup.querySelector("#coolauxv-chat-bar");
         if (!chatBar || chatBar.style.display === "none") return;
@@ -13367,7 +13710,7 @@
     function autoExpandChatIfEnabled(actionToken) {
         if (!popup) return;
         if (typeof actionToken === "number" && actionToken !== activeActionToken) return;
-        const enabled = GM_getValue("coolauxv_enable_continuous_chat", DEFAULT_ENABLE_CONTINUOUS_CHAT);
+        const enabled = isContinuousChatEnabled();
         if (!enabled) return;
         const chatBar = popup.querySelector("#coolauxv-chat-bar");
         if (!chatBar || chatBar.style.display === "none") return;
@@ -13620,13 +13963,6 @@
                     mermaidBlocks.push({ code: normalizedCode });
                     return `MERMAIDBLOCK${mermaidBlocks.length - 1}END`;
                 });
-                if (mermaidBlocks.length) {
-                    Logger.debug("[Mermaid]", "detected closed mermaid blocks in markdown", {
-                        blocks: mermaidBlocks.length,
-                        isRaw: !!isRaw,
-                        contentLength: String(newContentHTML || "").length
-                    });
-                }
 
                 // 1. 数学公式保护 (Math Protection)
                 // 使用纯字母数字的占位符 (如 KATEXBLOCK0END)，避免 Markdown 解析器将其识别为粗体/斜体
@@ -13668,32 +14004,12 @@
                     const fallbackHtml = `<pre><code class="language-mermaid">${escapeHTML(block.code)}</code></pre>`;
                     const cachedSvg = getCachedMermaidSvg(block.code);
                     if (cachedSvg) {
-                        Logger.debug("[Mermaid]", "render markdown with cached svg", {
-                            codeLength: block.code.length,
-                            svgLength: cachedSvg.length
-                        });
                         return `<div class="coolauxv-mermaid-rendered">${cachedSvg}</div>`;
                     }
                     if (!isMermaidRenderFailed(block.code)) {
-                        Logger.debug("[Mermaid]", "render markdown with fallback codeblock; trigger async render", {
-                            codeLength: block.code.length
-                        });
                         ensureMermaidSvgCached(block.code).then((svgText) => {
-                            if (!svgText || !popup || !popup.isConnected) {
-                                Logger.debug("[Mermaid]", "async render resolved but skip rerender", {
-                                    hasSvg: !!svgText,
-                                    popupConnected: !!(popup && popup.isConnected)
-                                });
-                                return;
-                            }
-                            Logger.debug("[Mermaid]", "async render resolved; rerender content", {
-                                svgLength: svgText.length
-                            });
+                            if (!svgText || !popup || !popup.isConnected) return;
                             renderContent();
-                        });
-                    } else {
-                        Logger.debug("[Mermaid]", "render markdown with fallback codeblock; block marked failed", {
-                            codeLength: block.code.length
                         });
                     }
                     return `<div class="coolauxv-mermaid-fallback">${fallbackHtml}</div>`;
@@ -13910,127 +14226,6 @@
         if (btnStop) setAnimatedVisibility(btnStop, visible);
         if (btnChatStop) setAnimatedVisibility(btnChatStop, visible);
     }
-
-    function updateVisionButtons(providerId) {
-        if (!popup) return;
-        const template = providerId ? getProviderTemplateSafe(providerId) : getActiveConfig().template;
-        const supportsVision = !!(template && template.supportsVision);
-        const btnShotMain = popup.querySelector("#coolauxv-btn-screenshot");
-        const btnShotChat = popup.querySelector("#coolauxv-btn-screenshot-chat");
-        const btnMainImageFile = popup.querySelector("#coolauxv-btn-image-file");
-        const btnMainClear = popup.querySelector("#coolauxv-btn-clear-shot");
-        const btnChatImageFile = popup.querySelector("#coolauxv-btn-chat-image-file");
-        const btnPreview = popup.querySelector("#coolauxv-btn-preview");
-        const btnChatPreview = popup.querySelector("#coolauxv-btn-preview-chat");
-        const btnChatClear = popup.querySelector("#coolauxv-btn-clear-chat-shot");
-
-        if (btnShotMain) btnShotMain.style.display = supportsVision ? "" : "none";
-        if (btnShotChat) btnShotChat.style.display = supportsVision ? "" : "none";
-        if (btnMainImageFile) btnMainImageFile.style.display = supportsVision ? "" : "none";
-        if (btnChatImageFile) btnChatImageFile.style.display = supportsVision ? "" : "none";
-
-        if (!supportsVision) {
-            capturedImageBase64 = "";
-            setAnimatedVisibility(btnPreview, false);
-            setAnimatedVisibility(btnMainClear, false);
-            chatCapturedImageBase64 = "";
-            setAnimatedVisibility(btnChatPreview, false);
-            setAnimatedVisibility(btnChatClear, false);
-        } else {
-            setAnimatedVisibility(btnPreview, !!capturedImageBase64);
-            setAnimatedVisibility(btnMainClear, !!capturedImageBase64);
-            setAnimatedVisibility(btnChatPreview, !!chatCapturedImageBase64);
-            setAnimatedVisibility(btnChatClear, !!chatCapturedImageBase64);
-        }
-    }
-
-    const readImageFileAsDataUrl = (file) => new Promise((resolve, reject) => {
-        if (!file) {
-            reject(new Error("empty file"));
-            return;
-        }
-        const reader = new FileReader();
-        reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : "");
-        reader.onerror = () => reject(new Error("read image failed"));
-        reader.readAsDataURL(file);
-    });
-
-    const applyMainImageCapture = (dataUrl) => {
-        const imageUrl = String(dataUrl || "").trim();
-        if (!imageUrl) return false;
-        const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), getProviderTemplates());
-        const providerTemplate = getProviderTemplateSafe(providerId);
-        if (!(providerTemplate && providerTemplate.supportsVision)) {
-            alert("当前提供商不支持识图，无法插入图片。");
-            return false;
-        }
-        capturedImageBase64 = imageUrl;
-        const btnPreview = popup ? popup.querySelector("#coolauxv-btn-preview") : null;
-        const btnMainClear = popup ? popup.querySelector("#coolauxv-btn-clear-shot") : null;
-        setAnimatedVisibility(btnPreview, true);
-        setAnimatedVisibility(btnMainClear, true);
-        const input = popup ? popup.querySelector("#coolauxv-input") : null;
-        if (input && !input.value.trim()) {
-            const config = getActiveConfig();
-            input.value = config.promptVision || "";
-        }
-        return true;
-    };
-
-    const loadMainImageFromFile = async (file) => {
-        if (!file) return false;
-        if (!String(file.type || "").startsWith("image/")) {
-            alert("仅支持图片文件。");
-            return false;
-        }
-        try {
-            const dataUrl = await readImageFileAsDataUrl(file);
-            if (!dataUrl) {
-                alert("读取图片失败，请重试。");
-                return false;
-            }
-            return applyMainImageCapture(dataUrl);
-        } catch (e) {
-            alert("读取图片失败，请重试。");
-            return false;
-        }
-    };
-
-    const applyChatImageCapture = (dataUrl) => {
-        const imageUrl = String(dataUrl || "").trim();
-        if (!imageUrl) return false;
-        const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), getProviderTemplates());
-        const providerTemplate = getProviderTemplateSafe(providerId);
-        if (!(providerTemplate && providerTemplate.supportsVision)) {
-            alert("当前提供商不支持识图，无法插入图片。");
-            return false;
-        }
-        chatCapturedImageBase64 = imageUrl;
-        const btnChatPreview = popup ? popup.querySelector("#coolauxv-btn-preview-chat") : null;
-        const btnChatClear = popup ? popup.querySelector("#coolauxv-btn-clear-chat-shot") : null;
-        setAnimatedVisibility(btnChatPreview, true);
-        setAnimatedVisibility(btnChatClear, true);
-        return true;
-    };
-
-    const loadChatImageFromFile = async (file) => {
-        if (!file) return false;
-        if (!String(file.type || "").startsWith("image/")) {
-            alert("仅支持图片文件。");
-            return false;
-        }
-        try {
-            const dataUrl = await readImageFileAsDataUrl(file);
-            if (!dataUrl) {
-                alert("读取图片失败，请重试。");
-                return false;
-            }
-            return applyChatImageCapture(dataUrl);
-        } catch (e) {
-            alert("读取图片失败，请重试。");
-            return false;
-        }
-    };
 
     function setCollapseAnimatedVisibility(section, visible) {
         if (!section) return;
@@ -14272,7 +14467,6 @@
         const minBtn = popup.querySelector("#coolauxv-min");
         const closeBtn = popup.querySelector("#coolauxv-close");
         const quitBtn = popup.querySelector("#coolauxv-quit");
-        const pdfOriginInfoBtn = popup.querySelector("#coolauxv-pdf-origin-info");
         const rawToggle = popup.querySelector("#coolauxv-raw-toggle");
         const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle");
         const mainActionButtons = popup.querySelector("#coolauxv-main-action-buttons");
@@ -14292,35 +14486,6 @@
         if (minBtn) minBtn.onclick = minimizeWindow;
         if (closeBtn) closeBtn.onclick = closeWindow;
         if (quitBtn) quitBtn.onclick = quitScript;
-        if (pdfOriginInfoBtn) {
-            if (HIJACKED_PDF_SOURCE_URL) {
-                pdfOriginInfoBtn.style.display = "inline-flex";
-                pdfOriginInfoBtn.title = `原 PDF 链接：${HIJACKED_PDF_SOURCE_URL}\n点击复制`;
-                pdfOriginInfoBtn.onclick = async (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    let copied = false;
-                    try {
-                        if (typeof GM_setClipboard === "function") {
-                            GM_setClipboard(HIJACKED_PDF_SOURCE_URL, "text");
-                            copied = true;
-                        } else if (navigator.clipboard && navigator.clipboard.writeText) {
-                            await navigator.clipboard.writeText(HIJACKED_PDF_SOURCE_URL);
-                            copied = true;
-                        }
-                    } catch (err) {
-                        Logger.error("复制原 PDF 链接失败:", err);
-                    }
-                    const originalText = pdfOriginInfoBtn.textContent || "i";
-                    pdfOriginInfoBtn.textContent = copied ? "✓" : "!";
-                    setTimeout(() => {
-                        pdfOriginInfoBtn.textContent = originalText;
-                    }, 1200);
-                };
-            } else {
-                pdfOriginInfoBtn.style.display = "none";
-            }
-        }
 
         if (rawToggle) rawToggle.onchange = (e) => {
             isShowRaw = e.target.checked;
@@ -14897,46 +15062,15 @@
         overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
     }
 
-    const parseScriptVersionFromText = (text) => {
-        if (!text) return "";
-        const match = text.match(/@version\s+([^\s]+)/);
-        return match ? match[1] : "";
-    };
-
-    let cachedScriptVersion = "";
-    let cachedScriptVersionPromise = null;
-    const loadScriptVersionFromExtension = () => {
-        if (cachedScriptVersion) return Promise.resolve(cachedScriptVersion);
-        if (cachedScriptVersionPromise) return cachedScriptVersionPromise;
-        if (!globalThis.chrome || !chrome.runtime || !chrome.runtime.getURL) {
-            return Promise.resolve("");
-        }
-        const url = chrome.runtime.getURL("coolauxv.user.js");
-        cachedScriptVersionPromise = fetch(url)
-            .then((res) => res.text())
-            .then((text) => {
-                const version = parseScriptVersionFromText(text);
-                if (version) cachedScriptVersion = version;
-                return version;
-            })
-            .catch(() => "");
-        return cachedScriptVersionPromise;
-    };
-
-    const getScriptVersion = async () => {
-        const runtimeVersion = getRuntimeScriptVersion();
-        if (runtimeVersion) return runtimeVersion;
-        return await loadScriptVersionFromExtension();
-    };
-
     // 版本检测与日志弹窗逻辑 (使用通用弹窗)
-    async function checkUpdateAndShowChangelog() {
+    function checkUpdateAndShowChangelog() {
+        const currentVer = getScriptVersion();
         const lastVer = GM_getValue("coolauxv_installed_version", "0.0");
-        const currentVerRaw = await getScriptVersion();
-        const currentVer = currentVerRaw || lastVer;
-        if (!currentVer || currentVer === lastVer) return;
-        showModal(`🎉 更新日志 ${currentVer}`, LATEST_CHANGELOG);
-        GM_setValue("coolauxv_installed_version", currentVer);
+
+        if (currentVer && currentVer !== lastVer) {
+            showModal(`🎉 更新日志 ${currentVer}`, LATEST_CHANGELOG);
+            GM_setValue("coolauxv_installed_version", currentVer);
+        }
     }
 
     // ========================================================================
@@ -15015,22 +15149,11 @@
         Logger.debug(`🚀 [${provider} Request Data]`, requestBody);
 
         const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
+        const needsGmForHeaders = hasCustomHeaders(headers);
+        const shouldForceGmXhr = shouldForceGMRequestForUrl(url) || needsGmForHeaders;
 
-        const fetchProviderIds = new Set(["zhipu", "openai"]);
-        const isFetchPreferred = providerTemplate && fetchProviderIds.has(providerTemplate.id);
-        const shouldForceGmXhr = shouldForceGMRequestForUrl(url);
-        const preferGMXhr = typeof GM_xmlhttpRequest === "function"
-            && typeof chrome !== "undefined"
-            && chrome.runtime
-            && chrome.runtime.id
-            && (shouldForceGmXhr || !isFetchPreferred);
-
-        if (shouldForceGmXhr) {
-            Logger.info("检测到 HTTPS 页面调用 HTTP Provider，跳过 Fetch，直接使用 GM_xmlhttpRequest。");
-        }
-
-        // 策略 A: Fetch (仅在非扩展环境优先使用)
-        if (!preferGMXhr) {
+        // 策略 A: Fetch
+        if (!shouldForceGmXhr) {
             try {
                 Logger.info(`Fetch ${provider} Model: ${config.modelName}`);
                 abortController = new AbortController();
@@ -15041,30 +15164,30 @@
                     signal: abortController.signal
                 });
 
-            if (!response.ok) {
-                if (response.status === 429) {
-                    let apiErr = null;
-                    try {
-                        const errJson = await response.json();
-                        logAiRawResponse(provider, config.modelName, resolvedActionId, errJson);
-                        apiErr = parseApiError(errJson);
-                    } catch (e) { }
-                    if (!shouldSuppressResultError()) {
-                        resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
-                            ? getQuotaErrorHTML(provider, apiErr.message)
-                            : get429ErrorHTML();
+                if (!response.ok) {
+                    if (response.status === 429) {
+                        let apiErr = null;
+                        try {
+                            const errJson = await response.json();
+                            logAiRawResponse(provider, config.modelName, resolvedActionId, errJson);
+                            apiErr = parseApiError(errJson);
+                        } catch (e) { }
+                        if (!shouldSuppressResultError()) {
+                            resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
+                                ? getQuotaErrorHTML(provider, apiErr.message)
+                                : get429ErrorHTML();
+                        }
+                        autoExpandChatIfEnabled(actionToken);
+                        return;
                     }
-                    autoExpandChatIfEnabled(actionToken);
-                    return;
+                    let rawText = "";
+                    try {
+                        rawText = await response.text();
+                    } catch (e) { }
+                    logAiRawResponse(provider, config.modelName, resolvedActionId, rawText);
+                    if (response.status === 401 || response.status === 403) throw new Error("AUTH_INVALID");
+                    throw new Error(`HTTP ${response.status}`);
                 }
-                let rawText = "";
-                try {
-                    rawText = await response.text();
-                } catch (e) { }
-                logAiRawResponse(provider, config.modelName, resolvedActionId, rawText);
-                if (response.status === 401 || response.status === 403) throw new Error("AUTH_INVALID");
-                throw new Error(`HTTP ${response.status}`);
-            }
 
                 startRenderLoop();
 
@@ -15117,223 +15240,299 @@
                 Logger.warn("Fetch 失败/跨域，准备降级。", err);
                 if (err.message === "AUTH_INVALID") {
                     if (!shouldSuppressResultError()) {
-                        showInvalidKeyError(resultDiv, provider, { type: "auth_error", message: "HTTP 401/403" });
+                        showInvalidKeyError(resultDiv, provider);
                     }
                     autoExpandChatIfEnabled(actionToken);
                     return;
                 }
                 if (err.name === 'AbortError') return;
             }
+        } else {
+            Logger.info("检测到 HTTPS 页面调用 HTTP Provider，跳过 Fetch，直接使用 GM_xmlhttpRequest。");
         }
 
         // 策略 B: GM_xmlhttpRequest
         Logger.info(`GM_xmlhttpRequest ${provider} Model: ${config.modelName}`);
+        Logger.debug("GM request context (single action)", buildRequestDebugMeta(url, {
+            provider: provider,
+            model: config.modelName,
+            actionId: resolvedActionId
+        }));
 
         let gmStreamBuffer = "";
         let gmRawText = "";
-        let gmStatus = 0;
-        let gmStatusText = "";
-        let gmContentType = "";
         let isStreamModeActive = false;
+        const isMixedProtocolRequest = shouldForceGMRequestForUrl(url);
+        const gmRequestAttempts = isMixedProtocolRequest
+            ? [
+                { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" },
+                { streamMode: "progress", fetchMode: true, label: "onprogress-fetch" },
+                { streamMode: "stream", fetchMode: true, label: "stream-fetch" }
+            ]
+            : [
+                { streamMode: "stream", fetchMode: true, label: "stream-fetch" },
+                { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" }
+            ];
+        let gmAttemptIndex = 0;
+        let gmProgressOffset = 0;
 
-        const handleGMNonStreamResponse = (res) => {
-            if (ignoreIncomingOutput) return;
+        const flushSingleActionStreamChunk = (chunkText) => {
+            if (!chunkText) return;
+            gmRawText += chunkText;
+            gmStreamBuffer += chunkText;
+            const lines = gmStreamBuffer.split(/\r?\n/);
+            gmStreamBuffer = lines.pop();
+            for (const line of lines) processStreamLine(providerTemplate, line);
+        };
+
+        const finalizeSingleActionStream = () => {
+            if (ignoreIncomingOutput) {
+                stopRenderLoop();
+                return;
+            }
+            if (gmStreamBuffer && gmStreamBuffer.trim()) {
+                processStreamLine(providerTemplate, gmStreamBuffer);
+            }
+            flushReasoningTagRemainderToBuffers(false);
+            if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
+                const fallback = extractNonStreamResult(providerTemplate, gmRawText);
+                if (fallback && fallback.error) {
+                    handleApiError(provider, fallback.error);
+                    return;
+                }
+                if (fallback && fallback.text) {
+                    applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, false);
+                    renderContent();
+                }
+            }
             stopRenderLoop();
-            const resultDiv = popup.querySelector("#coolauxv-result");
+            historyEntry.assistantText = streamTextBuffer;
+            logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
+            recordHistoryEntry(historyEntry);
+            autoExpandChatIfEnabled(actionToken);
+        };
 
-            if (res.status === 429) {
-                logAiRawResponse(provider, config.modelName, resolvedActionId, res.responseText);
-                const apiErr = parseApiError(res.responseText);
-                if (resultDiv && !shouldSuppressResultError()) {
-                    resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
-                        ? getQuotaErrorHTML(provider, apiErr.message)
-                        : get429ErrorHTML();
-                }
-                autoExpandChatIfEnabled(actionToken);
-                return;
+        const getCurrentSingleActionAttempt = () => gmRequestAttempts[Math.min(gmAttemptIndex, gmRequestAttempts.length - 1)];
+
+        const canRetrySingleActionGmRequest = () => {
+            if (gmAttemptIndex >= gmRequestAttempts.length - 1) return false;
+            if (streamTextBuffer.length > 0 || streamReasoningBuffer.length > 0) return false;
+            if (gmRawText.trim()) return false;
+            return true;
+        };
+
+        const retrySingleActionGmRequest = (reasonLabel, err) => {
+            if (!canRetrySingleActionGmRequest()) return false;
+            const currentAttempt = getCurrentSingleActionAttempt();
+            gmAttemptIndex += 1;
+            const nextAttempt = getCurrentSingleActionAttempt();
+            gmProgressOffset = 0;
+            gmStreamBuffer = "";
+            gmRawText = "";
+            isStreamModeActive = false;
+            Logger.warn(
+                `GM ${reasonLabel}，切换重试策略（single action）：${currentAttempt.label} -> ${nextAttempt.label}`,
+                err ? buildErrorDebugInfo(err) : {}
+            );
+            startSingleActionGmRequest();
+            return true;
+        };
+
+        const startSingleActionGmRequest = () => {
+            const currentAttempt = getCurrentSingleActionAttempt();
+            const currentUseProgressStreamMode = currentAttempt.streamMode === "progress";
+            Logger.info(`GM 请求尝试 ${gmAttemptIndex + 1}/${gmRequestAttempts.length}（single action）：${currentAttempt.label}`);
+            if (currentUseProgressStreamMode && isMixedProtocolRequest) {
+                Logger.info("使用 GM onprogress 流式模式（兼容 HTTPS 页面 -> HTTP Provider）。");
             }
+            const requestOptions = {
+                method: "POST", url: url,
+                headers: headers,
+                data: requestBody, // 使用已序列化的字符串
+                responseType: currentUseProgressStreamMode ? "" : "stream",
+                timeout: 600000,
 
-            const fullText = res.responseText || (typeof res.response === 'string' ? res.response : "");
-            logAiRawResponse(provider, config.modelName, resolvedActionId, fullText);
-
-            if (res.status === 401 || res.status === 403) {
-                if (!shouldSuppressResultError()) {
-                    const apiErr = parseApiError(fullText);
-                    const err = apiErr || { type: "auth_error", message: `HTTP ${res.status}`, raw: fullText, rawText: fullText };
-                    showInvalidKeyError(resultDiv, provider, err);
-                }
-                autoExpandChatIfEnabled(actionToken);
-                return;
-            }
-
-            if (res.status !== 200) {
-                const apiErr = parseApiError(fullText);
-                const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: fullText, rawText: fullText };
-                if (resultDiv && !shouldSuppressResultError()) {
-                    resultDiv.innerHTML = buildApiErrorHtml(provider, err);
-                }
-                autoExpandChatIfEnabled(actionToken);
-                return;
-            }
-            if (fullText) {
-                Logger.debug(`GM non-stream length: ${fullText.length}`);
-                const lines = fullText.split(/\r?\n/);
-                for (const line of lines) processStreamLine(providerTemplate, line);
-                flushReasoningTagRemainderToBuffers(false);
-                if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
-                    const fallback = extractNonStreamResult(providerTemplate, fullText);
-                    if (fallback && fallback.error) {
-                        if (!shouldSuppressResultError()) {
-                            resultDiv.innerHTML = buildApiErrorHtml(provider, fallback.error);
-                        }
-                        autoExpandChatIfEnabled(actionToken);
+                onloadstart: (res) => {
+                    Logger.debug("GM onloadstart (single action)", {
+                        status: res && res.status,
+                        statusText: res && res.statusText,
+                        finalUrl: res && res.finalUrl,
+                        hasStreamReader: !!(res && res.response && res.response.getReader),
+                        mode: currentAttempt.label
+                    });
+                    if (currentUseProgressStreamMode) {
+                        isStreamModeActive = true;
+                        startRenderLoop();
                         return;
                     }
-                    if (fallback && fallback.text) {
-                        applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, false);
+                    if (res.response && res.response.getReader) {
+                        isStreamModeActive = true;
+                        startRenderLoop();
+
+                        const reader = res.response.getReader();
+                        const decoder = new TextDecoder("utf-8");
+
+                        (async function readStream() {
+                            try {
+                                while (true) {
+                                    const { done, value } = await reader.read();
+                                    if (done) break;
+                                    const chunk = decoder.decode(value, { stream: true });
+                                    flushSingleActionStreamChunk(chunk);
+                                }
+                            } catch (e) {
+                                Logger.error("Stream Read Error:", e);
+                            } finally {
+                                finalizeSingleActionStream();
+                            }
+                        })();
                     }
-                }
-                renderContent();
-                historyEntry.assistantText = streamTextBuffer;
-                logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
-                recordHistoryEntry(historyEntry);
-                autoExpandChatIfEnabled(actionToken);
-            } else {
-                resultDiv.innerHTML += "<br><small style='color:red'>(流式兼容失败，请检查网络)</small>";
-                autoExpandChatIfEnabled(actionToken);
-            }
-        };
+                },
 
-        const applyStreamHeaders = (baseHeaders) => {
-            const next = Object.assign({}, baseHeaders || {});
-            const acceptKey = Object.keys(next).find((key) => key.toLowerCase() === "accept");
-            if (acceptKey) {
-                const acceptVal = String(next[acceptKey] || "");
-                if (!acceptVal.toLowerCase().includes("text/event-stream")) {
-                    next[acceptKey] = `${acceptVal}, text/event-stream`.replace(/^,\s*/, "");
-                }
-            } else {
-                next.Accept = "text/event-stream";
-            }
-            if (!Object.keys(next).some((key) => key.toLowerCase() === "cache-control")) {
-                next["Cache-Control"] = "no-cache";
-            }
-            return next;
-        };
+                onprogress: (res) => {
+                    if (!currentUseProgressStreamMode || ignoreIncomingOutput) return;
+                    const text = res && typeof res.responseText === "string" ? res.responseText : "";
+                    if (!text) return;
+                    if (text.length < gmProgressOffset) {
+                        gmProgressOffset = 0;
+                    }
+                    const chunk = text.slice(gmProgressOffset);
+                    gmProgressOffset = text.length;
+                    flushSingleActionStreamChunk(chunk);
+                },
 
-        const handleGMError = (e) => {
-            if (ignoreIncomingOutput) return;
-            stopRenderLoop();
-            if (streamTextBuffer.length > 0 || streamReasoningBuffer.length > 0) {
-                resultDiv.innerHTML += "<br><br><span style='color:red; font-size:12px; font-weight:bold;'>[网络连接中断，但已保留现有内容]</span>";
-            } else {
-                resultDiv.innerHTML = "<span style='color:red'>网络连接彻底失败</span>";
-            }
-            autoExpandChatIfEnabled(actionToken);
-        };
-
-        const handleGMTimeout = () => {
-            if (ignoreIncomingOutput) return;
-            stopRenderLoop();
-            if (streamTextBuffer.length > 0) {
-                resultDiv.innerHTML += "<br><span style='color:red'>[请求超时，已保留内容]</span>";
-            } else {
-                resultDiv.innerHTML = "<span style='color:red'>请求超时 (Timeout)</span>";
-            }
-            autoExpandChatIfEnabled(actionToken);
-        };
-
-        gmRequest = GM_xmlhttpRequest({
-            method: "POST", url: url,
-            headers: applyStreamHeaders(headers),
-            data: requestBody, // 使用已序列化的字符串
-            responseType: 'stream',
-            timeout: 600000,
-
-            onloadstart: (res) => {
-                gmStatus = res.status || 0;
-                gmStatusText = res.statusText || "";
-                gmContentType = String(res.responseHeaders || "")
-                    .split(/\r?\n/)
-                    .find((line) => /^content-type\s*:/i.test(line)) || "";
-                Logger.debug(`GM stream status: ${gmStatus} ${gmStatusText} ${gmContentType}`);
-                if (res.response && res.response.getReader) {
-                    isStreamModeActive = true;
-                    startRenderLoop();
-
-                    const reader = res.response.getReader();
-                    const decoder = new TextDecoder("utf-8");
-
-                    (async function readStream() {
-                        try {
-                            while (true) {
-                                const { done, value } = await reader.read();
-                                if (done) break;
-                                const chunk = decoder.decode(value, { stream: true });
-                                gmRawText += chunk;
-                                gmStreamBuffer += chunk;
-                                const lines = gmStreamBuffer.split(/\r?\n/);
-                                gmStreamBuffer = lines.pop();
-                                for (const line of lines) processStreamLine(providerTemplate, line);
+                onload: (res) => {
+                    if (ignoreIncomingOutput) return;
+                    Logger.debug("GM onload (single action)", {
+                        status: res && res.status,
+                        statusText: res && res.statusText,
+                        finalUrl: res && res.finalUrl,
+                        responseTextLength: res && typeof res.responseText === "string" ? res.responseText.length : 0,
+                        streamed: isStreamModeActive,
+                        mode: currentAttempt.label
+                    });
+                    if (currentUseProgressStreamMode) {
+                        const fullText = res && typeof res.responseText === "string" ? res.responseText : "";
+                        if (fullText.length > gmProgressOffset) {
+                            flushSingleActionStreamChunk(fullText.slice(gmProgressOffset));
+                            gmProgressOffset = fullText.length;
+                        }
+                        if (res.status && res.status !== 200) {
+                            stopRenderLoop();
+                            const apiErr = parseApiError(fullText);
+                            const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: fullText, rawText: fullText };
+                            if (!shouldSuppressResultError()) {
+                                resultDiv.innerHTML = buildApiErrorHtml(provider, err);
                             }
-                        } catch (e) {
-                            Logger.error("Stream Read Error:", e);
-                        } finally {
-                            if (ignoreIncomingOutput) {
-                                stopRenderLoop();
-                                return;
+                            autoExpandChatIfEnabled(actionToken);
+                            return;
+                        }
+                        finalizeSingleActionStream();
+                        return;
+                    }
+                    if (!isStreamModeActive) {
+                        stopRenderLoop();
+
+                        if (res.status === 429) {
+                            const resultDiv = popup.querySelector("#coolauxv-result");
+                            logAiRawResponse(provider, config.modelName, resolvedActionId, res.responseText);
+                            const apiErr = parseApiError(res.responseText);
+                            if (resultDiv && !shouldSuppressResultError()) {
+                                resultDiv.innerHTML = (apiErr && isQuotaError(apiErr))
+                                    ? getQuotaErrorHTML(provider, apiErr.message)
+                                    : get429ErrorHTML();
                             }
-                            if (gmStreamBuffer && gmStreamBuffer.trim()) {
-                                processStreamLine(providerTemplate, gmStreamBuffer);
+                            autoExpandChatIfEnabled(actionToken);
+                            return;
+                        }
+
+                        const fullText = res.responseText || (typeof res.response === 'string' ? res.response : "");
+                        logAiRawResponse(provider, config.modelName, resolvedActionId, fullText);
+
+                        if (res.status === 401 || res.status === 403) {
+                            if (!shouldSuppressResultError()) {
+                                showInvalidKeyError(resultDiv, provider);
                             }
+                            autoExpandChatIfEnabled(actionToken);
+                            return;
+                        }
+
+                        if (res.status !== 200) {
+                            const apiErr = parseApiError(fullText);
+                            const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: fullText, rawText: fullText };
+                            if (!shouldSuppressResultError()) {
+                                resultDiv.innerHTML = buildApiErrorHtml(provider, err);
+                            }
+                            autoExpandChatIfEnabled(actionToken);
+                            return;
+                        }
+                        if (fullText) {
+                            const lines = fullText.split(/\r?\n/);
+                            for (const line of lines) processStreamLine(providerTemplate, line);
                             flushReasoningTagRemainderToBuffers(false);
-                            Logger.debug(`GM stream raw length: ${gmRawText.length}`);
                             if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
-                                if (!gmRawText && gmStatus && gmStatus !== 200) {
-                                    handleApiError(provider, {
-                                        type: gmStatus,
-                                        message: `HTTP ${gmStatus}${gmStatusText ? ` ${gmStatusText}` : ""}`
-                                    });
-                                    return;
-                                }
-                                if (!gmRawText) {
-                                    handleApiError(provider, {
-                                        type: "EMPTY_STREAM",
-                                        message: "Empty stream response"
-                                    });
-                                    return;
-                                }
-                                const fallback = extractNonStreamResult(providerTemplate, gmRawText);
+                                const fallback = extractNonStreamResult(providerTemplate, fullText);
                                 if (fallback && fallback.error) {
-                                    handleApiError(provider, fallback.error);
+                                    if (!shouldSuppressResultError()) {
+                                        resultDiv.innerHTML = buildApiErrorHtml(provider, fallback.error);
+                                    }
+                                    autoExpandChatIfEnabled(actionToken);
                                     return;
                                 }
                                 if (fallback && fallback.text) {
                                     applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, false);
-                                    renderContent();
                                 }
                             }
-                            stopRenderLoop();
+                            renderContent();
                             historyEntry.assistantText = streamTextBuffer;
                             logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
                             recordHistoryEntry(historyEntry);
                             autoExpandChatIfEnabled(actionToken);
+                        } else {
+                            resultDiv.innerHTML += "<br><small style='color:red'>(流式兼容失败，请检查网络)</small>";
+                            autoExpandChatIfEnabled(actionToken);
                         }
-                    })();
+                    }
+                },
+
+                onerror: (e) => {
+                    if (ignoreIncomingOutput) return;
+                    Logger.error("GM onerror (single action)", buildErrorDebugInfo(e));
+                    if (retrySingleActionGmRequest("onerror", e)) return;
+                    stopRenderLoop();
+                    if (streamTextBuffer.length > 0 || streamReasoningBuffer.length > 0) {
+                        resultDiv.innerHTML += "<br><br><span style='color:red; font-size:12px; font-weight:bold;'>[网络连接中断，但已保留现有内容]</span>";
+                    } else {
+                        resultDiv.innerHTML = buildNetworkFailureHtml(provider, url, e);
+                    }
+                    autoExpandChatIfEnabled(actionToken);
+                },
+
+                ontimeout: () => {
+                    if (ignoreIncomingOutput) return;
+                    Logger.error("GM ontimeout (single action)", buildRequestDebugMeta(url, {
+                        provider: provider,
+                        model: config.modelName,
+                        actionId: resolvedActionId,
+                        mode: currentAttempt.label
+                    }));
+                    if (retrySingleActionGmRequest("ontimeout", { status: 408, statusText: "timeout" })) return;
+                    stopRenderLoop();
+                    if (streamTextBuffer.length > 0) {
+                        resultDiv.innerHTML += "<br><span style='color:red'>[请求超时，已保留内容]</span>";
+                    } else {
+                        resultDiv.innerHTML = "<span style='color:red'>请求超时 (Timeout)</span>";
+                    }
+                    autoExpandChatIfEnabled(actionToken);
                 }
-            },
+            };
+            if (typeof currentAttempt.fetchMode === "boolean") {
+                requestOptions.fetch = currentAttempt.fetchMode;
+            }
+            gmRequest = GM_xmlhttpRequest(requestOptions);
+        };
 
-            onload: (res) => {
-                if (ignoreIncomingOutput) return;
-                if (!isStreamModeActive) {
-                    handleGMNonStreamResponse(res);
-                }
-            },
-
-            onerror: handleGMError,
-
-            ontimeout: handleGMTimeout
-        });
+        startSingleActionGmRequest();
     }
 
 
@@ -15399,7 +15598,9 @@
     function parseApiError(payload) {
         if (!payload) return null;
         let data = payload;
+        let rawText = "";
         if (typeof payload === "string") {
+            rawText = payload.trim();
             try {
                 data = JSON.parse(payload);
             } catch (e) {
@@ -15410,13 +15611,21 @@
         if (data.error) {
             const err = data.error || {};
             return {
-                type: err.type || err.code || "",
-                message: err.message || err.msg || "",
-                raw: err
+                type: err.type || err.code || data.code || "",
+                message: err.message || err.msg || data.message || data.msg || "",
+                raw: data,
+                rawText: rawText
             };
         }
         if (data.msg && data.code) {
-            return { type: data.code, message: data.msg, raw: data };
+            return { type: data.code, message: data.msg, raw: data, rawText: rawText };
+        }
+        if (data.errcode !== undefined || data.errno !== undefined || data.error_code !== undefined || data.errorCode !== undefined) {
+            const errType = data.errcode !== undefined ? data.errcode
+                : (data.errno !== undefined ? data.errno
+                    : (data.error_code !== undefined ? data.error_code : data.errorCode));
+            const errMessage = data.errmsg || data.message || data.msg || "";
+            return { type: errType, message: errMessage, raw: data, rawText: rawText };
         }
         return null;
     }
@@ -15450,22 +15659,6 @@
             || message.includes("permission denied");
     }
 
-    function getAuthErrorKind(err) {
-        if (!err) return "invalid";
-        const type = String(err.type || "").toLowerCase();
-        const message = String(err.message || "").toLowerCase();
-        if (type.includes("expired") || message.includes("expired")) return "expired";
-        if (type.includes("revok") || message.includes("revok")
-            || type.includes("suspend") || message.includes("suspend")
-            || message.includes("disabled") || message.includes("banned")
-            || message.includes("ban")) return "revoked";
-        if (type.includes("missing") || message.includes("missing")
-            || message.includes("no api key")
-            || message.includes("not provided")) return "missing";
-        if (type.includes("invalid") || message.includes("invalid")) return "invalid";
-        return "invalid";
-    }
-
     function formatApiErrorDetails(err) {
         if (!err) return "";
         if (typeof err.rawText === "string" && err.rawText.trim()) return err.rawText.trim();
@@ -15479,51 +15672,6 @@
         }
         if (err.message) return String(err.message);
         return "";
-    }
-
-    function getAuthErrorHTML(provider, err) {
-        const label = getProviderLabel(provider);
-        const link = getProviderKeyLink(provider);
-        const linkHtml = link ? `<a href="${link}" target="_blank" style="color:#3b82f6;">获取 KEY</a>` : "获取 KEY";
-        const kind = getAuthErrorKind(err);
-        const detail = formatApiErrorDetails(err);
-        const detailBlock = detail
-            ? `
-                <div class="coolauxv-error-detail" style="margin-top:6px;">
-                    <button type="button" class="coolauxv-error-detail-toggle" data-action="toggle-error-detail">查看原始错误信息</button>
-                    <div class="coolauxv-error-detail-body coolauxv-collapsed" style="display:none;">
-                        <pre class="coolauxv-error-detail-pre">${escapeHTML(detail)}</pre>
-                    </div>
-                </div>
-            `
-            : "";
-
-        const titleMap = {
-            invalid: "🚫 API KEY 无效",
-            expired: "⌛ API KEY 已过期",
-            revoked: "⛔ API KEY 已被吊销",
-            missing: "⚠️ 缺少 API KEY"
-        };
-        const descMap = {
-            invalid: "您配置的 API Key 无法通过验证 (Error 401/403)。",
-            expired: "您的 API Key 已过期，无法继续使用。",
-            revoked: "您的 API Key 已被吊销/禁用。",
-            missing: "请求未携带 API Key 或 API Key 为空。"
-        };
-        const title = titleMap[kind] || titleMap.invalid;
-        const desc = descMap[kind] || descMap.invalid;
-        return `
-            <div style="color:#d32f2f; font-weight:bold; padding:10px;">${title}</div>
-            <div style="font-size:13px; color:#555; padding:0 10px;">
-            ${desc}<br><br>
-            可能的原因：<br>
-            1. Key 已过期或被撤销。<br>
-            2. 复制时多复制了空格。<br>
-            3. 账户余额不足。<br><br>
-            请检查设置或重新 ${linkHtml}（${label}）。
-            </div>
-            ${detailBlock}
-        `;
     }
 
     function getUnknownApiErrorHTML(provider, err) {
@@ -15556,7 +15704,7 @@
     function buildApiErrorHtml(provider, err) {
         const message = err && err.message ? err.message : "";
         if (isQuotaError(err)) return getQuotaErrorHTML(provider, message);
-        if (isAuthError(err)) return getAuthErrorHTML(provider, err);
+        if (isAuthError(err)) return getInvalidKeyErrorHTML(provider);
         return getUnknownApiErrorHTML(provider, err);
     }
 
@@ -15584,6 +15732,103 @@
         const label = [provider, model, mode].filter(Boolean).join("/");
         const prefix = label ? `AI Raw Response (${label})` : "AI Raw Response";
         Logger.debug(prefix, output);
+    }
+
+    function buildRequestDebugMeta(url, extra = {}) {
+        let targetProtocol = "";
+        let targetHost = "";
+        let targetPath = "";
+        try {
+            const parsed = new URL(String(url || ""), location.href);
+            targetProtocol = parsed.protocol || "";
+            targetHost = parsed.host || "";
+            targetPath = parsed.pathname || "";
+        } catch (e) { }
+        return Object.assign({
+            pageProtocol: typeof location !== "undefined" ? location.protocol : "",
+            targetProtocol: targetProtocol,
+            targetHost: targetHost,
+            targetPath: targetPath,
+            hasGMXmlhttpRequest: typeof GM_xmlhttpRequest === "function"
+        }, extra || {});
+    }
+
+    function buildErrorDebugInfo(err) {
+        if (!err) return { raw: "" };
+        const info = {
+            type: err.type || "",
+            name: err.name || "",
+            message: err.message || ""
+        };
+        if (typeof err.status !== "undefined") info.status = err.status;
+        if (typeof err.statusText !== "undefined") info.statusText = err.statusText;
+        if (typeof err.readyState !== "undefined") info.readyState = err.readyState;
+        if (typeof err.responseText === "string") info.responseTextLength = err.responseText.length;
+        if (typeof err.finalUrl === "string") info.finalUrl = err.finalUrl;
+        try {
+            info.raw = String(err);
+        } catch (e) {
+            info.raw = "";
+        }
+        return info;
+    }
+
+    function buildNetworkFailureHtml(provider, requestUrl, err) {
+        const info = buildErrorDebugInfo(err);
+        let targetProtocol = "";
+        let targetHost = "";
+        try {
+            const parsed = new URL(String(requestUrl || ""), location.href);
+            targetProtocol = parsed.protocol || "";
+            targetHost = parsed.host || "";
+        } catch (e) { }
+
+        const lower = `${info.message || ""} ${info.statusText || ""} ${info.type || ""} ${info.name || ""} ${info.raw || ""}`.toLowerCase();
+        const isHttpsPage = typeof location !== "undefined" && location.protocol === "https:";
+        const statusNumber = Number(info.status);
+        const hasStatusNumber = Number.isFinite(statusNumber);
+        const isNetworkLike = lower.includes("networkerror")
+            || lower.includes("failed to fetch")
+            || lower.includes("network request failed")
+            || (hasStatusNumber && (statusNumber === 0 || statusNumber === 408));
+        const isHttpProviderOnHttpsPage = isHttpsPage && targetProtocol === "http:";
+        const isTlsLikely = targetProtocol === "https:" && (isNetworkLike || lower.includes("ssl") || lower.includes("tls") || lower.includes("cert"));
+
+        let summary = "网络请求失败";
+        let advice = "请检查 Provider 的 Base URL、网络连通性和防火墙设置。";
+
+        if (isHttpProviderOnHttpsPage) {
+            summary = "HTTPS 页面访问 HTTP Provider 失败";
+            advice = "浏览器或脚本管理器可能拦截了混合协议请求。请优先改用 HTTPS Provider；若必须使用 HTTP，请检查脚本管理器是否允许不安全请求/混合内容，或用本地反向代理把 HTTP 转为 HTTPS。";
+        } else if (isTlsLikely) {
+            summary = "HTTPS Provider 握手失败";
+            advice = "常见原因是证书过期/证书链异常/系统时间不正确。请先修复证书，或在受控内网中临时改为 HTTP 地址。";
+        } else if (hasStatusNumber && statusNumber === 408) {
+            summary = "网络请求超时";
+            advice = "请确认 Provider 在线且响应正常，再重试。";
+        }
+
+        const detailParts = [];
+        if (hasStatusNumber) detailParts.push(`status=${statusNumber}`);
+        if (info.statusText) detailParts.push(`statusText=${info.statusText}`);
+        if (info.message) detailParts.push(`message=${info.message}`);
+        if (targetHost) detailParts.push(`target=${targetHost}`);
+        const detail = detailParts.join(" | ");
+        const detailHtml = detail
+            ? `<div style="font-size:12px; color:#8a6d3b; margin-top:6px; word-break:break-word;">${escapeHTML(detail)}</div>`
+            : "";
+
+        return `
+            <div style="border: 1px solid #fcd34d; background-color: #fffbeb; padding: 10px; border-radius: 6px; margin-top: 5px;">
+                <div style="display:flex; align-items:center; color: #b45309; font-weight: bold; margin-bottom: 5px;">
+                    <span style="font-size:18px; margin-right:6px;">⚠️</span> ${escapeHTML(getProviderLabel(provider))}：${summary}
+                </div>
+                <div style="font-size: 13px; color: #666; line-height: 1.5;">
+                    ${advice}
+                </div>
+                ${detailHtml}
+            </div>
+        `;
     }
 
     function logAiRawStreamLine(template, line) {
@@ -15635,6 +15880,13 @@
             if (line.startsWith("{")) {
                 const apiErr = parseApiError(line);
                 if (apiErr && handleApiError(providerId, apiErr)) return;
+                const fullText = extractChatCompletionsOutputText(line);
+                if (fullText) {
+                    const isChatMode = streamMode === "chat";
+                    appendTaggedContentChunk(template, fullText, isChatMode);
+                } else {
+                    handleApiError(providerId, { type: "unknown", message: "", raw: line, rawText: line });
+                }
             }
             return;
         }
@@ -15688,6 +15940,24 @@
             });
         });
         return text;
+    }
+
+    function extractChatCompletionsOutputText(payload) {
+        let data = payload;
+        if (typeof payload === "string") {
+            try {
+                data = JSON.parse(payload);
+            } catch (e) {
+                return "";
+            }
+        }
+        if (!data || typeof data !== "object") return "";
+        const choice = Array.isArray(data.choices) ? data.choices[0] : null;
+        if (!choice) return "";
+        if (choice.message && typeof choice.message.content === "string") return choice.message.content;
+        if (choice.delta && typeof choice.delta.content === "string") return choice.delta.content;
+        if (typeof choice.text === "string") return choice.text;
+        return "";
     }
 
     function extractChatPartsTextFromMessage(message) {
@@ -15875,6 +16145,8 @@
                     const isChatMode = streamMode === "chat";
                     appendTaggedContentChunk(template, fullText, isChatMode);
                     openaiStreamHasFull = true;
+                } else {
+                    handleApiError(providerId, { type: "unknown", message: "", raw: line, rawText: line });
                 }
             }
             return;
@@ -16544,6 +16816,11 @@
         if (gmRequest && gmRequest.abort) gmRequest.abort();
 
         Logger.info(`Starting Vision API Request (${resolvedActionId})...`);
+        Logger.debug("GM request context (vision)", buildRequestDebugMeta(url, {
+            provider: provider,
+            model: config.modelVision,
+            actionId: resolvedActionId
+        }));
 
         gmRequest = GM_xmlhttpRequest({
             method: "POST",
@@ -16554,6 +16831,12 @@
             timeout: 120000,
 
             onloadstart: (res) => {
+                Logger.debug("GM onloadstart (vision)", {
+                    status: res && res.status,
+                    statusText: res && res.statusText,
+                    finalUrl: res && res.finalUrl,
+                    hasStreamReader: !!(res && res.response && res.response.getReader)
+                });
                 if (res.response && res.response.getReader) {
                     startRenderLoop();
                     const reader = res.response.getReader();
@@ -16587,7 +16870,6 @@
                                 processStreamLine(providerTemplate, buffer);
                             }
                             flushReasoningTagRemainderToBuffers(false);
-                            Logger.debug(`GM vision raw length: ${rawText.length}`);
                             if (!streamTextBuffer.trim() && !streamReasoningBuffer.trim()) {
                                 const fallback = extractNonStreamResult(providerTemplate, rawText);
                                 if (fallback && fallback.error) {
@@ -16610,6 +16892,12 @@
             },
             onload: (res) => {
                 if (ignoreIncomingOutput) return;
+                Logger.debug("GM onload (vision)", {
+                    status: res && res.status,
+                    statusText: res && res.statusText,
+                    finalUrl: res && res.finalUrl,
+                    responseTextLength: res && typeof res.responseText === "string" ? res.responseText.length : 0
+                });
                 logAiRawResponse(provider, config.modelVision, resolvedActionId, res.responseText);
                 if (res.status === 429) {
                     stopRenderLoop();
@@ -16627,9 +16915,7 @@
                 if (res.status === 401 || res.status === 403) {
                     stopRenderLoop();
                     if (!shouldSuppressResultError()) {
-                        const apiErr = parseApiError(res.responseText);
-                        const err = apiErr || { type: "auth_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
-                        showInvalidKeyError(resultDiv, provider, err);
+                        showInvalidKeyError(resultDiv, provider);
                     }
                     if (reasoningWrapper) reasoningWrapper.style.display = "none";
                     autoExpandChatIfEnabled(actionToken);
@@ -16648,8 +16934,9 @@
             },
             onerror: (e) => {
                 if (ignoreIncomingOutput) return;
+                Logger.error("GM onerror (vision)", buildErrorDebugInfo(e));
                 stopRenderLoop();
-                resultDiv.innerHTML = "<span style='color:red'>网络连接失败</span>";
+                resultDiv.innerHTML = buildNetworkFailureHtml(provider, url, e);
                 autoExpandChatIfEnabled(actionToken);
             }
         });
@@ -16677,6 +16964,9 @@
         const config = getActiveConfig();
         const provider = config.provider;
         const providerTemplate = config.template;
+        startChatSessionIfNeeded();
+        syncChatProvider(provider);
+        chatAssistantLabel = formatChatModelLabel(provider, config.modelVision);
         if (isMissingProviderConfig(providerTemplate)) {
             appendChatError(getNoKeyErrorHTML(provider), { allowHtml: true });
             return;
@@ -16685,9 +16975,6 @@
         collapseChatIfEnabled();
         collapseTopSectionIfExpanded();
         const actionToken = ++activeActionToken;
-
-        startChatSessionIfNeeded();
-        syncChatProvider(provider);
 
         const imageId = hasImage ? `chat-img-${++chatImageCounter}` : null;
         if (imageId) chatImageStore[imageId] = chatCapturedImageBase64;
@@ -16746,126 +17033,362 @@
         Logger.debug(`💬 [${provider} Chat Request]`, requestBody);
 
         const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
+        const needsGmForHeaders = hasCustomHeaders(headers);
+        const shouldForceGmXhr = shouldForceGMRequestForUrl(url) || needsGmForHeaders;
 
-        let chatStreamActive = false;
-        gmRequest = GM_xmlhttpRequest({
-            method: "POST",
-            url: url,
-            headers: headers,
-            data: requestBody,
-            responseType: 'stream',
-            timeout: 600000,
+        // 策略 A: Fetch (优先，避免缺少 @connect 时无法访问)
+        if (!shouldForceGmXhr) {
+            try {
+                Logger.info(`Fetch ${provider} Chat Model: ${config.modelVision}`);
+                abortController = new AbortController();
+                const response = await fetch(url, {
+                    method: "POST",
+                    headers: headers,
+                    body: requestBody,
+                    signal: abortController.signal
+                });
 
-            onloadstart: (res) => {
-                if (res.response && res.response.getReader) {
-                    chatStreamActive = true;
-                    startRenderLoop();
-                    const reader = res.response.getReader();
+                if (!response.ok) {
+                    stopRenderLoop();
+                    finalizeChatResponse(actionToken);
+                    if (response.status === 429) {
+                        let apiErr = null;
+                        try {
+                            const errJson = await response.json();
+                            logAiRawResponse(provider, config.modelVision, "chat", errJson);
+                            apiErr = parseApiError(errJson);
+                        } catch (e) { }
+                        const html = (apiErr && isQuotaError(apiErr))
+                            ? getQuotaErrorHTML(provider, apiErr.message)
+                            : get429ErrorHTML();
+                        appendChatError(html, { allowHtml: true, recordAsAssistant: true });
+                        return;
+                    }
+                    if (response.status === 401 || response.status === 403) {
+                        let rawText = "";
+                        try {
+                            rawText = await response.text();
+                        } catch (e) { }
+                        logAiRawResponse(provider, config.modelVision, "chat", rawText);
+                        appendChatError(getInvalidKeyErrorHTML(provider), { allowHtml: true });
+                        return;
+                    }
+                    let rawText = "";
+                    try {
+                        rawText = await response.text();
+                    } catch (e) { }
+                    logAiRawResponse(provider, config.modelVision, "chat", rawText);
+                    const apiErr = parseApiError(rawText);
+                    const err = apiErr || { type: "http_error", message: `HTTP ${response.status}`, raw: rawText, rawText: rawText };
+                    appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
+                    return;
+                }
+
+                startRenderLoop();
+                let rawText = "";
+                if (response.body && response.body.getReader) {
+                    const reader = response.body.getReader();
                     const decoder = new TextDecoder("utf-8");
                     let buffer = "";
-                    let rawText = "";
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        const chunk = decoder.decode(value, { stream: true });
+                        rawText += chunk;
+                        buffer += chunk;
+                        const lines = buffer.split(/\r?\n/);
+                        buffer = lines.pop();
+                        for (const line of lines) processStreamLine(providerTemplate, line);
+                    }
+                    if (ignoreIncomingOutput) {
+                        stopRenderLoop();
+                        return;
+                    }
+                    if (buffer && buffer.trim()) {
+                        processStreamLine(providerTemplate, buffer);
+                    }
+                    flushReasoningTagRemainderToBuffers(true);
+                } else {
+                    const fullText = await response.text();
+                    rawText = fullText || "";
+                    if (fullText) {
+                        const lines = fullText.split(/\r?\n/);
+                        for (const line of lines) processStreamLine(providerTemplate, line);
+                    }
+                    flushReasoningTagRemainderToBuffers(true);
+                }
+                if (!chatAssistantBuffer.trim()) {
+                    const fallback = extractNonStreamResult(providerTemplate, rawText);
+                    if (fallback && fallback.error) {
+                        stopRenderLoop();
+                        finalizeChatResponse(actionToken);
+                        appendChatError(buildApiErrorHtml(provider, fallback.error), { allowHtml: true });
+                        return;
+                    }
+                    if (fallback && fallback.text) {
+                        applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, true);
+                        updateChatStreamText();
+                        renderContent();
+                    }
+                }
+                stopRenderLoop();
+                finalizeChatResponse(actionToken);
+                return;
+            } catch (err) {
+                Logger.warn("Chat Fetch 失败/跨域，准备降级。", err);
+                if (err.name === 'AbortError') return;
+            }
+        } else {
+            Logger.info("检测到 HTTPS 页面调用 HTTP Provider，聊天请求跳过 Fetch，直接使用 GM_xmlhttpRequest。");
+        }
 
-                    (async function readStream() {
-                        let streamErr = "";
-                        try {
-                            while (true) {
-                                const { done, value } = await reader.read();
-                                if (done) break;
-                                const chunk = decoder.decode(value, { stream: true });
-                                rawText += chunk;
-                                buffer += chunk;
-                                const lines = buffer.split(/\r?\n/);
-                                buffer = lines.pop();
-                                for (const line of lines) processStreamLine(providerTemplate, line);
-                            }
-                        } catch (e) {
-                            Logger.error("Chat Stream Error", e);
-                            streamErr = `流读取错误: ${e.message}`;
-                        } finally {
-                            if (ignoreIncomingOutput) {
-                                stopRenderLoop();
-                                return;
-                            }
-                            if (buffer && buffer.trim()) {
-                                processStreamLine(providerTemplate, buffer);
-                            }
-                            flushReasoningTagRemainderToBuffers(true);
-                            Logger.debug(`GM chat raw length: ${rawText.length}`);
-                            if (!chatAssistantBuffer.trim()) {
-                                const fallback = extractNonStreamResult(providerTemplate, rawText);
-                                if (fallback && fallback.error) {
-                                    handleApiError(provider, fallback.error);
-                                    return;
+        let chatStreamActive = false;
+        const isMixedProtocolChatRequest = shouldForceGMRequestForUrl(url);
+        const chatGmRequestAttempts = isMixedProtocolChatRequest
+            ? [
+                { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" },
+                { streamMode: "progress", fetchMode: true, label: "onprogress-fetch" },
+                { streamMode: "stream", fetchMode: true, label: "stream-fetch" }
+            ]
+            : [
+                { streamMode: "stream", fetchMode: true, label: "stream-fetch" },
+                { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" }
+            ];
+        let chatGmAttemptIndex = 0;
+        let chatProgressOffset = 0;
+        let chatRawText = "";
+        let chatBuffer = "";
+
+        const flushChatStreamChunk = (chunkText) => {
+            if (!chunkText) return;
+            chatRawText += chunkText;
+            chatBuffer += chunkText;
+            const lines = chatBuffer.split(/\r?\n/);
+            chatBuffer = lines.pop();
+            for (const line of lines) processStreamLine(providerTemplate, line);
+        };
+
+        const finalizeChatStream = (actionTokenValue, streamErr) => {
+            if (ignoreIncomingOutput) {
+                stopRenderLoop();
+                return;
+            }
+            if (chatBuffer && chatBuffer.trim()) {
+                processStreamLine(providerTemplate, chatBuffer);
+            }
+            flushReasoningTagRemainderToBuffers(true);
+            if (!chatAssistantBuffer.trim()) {
+                const fallback = extractNonStreamResult(providerTemplate, chatRawText);
+                if (fallback && fallback.error) {
+                    handleApiError(provider, fallback.error);
+                    return;
+                }
+                if (fallback && fallback.text) {
+                    applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, true);
+                    updateChatStreamText();
+                    renderContent();
+                }
+            }
+            stopRenderLoop();
+            finalizeChatResponse(actionTokenValue);
+            if (streamErr) appendChatError(streamErr);
+        };
+
+        Logger.debug("GM request context (chat)", buildRequestDebugMeta(url, {
+            provider: provider,
+            model: config.modelVision,
+            mode: "chat"
+        }));
+
+        const getCurrentChatAttempt = () => chatGmRequestAttempts[Math.min(chatGmAttemptIndex, chatGmRequestAttempts.length - 1)];
+
+        const canRetryChatGmRequest = () => {
+            if (chatGmAttemptIndex >= chatGmRequestAttempts.length - 1) return false;
+            if (chatAssistantBuffer.trim()) return false;
+            if (streamReasoningBuffer.trim()) return false;
+            if (chatRawText.trim()) return false;
+            return true;
+        };
+
+        const retryChatGmRequest = (reasonLabel, err) => {
+            if (!canRetryChatGmRequest()) return false;
+            const currentAttempt = getCurrentChatAttempt();
+            chatGmAttemptIndex += 1;
+            const nextAttempt = getCurrentChatAttempt();
+            chatProgressOffset = 0;
+            chatRawText = "";
+            chatBuffer = "";
+            chatStreamActive = false;
+            Logger.warn(
+                `Chat GM ${reasonLabel}，切换重试策略：${currentAttempt.label} -> ${nextAttempt.label}`,
+                err ? buildErrorDebugInfo(err) : {}
+            );
+            startChatGmRequest();
+            return true;
+        };
+
+        const startChatGmRequest = () => {
+            const currentAttempt = getCurrentChatAttempt();
+            const currentUseProgressStreamMode = currentAttempt.streamMode === "progress";
+            Logger.info(`GM 请求尝试 ${chatGmAttemptIndex + 1}/${chatGmRequestAttempts.length}（chat）：${currentAttempt.label}`);
+            if (currentUseProgressStreamMode && isMixedProtocolChatRequest) {
+                Logger.info("Chat 使用 GM onprogress 流式模式（兼容 HTTPS 页面 -> HTTP Provider）。");
+            }
+
+            const requestOptions = {
+                method: "POST",
+                url: url,
+                headers: headers,
+                data: requestBody,
+                responseType: currentUseProgressStreamMode ? "" : "stream",
+                timeout: 600000,
+
+                onloadstart: (res) => {
+                    Logger.debug("GM onloadstart (chat)", {
+                        status: res && res.status,
+                        statusText: res && res.statusText,
+                        finalUrl: res && res.finalUrl,
+                        hasStreamReader: !!(res && res.response && res.response.getReader),
+                        mode: currentAttempt.label
+                    });
+                    if (currentUseProgressStreamMode) {
+                        chatStreamActive = true;
+                        startRenderLoop();
+                        return;
+                    }
+                    if (res.response && res.response.getReader) {
+                        chatStreamActive = true;
+                        startRenderLoop();
+                        const reader = res.response.getReader();
+                        const decoder = new TextDecoder("utf-8");
+
+                        (async function readStream() {
+                            let streamErr = "";
+                            try {
+                                while (true) {
+                                    const { done, value } = await reader.read();
+                                    if (done) break;
+                                    const chunk = decoder.decode(value, { stream: true });
+                                    flushChatStreamChunk(chunk);
                                 }
-                                if (fallback && fallback.text) {
-                                    applyFallbackTextWithReasoningTag(providerTemplate, fallback.text, true);
-                                    updateChatStreamText();
-                                    renderContent();
-                                }
+                            } catch (e) {
+                                Logger.error("Chat Stream Error", e);
+                                streamErr = `流读取错误: ${e.message}`;
+                            } finally {
+                                finalizeChatStream(actionToken, streamErr);
                             }
+                        })();
+                    }
+                },
+
+                onprogress: (res) => {
+                    if (!currentUseProgressStreamMode || ignoreIncomingOutput) return;
+                    const text = res && typeof res.responseText === "string" ? res.responseText : "";
+                    if (!text) return;
+                    if (text.length < chatProgressOffset) {
+                        chatProgressOffset = 0;
+                    }
+                    const chunk = text.slice(chatProgressOffset);
+                    chatProgressOffset = text.length;
+                    flushChatStreamChunk(chunk);
+                },
+                onload: (res) => {
+                    if (ignoreIncomingOutput) return;
+                    Logger.debug("GM onload (chat)", {
+                        status: res && res.status,
+                        statusText: res && res.statusText,
+                        finalUrl: res && res.finalUrl,
+                        responseTextLength: res && typeof res.responseText === "string" ? res.responseText.length : 0,
+                        streamed: chatStreamActive,
+                        mode: currentAttempt.label
+                    });
+                    if (currentUseProgressStreamMode) {
+                        const fullText = res && typeof res.responseText === "string" ? res.responseText : "";
+                        if (fullText.length > chatProgressOffset) {
+                            flushChatStreamChunk(fullText.slice(chatProgressOffset));
+                            chatProgressOffset = fullText.length;
+                        }
+                        if (res.status && res.status !== 200) {
                             stopRenderLoop();
                             finalizeChatResponse(actionToken);
-                            if (streamErr) appendChatError(streamErr);
+                            logAiRawResponse(provider, config.modelVision, "chat", fullText);
+                            const apiErr = parseApiError(fullText);
+                            const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: fullText, rawText: fullText };
+                            appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
+                            return;
                         }
-                    })();
-                }
-            },
-            onload: (res) => {
-                if (ignoreIncomingOutput) return;
-                if (chatStreamActive) {
+                        finalizeChatStream(actionToken, "");
+                        return;
+                    }
+                    if (chatStreamActive) {
+                        if (streamErrorHandled) return;
+                        if (res.status === 200) return;
+                        logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
+                        const apiErr = parseApiError(res.responseText);
+                        const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
+                        streamErrorHandled = true;
+                        stopRenderLoop();
+                        finalizeChatResponse(actionToken);
+                        appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
+                        return;
+                    }
+                    if (res.status === 429) {
+                        stopRenderLoop();
+                        finalizeChatResponse(actionToken);
+                        logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
+                        const apiErr = parseApiError(res.responseText);
+                        const html = (apiErr && isQuotaError(apiErr))
+                            ? getQuotaErrorHTML(provider, apiErr.message)
+                            : get429ErrorHTML();
+                        appendChatError(html, { allowHtml: true, recordAsAssistant: true });
+                        return;
+                    }
+                    if (res.status === 401 || res.status === 403) {
+                        stopRenderLoop();
+                        finalizeChatResponse(actionToken);
+                        logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
+                        appendChatError(getInvalidKeyErrorHTML(provider), { allowHtml: true });
+                        return;
+                    }
+                    if (res.status !== 200) {
+                        stopRenderLoop();
+                        finalizeChatResponse(actionToken);
+                        logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
+                        const apiErr = parseApiError(res.responseText);
+                        const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
+                        appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
+                    }
+                },
+                onerror: (e) => {
+                    if (ignoreIncomingOutput) return;
                     if (streamErrorHandled) return;
-                    if (res.status === 200) return;
-                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
-                    const apiErr = parseApiError(res.responseText);
-                    const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
-                    streamErrorHandled = true;
+                    Logger.error("GM onerror (chat)", buildErrorDebugInfo(e));
+                    if (retryChatGmRequest("onerror", e)) return;
                     stopRenderLoop();
                     finalizeChatResponse(actionToken);
-                    appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
-                    return;
-                }
-                if (res.status === 429) {
+                    appendChatError(buildNetworkFailureHtml(provider, url, e), { allowHtml: true });
+                },
+                ontimeout: () => {
+                    if (ignoreIncomingOutput) return;
+                    if (streamErrorHandled) return;
+                    Logger.error("GM ontimeout (chat)", buildRequestDebugMeta(url, {
+                        provider: provider,
+                        model: config.modelVision,
+                        mode: `chat/${currentAttempt.label}`
+                    }));
+                    if (retryChatGmRequest("ontimeout", { status: 408, statusText: "timeout" })) return;
                     stopRenderLoop();
                     finalizeChatResponse(actionToken);
-                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
-                    const apiErr = parseApiError(res.responseText);
-                    const html = (apiErr && isQuotaError(apiErr))
-                        ? getQuotaErrorHTML(provider, apiErr.message)
-                        : get429ErrorHTML();
-                    appendChatError(html, { allowHtml: true, recordAsAssistant: true });
-                    return;
+                    appendChatError("请求超时 (Timeout)");
                 }
-                if (res.status === 401 || res.status === 403) {
-                    stopRenderLoop();
-                    finalizeChatResponse(actionToken);
-                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
-                    const apiErr = parseApiError(res.responseText);
-                    const err = apiErr || { type: "auth_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
-                    appendChatError(getAuthErrorHTML(provider, err), { allowHtml: true });
-                    return;
-                }
-                if (res.status !== 200) {
-                    stopRenderLoop();
-                    finalizeChatResponse(actionToken);
-                    logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
-                    const apiErr = parseApiError(res.responseText);
-                    const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
-                    appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
-                }
-            },
-            onerror: () => {
-                if (ignoreIncomingOutput) return;
-                stopRenderLoop();
-                finalizeChatResponse(actionToken);
-                appendChatError("网络连接失败");
-            },
-            ontimeout: () => {
-                if (ignoreIncomingOutput) return;
-                stopRenderLoop();
-                finalizeChatResponse(actionToken);
-                appendChatError("请求超时 (Timeout)");
+            };
+            if (typeof currentAttempt.fetchMode === "boolean") {
+                requestOptions.fetch = currentAttempt.fetchMode;
             }
-        });
+            gmRequest = GM_xmlhttpRequest(requestOptions);
+        };
+
+        startChatGmRequest();
     }
 
     function getNoKeyErrorHTML(provider) {
@@ -16905,11 +17428,24 @@
     }
 
     function getInvalidKeyErrorHTML(provider) {
-        return getAuthErrorHTML(provider, {});
+        const label = getProviderLabel(provider);
+        const link = getProviderKeyLink(provider);
+        const linkHtml = link ? `<a href="${link}" target="_blank" style="color:#3b82f6;">获取 KEY</a>` : "获取 KEY";
+        return `
+            <div style="color:#d32f2f; font-weight:bold; padding:10px;">🚫 API KEY 无效</div>
+            <div style="font-size:13px; color:#555; padding:0 10px;">
+            您配置的 API Key 无法通过验证 (Error 401/403)。<br><br>
+            可能的原因：<br>
+            1. Key 已过期或被撤销。<br>
+            2. 复制时多复制了空格。<br>
+            3. 账户余额不足。<br><br>
+            请检查设置或重新 ${linkHtml}（${label}）。
+            </div>
+        `;
     }
 
-    function showInvalidKeyError(container, provider, err) {
-        if (container) container.innerHTML = getAuthErrorHTML(provider, err || {});
+    function showInvalidKeyError(container, provider) {
+        if (container) container.innerHTML = getInvalidKeyErrorHTML(provider);
     }
 
     function getQuotaErrorHTML(provider, message) {
@@ -16943,17 +17479,24 @@
         `;
     }
 
-    const start = () => {
+    const startMain = () => {
+        if (extensionDetected) {
+            requestBridgeCleanup();
+            return;
+        }
+        uiStarted = true;
         initPdfjsCustomScaleEnhancer();
+        ensureStyles();
+        initPdfReceiver();
         if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initUI);
         else initUI();
     };
 
-    const storageReady = globalThis.__coolauxv_storage_ready;
-    if (storageReady && typeof storageReady.then === "function") {
-        storageReady.then(start).catch(start);
-    } else {
-        start();
-    }
+    setupBridgeServer();
+    startMainTimer = setTimeout(() => {
+        if (!extensionDetected) {
+            startMain();
+        }
+    }, BRIDGE_DETECT_TIMEOUT_MS);
 
 })();

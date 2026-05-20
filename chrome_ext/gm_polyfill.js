@@ -784,14 +784,217 @@
     };
   };
 
+  const FETCH_FORBIDDEN_HEADERS = new Set([
+    "accept-charset", "accept-encoding", "access-control-request-headers",
+    "access-control-request-method", "connection", "content-length",
+    "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive",
+    "origin", "referer", "te", "trailer", "transfer-encoding", "upgrade", "via"
+  ]);
+
+  const hasForbiddenHeaders = (headers) => {
+    return Object.keys(headers || {}).some((key) =>
+      FETCH_FORBIDDEN_HEADERS.has(String(key).toLowerCase().trim())
+    );
+  };
+
+  const hasCriticalInjectedHeaders = (headers) => {
+    return Object.keys(headers || {}).some((key) => {
+      const lower = String(key).toLowerCase().trim();
+      return lower === "origin" || lower === "referer";
+    });
+  };
+
+  const isDebuggerHeaderInjectionEnabled = () => {
+    return !!GM_getValue("coolauxv_enable_debugger_header_injection", true);
+  };
+
+  const isExtensionPageContext = () => {
+    try {
+      return typeof location !== "undefined" && location.protocol === "chrome-extension:";
+    } catch (err) {
+      return false;
+    }
+  };
+
+  const GM_xmlhttpRequestWithDebugger = (options) => {
+    const opts = options || {};
+    const abortController = new AbortController();
+    let timeoutId = null;
+    let completed = false;
+    let debuggerPort = null;
+    let debuggerReady = false;
+
+    const cleanup = () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+      if (debuggerPort) {
+        try { debuggerPort.disconnect(); } catch (e) { /* ignore */ }
+        debuggerPort = null;
+      }
+    };
+
+    const fail = (err) => {
+      if (completed) return;
+      completed = true;
+      cleanup();
+      if (opts.onerror) {
+        opts.onerror(err);
+      }
+    };
+
+    const safeHeaders = {};
+    const forbiddenHeaders = {};
+    Object.keys(opts.headers || {}).forEach((key) => {
+      const lowerKey = String(key).toLowerCase().trim();
+      if (FETCH_FORBIDDEN_HEADERS.has(lowerKey)) {
+        forbiddenHeaders[lowerKey] = opts.headers[key];
+      } else {
+        safeHeaders[key] = opts.headers[key];
+      }
+    });
+
+    if (opts.timeout) {
+      timeoutId = setTimeout(() => {
+        if (completed) return;
+        completed = true;
+        cleanup();
+        if (opts.ontimeout) {
+          opts.ontimeout({ status: 0, statusText: "timeout" });
+        }
+      }, opts.timeout);
+    }
+
+    const doFetch = () => {
+      fetch(opts.url, {
+        method: opts.method || "GET",
+        headers: safeHeaders,
+        body: opts.data,
+        signal: abortController.signal,
+        credentials: "omit"
+      }).then(async (response) => {
+        if (completed) return;
+        const base = {
+          status: response.status,
+          statusText: response.statusText,
+          responseHeaders: headersToString(response.headers),
+          finalUrl: response.url
+        };
+
+        if (opts.responseType === "stream" && response.body) {
+          const streams = response.body.tee();
+          const streamForScript = streams[0];
+          const streamForLoad = streams[1];
+          const startRes = { ...base, response: streamForScript };
+          if (opts.onloadstart) {
+            opts.onloadstart(startRes);
+          }
+          if (opts.onload) {
+            const text = await new Response(streamForLoad).text();
+            opts.onload({ ...base, response: streamForScript, responseText: text });
+          }
+          completed = true;
+          cleanup();
+          return;
+        }
+
+        let data = "";
+        if (opts.responseType === "arraybuffer") {
+          data = await response.arrayBuffer();
+        } else if (opts.responseType === "blob") {
+          data = await response.blob();
+        } else if (opts.responseType === "json") {
+          data = await response.json();
+        } else {
+          data = await response.text();
+        }
+        const res = { ...base, response: data, responseText: typeof data === "string" ? data : "" };
+        if (opts.onloadstart) {
+          opts.onloadstart(res);
+        }
+        if (opts.onload) {
+          opts.onload(res);
+        }
+        completed = true;
+        cleanup();
+      }).catch((err) => {
+        if (completed) return;
+        completed = true;
+        cleanup();
+        if (err && err.name === "AbortError") return;
+        if (opts.onerror) {
+          opts.onerror(err);
+        }
+      });
+    };
+
+    debuggerPort = chrome.runtime.connect({ name: "coolauxv-gm-xhr-debugger" });
+
+    let debugMarkerId = null;
+
+    console.log("[CoolAuxv] debugger: connecting to background for forbidden header injection", Object.keys(forbiddenHeaders));
+    log("debug", "debugger: connecting to background for forbidden header injection", Object.keys(forbiddenHeaders));
+
+    debuggerPort.onMessage.addListener((msg) => {
+      if (completed) return;
+      if (msg.type === "debugger_ready") {
+        console.log("[CoolAuxv] debugger: ready, making fetch with safe headers + marker");
+        log("debug", "debugger: ready, making fetch");
+        debuggerReady = true;
+        debugMarkerId = msg.debugId || null;
+        if (debugMarkerId) {
+          safeHeaders["X-CoolAuxv-Debug-Id"] = debugMarkerId;
+        }
+        doFetch();
+      } else if (msg.type === "error") {
+        console.error("[CoolAuxv] debugger: setup failed:", msg.message);
+        log("error", "debugger setup failed:", msg.message);
+        fail(new Error(msg.message || "debugger setup failed"));
+      }
+    });
+
+    debuggerPort.onDisconnect.addListener(() => {
+      if (!completed && !debuggerReady) {
+        console.error("[CoolAuxv] debugger: background disconnected before ready");
+        log("error", "debugger: background disconnected before ready");
+        fail(new Error("debugger disconnected before ready"));
+      }
+    });
+
+    debuggerPort.postMessage({
+      type: "setup",
+      url: opts.url,
+      method: opts.method || "GET",
+      forbiddenHeaders: forbiddenHeaders
+    });
+
+    return {
+      abort: () => {
+        if (completed) return;
+        completed = true;
+        cleanup();
+        abortController.abort();
+      }
+    };
+  };
+
   const GM_xmlhttpRequest = (options) => {
     const opts = options || {};
     if (!globalThis.chrome || !chrome.runtime || !chrome.runtime.connect) {
       return GM_xmlhttpRequestWithFetch(opts);
     }
+    if (isExtensionPageContext() && isDebuggerHeaderInjectionEnabled() && hasCriticalInjectedHeaders(opts.headers)) {
+      log("debug", "Request has origin/referer, using debugger injection path");
+      return GM_xmlhttpRequestWithDebugger(opts);
+    }
     try {
       return GM_xmlhttpRequestViaBackground(opts);
     } catch (err) {
+      if (hasForbiddenHeaders(opts.headers)) {
+        log("warn", "background request failed, fallback to debugger injection for forbidden headers");
+        return GM_xmlhttpRequestWithDebugger(opts);
+      }
       return GM_xmlhttpRequestWithFetch(opts);
     }
   };

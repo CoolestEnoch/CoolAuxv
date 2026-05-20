@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.4.1
+// @version      v16.4.2
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -224,7 +224,11 @@
     ];
 
     const LATEST_CHANGELOG = `
-        v16.4.1
+        v16.4.2
+        ## ✨ 新功能
+        *   油猴插件支持覆写Header了
+        ---
+	    v16.4.1
         ## 🎨 界面
         *   右下角"智"改为"💡"
         ---
@@ -12777,6 +12781,13 @@
         return cleaned;
     };
 
+    const hasCustomHeaders = (headers) => {
+        const keys = Object.keys(headers || {});
+        if (keys.length === 0) return false;
+        if (keys.length === 1 && String(keys[0]).toLowerCase() === "content-type") return false;
+        return true;
+    };
+
     const isMissingProviderConfig = (template) => {
         if (!template || !template.baseUrl) return true;
         const context = buildTemplateContext(template, { apiKey: template.apiKey || "" });
@@ -15138,7 +15149,8 @@
         Logger.debug(`🚀 [${provider} Request Data]`, requestBody);
 
         const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
-        const shouldForceGmXhr = shouldForceGMRequestForUrl(url);
+        const needsGmForHeaders = hasCustomHeaders(headers);
+        const shouldForceGmXhr = shouldForceGMRequestForUrl(url) || needsGmForHeaders;
 
         // 策略 A: Fetch
         if (!shouldForceGmXhr) {
@@ -17021,7 +17033,8 @@
         Logger.debug(`💬 [${provider} Chat Request]`, requestBody);
 
         const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
-        const shouldForceGmXhr = shouldForceGMRequestForUrl(url);
+        const needsGmForHeaders = hasCustomHeaders(headers);
+        const shouldForceGmXhr = shouldForceGMRequestForUrl(url) || needsGmForHeaders;
 
         // 策略 A: Fetch (优先，避免缺少 @connect 时无法访问)
         if (!shouldForceGmXhr) {
