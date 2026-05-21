@@ -2,6 +2,7 @@ const BUILTIN_PDF_VIEWER_ID = "mhjfbmdgcfjbbpaeojofohoefgiehjai";
 const VIEWER_URL = chrome.runtime.getURL("pdfjs/web/viewer.html");
 const PROVIDER_TEMPLATE_STORAGE_KEY = "coolauxv_provider_templates_v1";
 const PROVIDER_SECRET_STORAGE_KEY = "coolauxv_provider_custom_secrets_v1";
+const DEBUGGER_PERSISTENT_STORAGE_KEY = "coolauxv_enable_debugger_header_persistent";
 const DNR_RULE_ID_BASE = 20000;
 const DNR_RULE_ID_LIMIT = 500;
 
@@ -11,6 +12,13 @@ const FETCH_FORBIDDEN_HEADERS = new Set([
   "cookie", "cookie2", "date", "dnt", "expect", "host", "keep-alive",
   "origin", "referer", "te", "trailer", "transfer-encoding", "upgrade", "via"
 ]);
+
+const hasCriticalInjectedHeaders = (headers) => {
+  return Object.keys(headers || {}).some((key) => {
+    const lower = String(key).toLowerCase().trim();
+    return lower === "origin" || lower === "referer";
+  });
+};
 
 const isOurViewer = (url) => typeof url === "string" && url.startsWith(VIEWER_URL);
 
@@ -145,6 +153,7 @@ const isPdfResponseByHeaders = (responseHeaders) => {
 
 const LOG_LEVELS = { debug: 0, info: 1, warn: 2, error: 3, none: 4 };
 let currentLogLevel = "none";
+let debuggerHeaderInjectionPersistent = false;
 
 const shouldLog = (level) => {
   const currentVal = LOG_LEVELS[currentLogLevel] ?? LOG_LEVELS.none;
@@ -189,7 +198,67 @@ chrome.storage.onChanged.addListener((changes, area) => {
       currentLogLevel = "none";
     }
   }
+  if (changes[DEBUGGER_PERSISTENT_STORAGE_KEY]) {
+    debuggerHeaderInjectionPersistent = !!changes[DEBUGGER_PERSISTENT_STORAGE_KEY].newValue;
+    if (!debuggerHeaderInjectionPersistent) {
+      for (const tabId of Array.from(persistentDebuggerTabs)) {
+        detachTabDebugger(tabId, true).catch(() => {});
+      }
+    } else {
+      prewarmPersistentDebugger().catch(() => {});
+    }
+  }
 });
+
+const getActiveTab = () => new Promise((resolve) => {
+  if (!chrome.tabs || !chrome.tabs.query) {
+    resolve(null);
+    return;
+  }
+  chrome.tabs.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+    if (chrome.runtime && chrome.runtime.lastError) {
+      resolve(null);
+      return;
+    }
+    resolve(Array.isArray(tabs) && tabs.length ? tabs[0] : null);
+  });
+});
+
+const syncDebuggerPersistentMode = () => new Promise((resolve) => {
+  chrome.storage.local.get([DEBUGGER_PERSISTENT_STORAGE_KEY], (items) => {
+    if (chrome.runtime && chrome.runtime.lastError) {
+      resolve();
+      return;
+    }
+    debuggerHeaderInjectionPersistent = !!(items && items[DEBUGGER_PERSISTENT_STORAGE_KEY]);
+    resolve();
+  });
+});
+
+syncDebuggerPersistentMode();
+
+const isDebuggerRelevantTab = (tab) => {
+  if (!tab || typeof tab.url !== "string") {
+    return false;
+  }
+  return isOurViewer(tab.url);
+};
+
+const prewarmPersistentDebugger = async () => {
+  if (!debuggerHeaderInjectionPersistent || persistentDebuggerTabs.size > 0) {
+    return;
+  }
+  const tab = await getActiveTab();
+  if (!isDebuggerRelevantTab(tab)) {
+    return;
+  }
+  try {
+    await attachTabDebugger(tab.id, true);
+    log("debug", "Prewarmed persistent debugger for active tab", { tabId: tab.id, url: tab.url });
+  } catch (err) {
+    log("warn", "Failed to prewarm persistent debugger", err);
+  }
+};
 
 const normalizeSecretStore = (input) => {
   if (!input) {
@@ -553,24 +622,59 @@ chrome.runtime.onConnect.addListener((port) => {
 
 // --- debugger-based custom header injection ---
 
-const pendingDebuggerRequests = new Map(); // debugId -> {port, tabId, forbiddenHeaders}
+const pendingDebuggerRequests = new Map(); // debugId -> {port, tabId, forbiddenHeaders, persistent}
 const tabDebuggerRefs = new Map(); // tabId -> count
+const persistentDebuggerTabs = new Set();
 
-const detachTabDebugger = async (tabId) => {
-  const count = (tabDebuggerRefs.get(tabId) || 0) - 1;
-  if (count <= 0) {
-    tabDebuggerRefs.delete(tabId);
-    try {
-      await chrome.debugger.detach({ tabId });
-    } catch (e) {
-      // ignore detach errors
-    }
-  } else {
-    tabDebuggerRefs.set(tabId, count);
+const isTabDebuggerAttached = async (tabId) => {
+  if (!chrome.debugger || !chrome.debugger.getTargets) {
+    return false;
+  }
+  try {
+    const targets = await chrome.debugger.getTargets();
+    return Array.isArray(targets) && targets.some((target) => target && target.tabId === tabId && target.attached);
+  } catch (err) {
+    return false;
   }
 };
 
-const attachTabDebugger = async (tabId) => {
+const detachTabDebugger = async (tabId, force = false) => {
+  const persistent = persistentDebuggerTabs.has(tabId);
+  if (persistent && !force && debuggerHeaderInjectionPersistent) {
+    return;
+  }
+
+  const count = (tabDebuggerRefs.get(tabId) || 0) - 1;
+  if (count > 0 && !force) {
+    tabDebuggerRefs.set(tabId, count);
+    return;
+  }
+
+  tabDebuggerRefs.delete(tabId);
+  persistentDebuggerTabs.delete(tabId);
+  try {
+    await chrome.debugger.detach({ tabId });
+  } catch (e) {
+    // ignore detach errors
+  }
+};
+
+const attachTabDebugger = async (tabId, persistent = false) => {
+  if (persistent) {
+    persistentDebuggerTabs.add(tabId);
+  }
+  if (await isTabDebuggerAttached(tabId)) {
+    tabDebuggerRefs.set(tabId, Math.max(tabDebuggerRefs.get(tabId) || 0, 1));
+    try {
+      await chrome.debugger.sendCommand({ tabId }, "Fetch.enable", {
+        patterns: [{ requestStage: "Request" }]
+      });
+    } catch (e) {
+      // keep going; the session may already be configured
+    }
+    return;
+  }
+
   const count = tabDebuggerRefs.get(tabId) || 0;
   if (count > 0) {
     tabDebuggerRefs.set(tabId, count + 1);
@@ -597,15 +701,16 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
     // Not our request, continue unmodified
     try {
       await chrome.debugger.sendCommand({ tabId }, "Fetch.continueRequest", {
-        requestId: params.requestId,
-        headers: Object.keys(headers).map((name) => ({ name, value: headers[name] }))
+        requestId: params.requestId
       });
     } catch (e) { /* ignore */ }
     return;
   }
 
   const pending = pendingDebuggerRequests.get(debugId);
-  pendingDebuggerRequests.delete(debugId);
+  if (!pending.persistent) {
+    pendingDebuggerRequests.delete(debugId);
+  }
 
   // Build modified headers: existing minus marker + forbidden headers
   const modifiedHeaders = [];
@@ -639,7 +744,9 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
     log("warn", "Fetch.continueRequest failed", e);
   }
 
-  await detachTabDebugger(tabId);
+  if (!pending.persistent) {
+    await detachTabDebugger(tabId);
+  }
 });
 
 chrome.runtime.onConnect.addListener((port) => {
@@ -670,15 +777,17 @@ chrome.runtime.onConnect.addListener((port) => {
     }
 
     const debugId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const persistent = debuggerHeaderInjectionPersistent && hasCriticalInjectedHeaders(msg.forbiddenHeaders || {});
     pendingDebuggerRequests.set(debugId, {
       port,
       tabId,
-      forbiddenHeaders: msg.forbiddenHeaders || {}
+      forbiddenHeaders: msg.forbiddenHeaders || {},
+      persistent
     });
 
     try {
       console.log("[CoolAuxv] debugger: attempting attach to tab", tabId);
-      await attachTabDebugger(tabId);
+      await attachTabDebugger(tabId, persistent);
       console.log("[CoolAuxv] debugger: attach OK, Fetch.enable done");
       port.postMessage({ type: "debugger_ready", debugId });
     } catch (err) {
@@ -696,11 +805,21 @@ chrome.runtime.onConnect.addListener((port) => {
         pendingDebuggerRequests.delete(debugId);
       }
     }
-    if (tabId) {
+    if (tabId && !debuggerHeaderInjectionPersistent) {
       try { await detachTabDebugger(tabId); } catch (e) { /* ignore */ }
     }
   });
 });
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (tabDebuggerRefs.has(tabId) || persistentDebuggerTabs.has(tabId)) {
+    detachTabDebugger(tabId, true).catch(() => {});
+  }
+});
+
+if (debuggerHeaderInjectionPersistent) {
+  prewarmPersistentDebugger().catch(() => {});
+}
 
 // --- end debugger-based custom header injection ---
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.4.2
+// @version      v16.4.3
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -184,6 +184,16 @@
     const DEFAULT_KEY_LINK_TITLE = "获取 KEY";
     const DEFAULT_PROVIDER_SESSION_FIELD_KEY = "conversationId";
     const getScriptVersion = () => {
+        try {
+            if (typeof chrome !== "undefined" && chrome.runtime && typeof chrome.runtime.getManifest === "function") {
+                const manifest = chrome.runtime.getManifest();
+                if (manifest && manifest.version) {
+                    return String(manifest.version);
+                }
+            }
+        } catch (err) {
+            // ignore and fall back below
+        }
         const gmInfo = (typeof GM_info !== "undefined" && GM_info) ? GM_info : (globalThis && globalThis.GM_info);
         if (gmInfo && gmInfo.script && gmInfo.script.version) {
             return String(gmInfo.script.version);
@@ -224,11 +234,18 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.4.3
+        ## ✨ 新功能
+        *   支持覆写Header了
+        *   chromium插件支持在内置pdfjs里常驻debugger了，这样可以在发送自定义header的时候避免页面频繁跳动。
+        ## 🔧 问题修复
+        *   修复chromium插件无法弹出悬浮球的问题
+        ---
         v16.4.2
         ## ✨ 新功能
         *   油猴插件支持覆写Header了
         ---
-	v16.4.1
+        v16.4.1
         ## 🎨 界面
         *   右下角"智"改为"💡"
         ---
@@ -5226,6 +5243,12 @@
                             </label>
                             <div class="coolauxv-settings-item-hint">开启后 Enter 发送，Shift+Enter 换行</div>
                         </div>
+                        <div class="coolauxv-settings-item">
+                            <label class="coolauxv-toggle-label">
+                                <input type="checkbox" id="coolauxv-cfg-debugger-persistent"> Debugger 常驻
+                            </label>
+                            <div class="coolauxv-settings-item-hint">开启后，当前 PDF 页会预先拉起 debugger，后续带受限头的请求复用同一连接；关闭后会立刻回收。</div>
+                        </div>
                     </div>
                 </div>
 
@@ -5476,6 +5499,7 @@
         const btnClearChatPersist = popup.querySelector("#coolauxv-btn-clear-chat-persist");
         const btnManageChatPersist = popup.querySelector("#coolauxv-btn-manage-chat-persist");
         const inputChatEnterSend = popup.querySelector("#coolauxv-cfg-chat-enter-send");
+        const inputDebuggerPersistent = popup.querySelector("#coolauxv-cfg-debugger-persistent");
         const inputBasicAnim = popup.querySelector("#coolauxv-cfg-basic-anim");
         const inputMinimizeAnim = popup.querySelector("#coolauxv-cfg-minimize-anim");
         const inputAnimSpeed = popup.querySelector("#coolauxv-cfg-anim-speed");
@@ -5514,6 +5538,7 @@
             "coolauxv_enable_continuous_chat",
             "coolauxv_chat_history_persist",
             "coolauxv_chat_enter_send",
+            "coolauxv_enable_debugger_header_persistent",
             "coolauxv_enable_basic_anim",
             "coolauxv_enable_minimize_anim",
             "coolauxv_anim_speed",
@@ -11726,6 +11751,7 @@
             if (inputAppendContinuousChat) inputAppendContinuousChat.checked = GM_getValue("coolauxv_append_chat", false);
             if (inputChatHistoryPersist) inputChatHistoryPersist.checked = GM_getValue("coolauxv_chat_history_persist", DEFAULT_CHAT_HISTORY_PERSIST);
             if (inputChatEnterSend) inputChatEnterSend.checked = GM_getValue("coolauxv_chat_enter_send", DEFAULT_CHAT_ENTER_SEND);
+            if (inputDebuggerPersistent) inputDebuggerPersistent.checked = GM_getValue("coolauxv_enable_debugger_header_persistent", false);
 
             syncAllClearButtons();
         };
@@ -11774,6 +11800,9 @@
             }
             if (inputChatEnterSend) {
                 inputChatEnterSend.checked = GM_getValue("coolauxv_chat_enter_send", DEFAULT_CHAT_ENTER_SEND);
+            }
+            if (inputDebuggerPersistent) {
+                inputDebuggerPersistent.checked = GM_getValue("coolauxv_enable_debugger_header_persistent", false);
             }
             renderSelectionActionRadioGroup();
             renderMainActionButtons();
@@ -12279,6 +12308,12 @@
                 if (enabled) {
                     showModal("输入体验已变更", "已开启“回车键发送消息”：\nEnter 发送消息，Shift+Enter 换行。\n\n触屏用户注意：没外接键盘会导致无法正常换行。");
                 }
+            });
+        }
+        if (inputDebuggerPersistent) {
+            inputDebuggerPersistent.addEventListener("change", (e) => {
+                const enabled = e.target.checked;
+                GM_setValue("coolauxv_enable_debugger_header_persistent", enabled);
             });
         }
         if (inputBasicAnim) {

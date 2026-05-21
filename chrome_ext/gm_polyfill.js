@@ -311,7 +311,6 @@
 
   function waitForBridge() {
     if (!BRIDGE_ENABLED) {
-      startBridgePing(`${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`);
       return Promise.resolve(false);
     }
     if (bridgeReady) {
@@ -814,6 +813,18 @@
     } catch (err) {
       return false;
     }
+  };
+
+  const isOurPdfViewerContext = () => {
+    try {
+      return isExtensionPageContext() && typeof location !== "undefined" && location.href.includes("/pdfjs/web/viewer.html");
+    } catch (err) {
+      return false;
+    }
+  };
+
+  const isDebuggerPersistentModeEnabled = () => {
+    return !!GM_getValue("coolauxv_enable_debugger_header_persistent", false);
   };
 
   const GM_xmlhttpRequestWithDebugger = (options) => {

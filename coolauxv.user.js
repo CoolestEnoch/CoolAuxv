@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.4.2
+// @version      v16.4.3
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -224,6 +224,13 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.4.3
+        ## ✨ 新功能
+        *   支持覆写Header了
+        *   chromium插件支持在内置pdfjs里常驻debugger了，这样可以在发送自定义header的时候避免页面频繁跳动。
+        ## 🔧 问题修复
+        *   修复chromium插件无法弹出悬浮球的问题
+        ---
         v16.4.2
         ## ✨ 新功能
         *   油猴插件支持覆写Header了
