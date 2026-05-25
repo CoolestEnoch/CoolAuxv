@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.4.4
+// @version      v16.5
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -169,6 +169,7 @@
     const DEFAULT_PROVIDER = "zhipu";
     const DEFAULT_MODEL_PROVIDER = "zhipu";
     const PROVIDER_TEMPLATE_STORAGE_KEY = "coolauxv_provider_templates_v1";
+    const PROVIDER_SUBSCRIPTION_STORAGE_KEY = "coolauxv_provider_subscriptions_v1";
     const PROVIDER_SECRET_STORAGE_KEY = "coolauxv_provider_custom_secrets_v1";
     const LEGACY_PROVIDER_MIGRATION_FLAG = "coolauxv_legacy_provider_settings_migrated_v1";
     const PROVIDER_SHARE_VERSION = 1;
@@ -216,6 +217,43 @@
     const POPUP_ANIM_EASE_OUT = "cubic-bezier(0, 0, 0.2, 1)";
     const DEFAULT_ANIM_SPEED = 1;
 
+
+    const safeDecodeUrlText = (value) => {
+        let text = String(value || "").trim();
+        if (!text) return "";
+        for (let i = 0; i < 3; i += 1) {
+            try {
+                const decoded = decodeURIComponent(text);
+                if (!decoded || decoded === text) break;
+                text = decoded;
+            } catch (e) {
+                break;
+            }
+        }
+        return text;
+    };
+
+    const PDF_VIEWER_PATH_RE = /\/pdfjs\/web\/viewer\.html$/i;
+
+    const getViewerSourceUrl = () => {
+        try {
+            const current = new URL(location.href);
+            const isExtensionViewer = current.protocol === "chrome-extension:" && PDF_VIEWER_PATH_RE.test(current.pathname || "");
+            const isMozillaViewer = current.hostname === "mozilla.github.io" && /\/pdf\.js\/web\/viewer\.html$/i.test(current.pathname || "");
+            if (!isExtensionViewer && !isMozillaViewer) return "";
+            const source = current.searchParams.get("file") || current.searchParams.get("src") || current.searchParams.get("url") || "";
+            return safeDecodeUrlText(source);
+        } catch (e) {
+            return "";
+        }
+    };
+
+    const getCurrentDocumentInfoText = () => getViewerSourceUrl();
+
+    const getCurrentDocumentInfoTitle = (infoText) => {
+        return `原 PDF 链接：${infoText}\n点击复制`;
+    };
+
     const DEFAULT_ACTION_TEMPLATE_BASE64_LIST = [
         "eyJpZCI6InRyYW5zbGF0ZSIsImxhYmVsIjoi57+76K+RIiwic3lzdGVtUHJvbXB0Ijoi5L2g5piv5LiA5Liq57+76K+R5byV5pOO44CC5bCG55So5oi36L6T5YWl55u05o6l57+76K+R5oiQ5Lit5paH44CC5aaC5p6c6L6T5YWl5piv5Lit5paH5YiZ6K+R5Li66Iux5paH44CC5LiN6KaB6L6T5Ye65Lu75L2V5aSa5L2Z55qE6Kej6YeK44CCIiwiY29sb3IiOiJyZ2IoMjQ5LCAyNTAsIDI1MSkiLCJ2aXNpb25Qcm9tcHRPcmRlciI6ImFmdGVyIn0=",
         "eyJpZCI6ImV4cGxhaW4iLCJsYWJlbCI6Iuino+ivuyIsInN5c3RlbVByb21wdCI6IueUqOaIt+i+k+WFpeaWh+acrOWQju+8jOWFiOe/u+ivkeWFqOaWh++8muiLpemdnuS4reaWh+ivkeaIkOS4reaWh++8jOiLpeaYr+S4reaWh+ivkeaIkOiLseaWh++8jOS4uuiLseaWh+eugOWGmeeUqOaLrOWPt+agh+azqOWujOaVtOWGmeazleOAgueUqOaIt+aYr+i/meS4qumihuWfn+eahOaWsOaJi++8jOS9oOaYr+i/meS4qumihuWfn+eahOi1hOa3seS4k+WutuWFvOWkp+W4iO+8jOeEtuWQjuivpue7huino+ivu++8mueUqOmAmuS/l+S4reaWh+ino+mHiuaJgOacieS4k+S4muamguW/te+8jOavj+S4quamguW/teino+mHiuWJjeWFiOaYjuehruagh+azqOWOn+acr+ivre+8iOiLseaWh+eugOWGmemcgOWQjOaXtue7meWHuuWFqOensO+8iSzlpoLmnpzmnInlhazlvI/vvIzor7fnlKhsYXRleOagvOW8j+i+k+WHuuOAguino+ivu+imgeivpue7huWFqOmdou+8jOa2teebluWumuS5ieOAgeiDjOaZr+OAgeWOn+eQhuOAgeW6lOeUqOWSjOaEj+S5ieOAgui+k+WHuuS4uuaOkueJiOS4sOWvjOeahE1hcmtkb3du77yM6Zmk57+76K+R5aSW5YWo5paH6YO955So5Lit5paH5Zue562U77yM5LiN5YWB6K645oqK5YWo5paH6YO95pS+5ZyoY29kZWJsb2Nr6YeM44CCIiwiY29sb3IiOiJyZ2IoMTA5LCA0MCwgMjE3KSIsInZpc2lvblByb21wdE9yZGVyIjoiYmVmb3JlIn0=",
@@ -224,6 +262,12 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.5
+        ## ✨ 新功能
+        *   AI大模型提供商可以订阅形式导入了
+        ## 🔧 问题修复
+        *   修复chromium插件右上角的文档信息按钮消失的问题
+        ---
         v16.4.4
         ## 🔧 问题修复
         *   修复部分场景下出现的乱码输出问题
@@ -342,6 +386,7 @@
     };
 
     let providerTemplatesCache = null;
+    let providerSubscriptionsCache = null;
     let actionTemplatesCache = null;
     const MERMAID_RENDER_FAILED = Symbol("coolauxv_mermaid_render_failed");
     const chatMermaidSvgCache = new Map();
@@ -1273,6 +1318,9 @@
             customFields: customFields,
             customFieldMeta: customFieldMeta
         };
+        if (tpl.subscriptionId) {
+            normalized.subscriptionId = normalizeProviderId(tpl.subscriptionId);
+        }
         if (!normalized.id) return null;
         return normalized;
     };
@@ -1338,6 +1386,200 @@
         providerTemplatesCache = normalized;
         GM_setValue(PROVIDER_TEMPLATE_STORAGE_KEY, normalized);
         return normalized;
+    };
+
+
+    const normalizeProviderSubscriptions = (list) => {
+        if (!Array.isArray(list)) return [];
+        const result = [];
+        const seen = new Set();
+        list.forEach((item) => {
+            if (!item || typeof item !== "object") return;
+            const id = normalizeProviderId(item.id || item.name || `subscription-${Date.now().toString(36)}`);
+            const name = String(item.name || item.label || id || "订阅").trim();
+            const url = String(item.url || "").trim();
+            if (!id || !name || !url || seen.has(id)) return;
+            seen.add(id);
+            result.push({ id: id, name: name, url: url });
+        });
+        return result;
+    };
+
+    const loadProviderSubscriptions = () => {
+        let stored = null;
+        try {
+            stored = GM_getValue(PROVIDER_SUBSCRIPTION_STORAGE_KEY, null);
+        } catch (e) {
+            stored = null;
+        }
+        let subscriptions = null;
+        if (stored) {
+            try {
+                subscriptions = typeof stored === "string" ? JSON.parse(stored) : stored;
+            } catch (e) {
+                subscriptions = null;
+            }
+        }
+        providerSubscriptionsCache = normalizeProviderSubscriptions(subscriptions);
+        return providerSubscriptionsCache;
+    };
+
+    const getProviderSubscriptions = () => providerSubscriptionsCache || loadProviderSubscriptions();
+
+    const saveProviderSubscriptions = (list) => {
+        const normalized = normalizeProviderSubscriptions(list);
+        providerSubscriptionsCache = normalized;
+        GM_setValue(PROVIDER_SUBSCRIPTION_STORAGE_KEY, normalized);
+        return normalized;
+    };
+
+    const buildProviderSubscriptionId = (name, existingIds) => {
+        const used = existingIds || new Set(getProviderSubscriptions().map((item) => item.id));
+        const base = normalizeProviderId(`sub-${name || "provider"}`) || `sub-${Date.now().toString(36)}`;
+        let id = base;
+        let idx = 2;
+        while (used.has(id)) {
+            id = `${base}-${idx}`;
+            idx += 1;
+        }
+        return id;
+    };
+
+    const getDefaultProviderTemplateByImportId = (id) => {
+        const providerId = normalizeProviderId(id || "");
+        if (!providerId) return null;
+        return getDefaultProviderTemplates().find((tpl) => tpl && tpl.id === providerId) || null;
+    };
+
+    const mergeProviderDefaultsForImport = (raw) => {
+        if (!raw || typeof raw !== "object") return raw;
+        const providerId = normalizeProviderId(raw.id || "");
+        const sourceProviderId = normalizeProviderId(raw.sourceId || raw.templateId || "");
+        const base = getDefaultProviderTemplateByImportId(providerId) || getDefaultProviderTemplateByImportId(sourceProviderId);
+        if (!base) return raw;
+        const merge = (left, right) => {
+            if (!right || typeof right !== "object" || Array.isArray(right)) return cloneDeep(right);
+            const output = left && typeof left === "object" && !Array.isArray(left) ? cloneDeep(left) : {};
+            Object.keys(right).forEach((key) => {
+                const value = right[key];
+                output[key] = value && typeof value === "object" && !Array.isArray(value)
+                    ? merge(output[key], value)
+                    : cloneDeep(value);
+            });
+            return output;
+        };
+        return merge(base, raw);
+    };
+
+    const parseProviderExportPayload = (text) => {
+        const raw = String(text || "").trim();
+        if (!raw) return [];
+        let parsed = null;
+        const tryParseJson = (value) => {
+            try { return JSON.parse(value); } catch (e) { return null; }
+        };
+        parsed = tryParseJson(raw);
+        if (!parsed) {
+            try {
+                parsed = tryParseJson(decodeBase64Utf8(raw.replace(/\s+/g, "")));
+            } catch (e) {
+                parsed = null;
+            }
+        }
+        if (!parsed || typeof parsed !== "object") return [];
+        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed.providers)) return parsed.providers;
+        return [parsed];
+    };
+
+    const parseProviderSubscriptionTemplates = (text, subscriptionId) => {
+        const subId = normalizeProviderId(subscriptionId || "");
+        if (!subId) return [];
+        return parseProviderExportPayload(text)
+            .map((item) => {
+                const raw = mergeProviderDefaultsForImport(item);
+                if (!raw || typeof raw !== "object") return null;
+                const clone = cloneDeep(raw);
+                clone.subscriptionId = subId;
+                return ensureProviderTemplate(clone);
+            })
+            .filter(Boolean);
+    };
+
+    const fetchProviderSubscriptionText = (url) => new Promise((resolve, reject) => {
+        const requestUrl = String(url || "").trim();
+        if (!requestUrl) {
+            reject(new Error("订阅链接为空"));
+            return;
+        }
+        if (typeof GM_xmlhttpRequest === "function") {
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: requestUrl,
+                timeout: 30000,
+                onload: (res) => {
+                    const status = Number(res.status || 0);
+                    if (status >= 200 && status < 300) {
+                        resolve(String(res.responseText || ""));
+                    } else {
+                        reject(new Error(`订阅拉取失败：HTTP ${status || "未知"}`));
+                    }
+                },
+                onerror: () => reject(new Error("订阅拉取失败：网络错误")),
+                ontimeout: () => reject(new Error("订阅拉取失败：请求超时"))
+            });
+            return;
+        }
+        if (typeof fetch === "function") {
+            fetch(requestUrl, { method: "GET", cache: "no-store" })
+                .then((res) => {
+                    if (!res.ok) throw new Error(`订阅拉取失败：HTTP ${res.status}`);
+                    return res.text();
+                })
+                .then(resolve)
+                .catch(reject);
+            return;
+        }
+        reject(new Error("当前环境不支持网络请求"));
+    });
+
+    const replaceProviderSubscriptionTemplates = (subscriptionId, providerList) => {
+        const subId = normalizeProviderId(subscriptionId || "");
+        const nextProviders = Array.isArray(providerList) ? providerList.map((tpl) => {
+            const clone = cloneDeep(tpl);
+            clone.subscriptionId = subId;
+            return clone;
+        }).filter(Boolean) : [];
+        const others = getProviderTemplates().filter((tpl) => tpl.subscriptionId !== subId);
+        return sanitizeMaskedCustomFields(saveProviderTemplates(others.concat(nextProviders)));
+    };
+
+    const refreshProviderSubscription = async (subscriptionId) => {
+        const subId = normalizeProviderId(subscriptionId || "");
+        const sub = getProviderSubscriptions().find((item) => item.id === subId);
+        if (!sub) throw new Error("订阅不存在");
+        const text = await fetchProviderSubscriptionText(sub.url);
+        const providers = parseProviderSubscriptionTemplates(text, subId);
+        if (!providers.length && String(text || "").trim()) {
+            throw new Error("订阅内容解析失败");
+        }
+        replaceProviderSubscriptionTemplates(subId, providers);
+        return providers;
+    };
+
+    const addProviderSubscription = async (name, url) => {
+        const subName = String(name || "").trim();
+        const subUrl = String(url || "").trim();
+        if (!subName || !subUrl) throw new Error("请填写订阅名称和链接");
+        const subscriptions = getProviderSubscriptions();
+        const subId = buildProviderSubscriptionId(subName, new Set(subscriptions.map((item) => item.id)));
+        saveProviderSubscriptions(subscriptions.concat({ id: subId, name: subName, url: subUrl }));
+        try {
+            await refreshProviderSubscription(subId);
+        } catch (e) {
+            replaceProviderSubscriptionTemplates(subId, []);
+        }
+        return subId;
     };
 
     const getProviderTemplateById = (id) => {
@@ -2180,6 +2422,28 @@
     .coolauxv-ctrl-btn { padding: 0 4px; font-size: 18px; color: #666; cursor: pointer; transition: color 0.2s; line-height: 1; }
     .coolauxv-ctrl-btn:hover { color: #3b82f6; }
     #coolauxv-quit:hover { color: #ef4444; }
+
+    #coolauxv-doc-origin-info {
+        display: none;
+        align-items: center;
+        justify-content: center;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 1px solid #cbd5e1;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1;
+        color: #475569;
+        background: #fff;
+        padding: 0;
+        font-family: Georgia, serif;
+    }
+    #coolauxv-doc-origin-info:hover {
+        color: #1d4ed8;
+        border-color: #93c5fd;
+        background: #eff6ff;
+    }
     #coolauxv-settings-btn {
         display: inline-flex;
         align-items: center;
@@ -4958,6 +5222,7 @@
                 </div>
               </div>
               <div style="display:flex; gap:6px; align-items:center;">
+                <span id="coolauxv-doc-origin-info" class="coolauxv-ctrl-btn" data-no-drag="true" title="点击复制当前文档信息">i</span>
                 <span id="coolauxv-quit" class="coolauxv-ctrl-btn" title="退出">⏻</span>
                 <span id="coolauxv-min" class="coolauxv-ctrl-btn" title="最小化">－</span>
                 <span id="coolauxv-close" class="coolauxv-ctrl-btn" title="关闭">×</span>
@@ -5502,6 +5767,7 @@
             "coolauxv_default_provider",
             "coolauxv_model_provider",
             PROVIDER_TEMPLATE_STORAGE_KEY,
+            PROVIDER_SUBSCRIPTION_STORAGE_KEY,
             ACTION_TEMPLATE_STORAGE_KEY,
             "coolauxv_zhipu_api_key",
             "coolauxv_openai_api_key",
@@ -5567,6 +5833,7 @@
             CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
             LEGACY_CONFIG_KEYS.forEach((key) => GM_deleteValue(key));
             GM_deleteValue(PROVIDER_SECRET_STORAGE_KEY);
+            GM_deleteValue(PROVIDER_SUBSCRIPTION_STORAGE_KEY);
             GM_deleteValue(CHAT_QUEUE_STORAGE_KEY);
         };
 
@@ -8365,6 +8632,7 @@
                 chatQueuePersistBootstrapped = true;
             }
             providerTemplatesCache = null;
+            providerSubscriptionsCache = null;
             actionTemplatesCache = null;
             migrateLegacyProviderSettings(loadProviderTemplates());
             const resolvedActionId = resolveActionTemplateId(
@@ -8428,6 +8696,7 @@
             }
         };
         const providerSectionStates = new Map();
+        const providerSubscriptionSectionStates = new Map();
         let isProviderBatchMode = false;
         const selectedProviderIds = new Set();
         const actionSectionStates = new Map();
@@ -8690,9 +8959,15 @@
                 const toggle = providerSectionsContainer.querySelector(`[data-provider-toggle="${providerId}"]`);
                 if (toggle) toggle.textContent = isSectionExpanded(section) ? "收起" : "展开";
             });
+            providerSectionsContainer.querySelectorAll("[data-subscription-section]").forEach((section) => {
+                const subId = section.dataset.subscriptionSection;
+                const toggle = providerSectionsContainer.querySelector(`[data-subscription-toggle="${subId}"]`);
+                if (toggle) toggle.textContent = isSectionExpanded(section) ? "收起" : "展开";
+            });
             if (!btnToggleProviderAll) return;
-            if (!sections.length) return;
-            const allExpanded = sections.every((section) => isSectionExpanded(section));
+            const allSections = Array.from(providerSectionsContainer.querySelectorAll("[data-provider-section], [data-subscription-section]"));
+            if (!allSections.length) return;
+            const allExpanded = allSections.every((section) => isSectionExpanded(section));
             btnToggleProviderAll.textContent = allExpanded ? "收起全部" : "展开全部";
         };
 
@@ -8707,6 +8982,17 @@
                     providerSectionStates.delete(id);
                 }
             });
+            const subscriptions = getProviderSubscriptions();
+            subscriptions.forEach((sub) => {
+                if (!providerSubscriptionSectionStates.has(sub.id)) {
+                    providerSubscriptionSectionStates.set(sub.id, true);
+                }
+            });
+            Array.from(providerSubscriptionSectionStates.keys()).forEach((id) => {
+                if (!subscriptions.some((sub) => sub.id === id)) {
+                    providerSubscriptionSectionStates.delete(id);
+                }
+            });
         };
 
         const applyProviderSectionStates = () => {
@@ -8715,6 +9001,11 @@
                 const providerId = section.dataset.providerSection;
                 const expanded = providerSectionStates.get(providerId);
                 setSectionStateInstant(section, !!expanded);
+            });
+            providerSectionsContainer.querySelectorAll("[data-subscription-section]").forEach((section) => {
+                const subId = section.dataset.subscriptionSection;
+                const expanded = providerSubscriptionSectionStates.get(subId);
+                setSectionStateInstant(section, expanded !== false);
             });
             updateProviderToggleLabels();
         };
@@ -8874,6 +9165,7 @@
                 <div style="display:flex; gap:8px; margin-bottom:10px;">
                     <button type="button" id="coolauxv-provider-mode-manual" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">手动填写</button>
                     <button type="button" id="coolauxv-provider-mode-base64" class="coolauxv-action-btn" style="flex:1;">Base64 导入</button>
+                    ${mode === "add" ? `<button type="button" id="coolauxv-provider-mode-subscription" class="coolauxv-action-btn" style="flex:1;">订阅链接</button>` : ""}
                 </div>
                 <div id="coolauxv-provider-form-body" style="flex:1; overflow-y:auto; padding-right:4px;">
                     <div id="coolauxv-provider-form-manual" style="display:flex; flex-direction:column; gap:10px;">
@@ -9030,6 +9322,14 @@
                         <textarea id="coolauxv-provider-form-base64-input" class="coolauxv-setting-input coolauxv-resizable-input" rows="5" placeholder="粘贴分享/导出的 Base64..."></textarea>
                         <div style="font-size:11px; color:#888; margin-top:6px;">支持分享导出的文本、数组或单个提供商对象。</div>
                     </div>
+
+                    <div id="coolauxv-provider-form-subscription" style="display:none; flex-direction:column; gap:10px;">
+                        <div class="coolauxv-sub-label">订阅名称</div>
+                        <input type="text" id="coolauxv-provider-subscription-name" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="例如：团队共享提供商">
+                        <div class="coolauxv-sub-label">订阅链接</div>
+                        <input type="text" id="coolauxv-provider-subscription-url" class="coolauxv-setting-input coolauxv-fixed-input" placeholder="https://...">
+                        <div style="font-size:11px; color:#888; margin-top:2px;">链接内容应为提供商导出的原文。首次拉取失败也会保留空订阅分组。</div>
+                    </div>
                 </div>
                 <div style="display:flex; gap:10px; margin-top:12px;">
                     <button type="button" id="coolauxv-provider-modal-cancel" class="coolauxv-action-btn" style="flex:1;">取消</button>
@@ -9054,8 +9354,10 @@
 
             const btnManual = box.querySelector("#coolauxv-provider-mode-manual");
             const btnBase64 = box.querySelector("#coolauxv-provider-mode-base64");
+            const btnSubscription = box.querySelector("#coolauxv-provider-mode-subscription");
             const manualSection = box.querySelector("#coolauxv-provider-form-manual");
             const base64Section = box.querySelector("#coolauxv-provider-form-base64");
+            const subscriptionSection = box.querySelector("#coolauxv-provider-form-subscription");
             const labelInput = box.querySelector("#coolauxv-provider-form-label");
             const idInput = box.querySelector("#coolauxv-provider-form-id");
             const idWarning = box.querySelector("#coolauxv-provider-id-warning");
@@ -9068,6 +9370,8 @@
             const cancelBtn = box.querySelector("#coolauxv-provider-modal-cancel");
             const submitBtn = box.querySelector("#coolauxv-provider-modal-submit");
             const base64Input = box.querySelector("#coolauxv-provider-form-base64-input");
+            const subscriptionNameInput = box.querySelector("#coolauxv-provider-subscription-name");
+            const subscriptionUrlInput = box.querySelector("#coolauxv-provider-subscription-url");
             const modelGroupContainer = box.querySelector("#coolauxv-provider-form-model-groups");
             const addGroupBtn = box.querySelector("#coolauxv-provider-add-group");
             const customFieldContainer = box.querySelector("#coolauxv-provider-form-custom-fields");
@@ -9098,8 +9402,10 @@
                 modeTab = nextMode;
                 if (manualSection) manualSection.style.display = modeTab === "manual" ? "block" : "none";
                 if (base64Section) base64Section.style.display = modeTab === "base64" ? "block" : "none";
+                if (subscriptionSection) subscriptionSection.style.display = modeTab === "subscription" ? "flex" : "none";
                 if (btnManual) btnManual.classList.toggle("coolauxv-btn-primary", modeTab === "manual");
                 if (btnBase64) btnBase64.classList.toggle("coolauxv-btn-primary", modeTab === "base64");
+                if (btnSubscription) btnSubscription.classList.toggle("coolauxv-btn-primary", modeTab === "subscription");
                 updateProviderIdState();
             };
 
@@ -9319,6 +9625,7 @@
 
             if (btnManual) btnManual.onclick = () => setMode("manual");
             if (btnBase64) btnBase64.onclick = () => setMode("base64");
+            if (btnSubscription) btnSubscription.onclick = () => setMode("subscription");
             if (closeBtn) closeBtn.onclick = closeModal;
             if (cancelBtn) cancelBtn.onclick = closeModal;
             overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
@@ -9381,6 +9688,30 @@
 
             if (submitBtn) {
                 submitBtn.onclick = () => {
+                    if (modeTab === "subscription") {
+                        const subName = subscriptionNameInput ? subscriptionNameInput.value.trim() : "";
+                        const subUrl = subscriptionUrlInput ? subscriptionUrlInput.value.trim() : "";
+                        if (!subName || !subUrl) {
+                            alert("请填写订阅名称和链接。");
+                            return;
+                        }
+                        submitBtn.disabled = true;
+                        submitBtn.textContent = "拉取中...";
+                        addProviderSubscription(subName, subUrl)
+                            .then(() => {
+                                renderProviderUI();
+                                closeModal();
+                            })
+                            .catch((err) => {
+                                alert(err && err.message ? err.message : "订阅添加失败。");
+                            })
+                            .finally(() => {
+                                submitBtn.disabled = false;
+                                submitBtn.textContent = submitText;
+                            });
+                        return;
+                    }
+
                     if (modeTab === "base64") {
                         const raw = (base64Input && base64Input.value || "").trim();
                         if (!raw) {
@@ -9558,9 +9889,7 @@
             }).join("");
         };
 
-        const renderProviderSections = (templates) => {
-            if (!providerSectionsContainer) return;
-            providerSectionsContainer.innerHTML = templates.map((provider) => {
+        const renderProviderSectionHtml = (provider) => {
                 const sectionId = `coolauxv-provider-section-${provider.id}`;
                 const keyInputId = `coolauxv-provider-key-${provider.id}`;
                 const typeLabel = getProviderTypeLabel(provider.type);
@@ -9743,7 +10072,49 @@
                         </div>
                     </div>
                 `;
+        };
+
+        const renderProviderSections = (templates) => {
+            if (!providerSectionsContainer) return;
+            const subscriptions = getProviderSubscriptions();
+            const subscriptionMap = new Map(subscriptions.map((item) => [item.id, item]));
+            const plainProviders = [];
+            const grouped = new Map();
+            templates.forEach((provider) => {
+                const subId = normalizeProviderId(provider.subscriptionId || "");
+                if (subId && subscriptionMap.has(subId)) {
+                    if (!grouped.has(subId)) grouped.set(subId, []);
+                    grouped.get(subId).push(provider);
+                } else {
+                    plainProviders.push(provider);
+                }
+            });
+            const plainHtml = plainProviders.map(renderProviderSectionHtml).join("");
+            const groupedHtml = subscriptions.map((sub) => {
+                const providers = grouped.get(sub.id) || [];
+                const providerHtml = providers.length
+                    ? providers.map(renderProviderSectionHtml).join("")
+                    : `<div style="font-size:12px; color:#999; padding:8px 2px;">该订阅暂无提供商。</div>`;
+                return `
+                    <div class="coolauxv-setting-group coolauxv-provider-subscription-group" data-subscription-id="${escapeAttr(sub.id)}">
+                        <label class="coolauxv-setting-label">
+                            <span class="coolauxv-provider-title">${escapeAttr(sub.name)}</span>
+                            <span class="coolauxv-provider-subtitle">订阅 · ${providers.length} 个提供商</span>
+                            <span class="coolauxv-link-btn" data-subscription-toggle="${escapeAttr(sub.id)}" style="margin-left:auto; cursor:pointer; user-select:none;">收起</span>
+                            <span class="coolauxv-link-btn" data-action="refresh-subscription" data-subscription-id="${escapeAttr(sub.id)}" style="cursor:pointer; user-select:none;">刷新</span>
+                            <span class="coolauxv-link-btn" data-action="edit-subscription" data-subscription-id="${escapeAttr(sub.id)}" style="cursor:pointer; user-select:none;">编辑设置</span>
+                        </label>
+                        <div class="coolauxv-collapse-section" data-subscription-section="${escapeAttr(sub.id)}">
+                            <div style="display:flex; gap:8px; justify-content:flex-end; margin:0 0 8px;">
+                                <button type="button" class="coolauxv-action-btn" data-action="share-subscription" data-subscription-id="${escapeAttr(sub.id)}" style="padding:4px 8px;">导出分享</button>
+                                <button type="button" class="coolauxv-action-btn" data-action="delete-subscription" data-subscription-id="${escapeAttr(sub.id)}" style="padding:4px 8px; background:#ffe4e6; color:#b91c1c; border-color:#fecdd3;">删除订阅</button>
+                            </div>
+                            ${providerHtml}
+                        </div>
+                    </div>
+                `;
             }).join("");
+            providerSectionsContainer.innerHTML = plainHtml + groupedHtml;
         };
 
         const renderModelProviderSelect = (templates, fallbackProviderId) => {
@@ -9887,6 +10258,113 @@
             if (modelSectionsContainer) {
                 modelSectionsContainer.querySelectorAll("[data-clearable=\"true\"]").forEach((input) => attachClearButton(input));
             }
+        };
+
+        const copyProviderSharePayload = (providerList) => {
+            if (!Array.isArray(providerList) || !providerList.length) {
+                alert("没有可导出的提供商。");
+                return;
+            }
+            const includePrivacy = confirm("分享配置是否包含隐私信息（如 API KEY、打码字段）？\n确定=包含，取消=不包含");
+            const secrets = loadProviderSecretStore();
+            const usedProviderShareIds = new Set();
+            const templates = providerList.map((tpl, index) => {
+                const clone = cloneDeep(tpl);
+                delete clone.subscriptionId;
+                if (!includePrivacy) {
+                    clone.apiKey = "";
+                }
+                if (clone.customFields) {
+                    const meta = getCustomFieldMetaMap(clone);
+                    const secretValues = secrets[tpl.id] && typeof secrets[tpl.id] === "object" ? secrets[tpl.id] : {};
+                    Object.keys(clone.customFields).forEach((key) => {
+                        if (meta[key] && meta[key].masked) {
+                            clone.customFields[key] = includePrivacy && secretValues[key] !== undefined && secretValues[key] !== null
+                                ? String(secretValues[key])
+                                : "";
+                        }
+                    });
+                }
+                const compacted = compactProviderTemplate(clone);
+                return buildShareTemplateWithHashedId(compacted, "provider", String(index), usedProviderShareIds);
+            });
+            const sharePayload = pruneEmptyValues({ version: PROVIDER_SHARE_VERSION, providers: templates });
+            const payload = encodeBase64(JSON.stringify(sharePayload));
+            if (!payload) {
+                alert("分享失败，请稍后重试。");
+                return;
+            }
+            if (typeof GM_setClipboard !== "undefined") {
+                GM_setClipboard(payload, "text");
+                alert("已生成分享文本并复制到剪贴板。");
+            } else {
+                prompt("分享文本已生成，请复制：", payload);
+            }
+        };
+
+        const openProviderSubscriptionSettingsModal = (subscriptionId) => {
+            const subId = normalizeProviderId(subscriptionId || "");
+            const sub = getProviderSubscriptions().find((item) => item.id === subId);
+            if (!sub) return;
+            const existingOverlay = document.getElementById("coolauxv-provider-subscription-modal-overlay");
+            if (existingOverlay && existingOverlay.parentNode) existingOverlay.parentNode.removeChild(existingOverlay);
+            const overlay = document.createElement("div");
+            overlay.id = "coolauxv-provider-subscription-modal-overlay";
+            Object.assign(overlay.style, {
+                position: "fixed", top: "0", left: "0", width: "100vw", height: "100vh",
+                background: "rgba(0,0,0,0.5)", zIndex: "2147483661", display: "flex",
+                justifyContent: "center", alignItems: "center", backdropFilter: "blur(4px)",
+                opacity: "0", transition: "opacity 0.2s"
+            });
+            const box = document.createElement("div");
+            Object.assign(box.style, {
+                background: "#fff", width: "480px", maxWidth: "92%", padding: "18px", borderRadius: "12px",
+                boxShadow: "0 10px 30px rgba(0,0,0,0.3)", transform: "scale(0.96)", transition: "transform 0.2s"
+            });
+            box.innerHTML = `
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:10px;">
+                    <div style="font-size:18px; font-weight:800; color:#a516e8;">编辑订阅设置</div>
+                    <button type="button" id="coolauxv-provider-subscription-close" class="coolauxv-ctrl-btn" title="关闭">×</button>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <div class="coolauxv-sub-label">订阅名称</div>
+                    <input type="text" id="coolauxv-provider-subscription-edit-name" class="coolauxv-setting-input coolauxv-fixed-input" value="${escapeAttr(sub.name)}">
+                    <div class="coolauxv-sub-label">订阅链接</div>
+                    <input type="text" id="coolauxv-provider-subscription-edit-url" class="coolauxv-setting-input coolauxv-fixed-input" value="${escapeAttr(sub.url)}">
+                </div>
+                <div style="display:flex; gap:10px; margin-top:12px;">
+                    <button type="button" id="coolauxv-provider-subscription-cancel" class="coolauxv-action-btn" style="flex:1;">取消</button>
+                    <button type="button" id="coolauxv-provider-subscription-submit" class="coolauxv-action-btn coolauxv-btn-primary" style="flex:1;">保存</button>
+                </div>
+            `;
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+            requestAnimationFrame(() => { overlay.style.opacity = "1"; box.style.transform = "scale(1)"; });
+            const closeModal = () => {
+                overlay.style.opacity = "0";
+                box.style.transform = "scale(0.96)";
+                setTimeout(() => { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 200);
+            };
+            const submit = box.querySelector("#coolauxv-provider-subscription-submit");
+            if (submit) submit.addEventListener("click", () => {
+                const nameInput = box.querySelector("#coolauxv-provider-subscription-edit-name");
+                const urlInput = box.querySelector("#coolauxv-provider-subscription-edit-url");
+                const name = nameInput ? nameInput.value.trim() : "";
+                const url = urlInput ? urlInput.value.trim() : "";
+                if (!name || !url) {
+                    alert("请填写订阅名称和链接。");
+                    return;
+                }
+                const next = getProviderSubscriptions().map((item) => item.id === subId ? { id: item.id, name: name, url: url } : item);
+                saveProviderSubscriptions(next);
+                renderProviderUI();
+                closeModal();
+            });
+            const closeBtn = box.querySelector("#coolauxv-provider-subscription-close");
+            const cancelBtn = box.querySelector("#coolauxv-provider-subscription-cancel");
+            if (closeBtn) closeBtn.addEventListener("click", closeModal);
+            if (cancelBtn) cancelBtn.addEventListener("click", closeModal);
+            overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
         };
 
         const renderProviderUI = () => {
@@ -10613,6 +11091,7 @@
                 const dragItem = Array.from(providerSectionsContainer.querySelectorAll("[data-sort-kind=\"provider\"]"))
                     .find((item) => item.dataset.providerId === draggingProviderId);
                 if (!dragItem || dragItem === overItem) return;
+                if (dragItem.parentNode !== overItem.parentNode) return;
                 const rect = overItem.getBoundingClientRect();
                 const shouldInsertBefore = e.clientY < (rect.top + rect.height / 2);
                 const noPositionChange = shouldInsertBefore
@@ -10692,10 +11171,62 @@
                     target.innerText = shouldShow ? "🔒 隐藏" : "👁️ 显示";
                     return;
                 }
+                if (action === "refresh-subscription") {
+                    const subId = target.dataset.subscriptionId;
+                    if (!subId) return;
+                    const oldText = target.textContent;
+                    target.textContent = "刷新中...";
+                    refreshProviderSubscription(subId)
+                        .then(() => {
+                            renderProviderUI();
+                            alert("订阅已刷新。");
+                        })
+                        .catch((err) => {
+                            target.textContent = oldText;
+                            alert(err && err.message ? err.message : "订阅刷新失败，已保留原状态。");
+                        });
+                    return;
+                }
+                if (action === "edit-subscription") {
+                    const subId = target.dataset.subscriptionId;
+                    if (!subId) return;
+                    openProviderSubscriptionSettingsModal(subId);
+                    return;
+                }
+                if (action === "share-subscription") {
+                    const subId = target.dataset.subscriptionId;
+                    if (!subId) return;
+                    copyProviderSharePayload(getProviderTemplates().filter((tpl) => tpl.subscriptionId === subId));
+                    return;
+                }
+                if (action === "delete-subscription") {
+                    const subId = target.dataset.subscriptionId;
+                    if (!subId) return;
+                    if (!confirm("确定要删除该订阅及其提供商吗？")) return;
+                    saveProviderSubscriptions(getProviderSubscriptions().filter((item) => item.id !== subId));
+                    const removed = getProviderTemplates().filter((tpl) => tpl.subscriptionId === subId);
+                    let nextTemplates = getProviderTemplates().filter((tpl) => tpl.subscriptionId !== subId);
+                    if (!nextTemplates.length) nextTemplates = getDefaultProviderTemplates();
+                    saveProviderTemplates(nextTemplates);
+                    removed.forEach((tpl) => clearProviderSecretFields(tpl.id));
+                    selectedProviderIds.clear();
+                    renderProviderUI();
+                    return;
+                }
                 if (action === "edit-provider") {
                     const providerId = target.dataset.providerId;
                     if (!providerId) return;
                     openProviderModal({ mode: "edit", providerId: providerId });
+                    return;
+                }
+                const subscriptionToggleId = target.dataset.subscriptionToggle;
+                if (subscriptionToggleId) {
+                    const section = providerSectionsContainer.querySelector(`[data-subscription-section="${subscriptionToggleId}"]`);
+                    if (!section) return;
+                    const shouldExpand = !isSectionExpanded(section);
+                    providerSubscriptionSectionStates.set(subscriptionToggleId, shouldExpand);
+                    setSectionAnimatedVisibility(section, shouldExpand);
+                    updateProviderToggleLabels();
                     return;
                 }
                 const toggleId = target.dataset.providerToggle;
@@ -10958,6 +11489,7 @@
                 const dragItem = Array.from(actionSectionsContainer.querySelectorAll("[data-sort-kind=\"action\"]"))
                     .find((item) => item.dataset.actionId === draggingActionId);
                 if (!dragItem || dragItem === overItem) return;
+                if (dragItem.parentNode !== overItem.parentNode) return;
                 const rect = overItem.getBoundingClientRect();
                 const shouldInsertBefore = e.clientY < (rect.top + rect.height / 2);
                 const noPositionChange = shouldInsertBefore
@@ -11177,47 +11709,7 @@
                     alert("请先选择要分享的提供商。");
                     return;
                 }
-                const includePrivacy = confirm("分享配置是否包含隐私信息（如 API KEY、打码字段）？\n确定=包含，取消=不包含");
-                const secrets = loadProviderSecretStore();
-                const usedProviderShareIds = new Set();
-                const templates = getProviderTemplates()
-                    .filter((tpl) => selectedProviderIds.has(tpl.id))
-                    .map((tpl, index) => {
-                        const clone = cloneDeep(tpl);
-                        if (!includePrivacy) {
-                            clone.apiKey = "";
-                        }
-                        if (clone.customFields) {
-                            const meta = getCustomFieldMetaMap(clone);
-                            const secretValues = secrets[clone.id] && typeof secrets[clone.id] === "object" ? secrets[clone.id] : {};
-                            Object.keys(clone.customFields).forEach((key) => {
-                                if (meta[key] && meta[key].masked) {
-                                    if (includePrivacy) {
-                                        const secretVal = secretValues[key];
-                                        clone.customFields[key] = secretVal !== undefined && secretVal !== null
-                                            ? String(secretVal)
-                                            : "";
-                                    } else {
-                                        clone.customFields[key] = "";
-                                    }
-                                }
-                            });
-                        }
-                        const compacted = compactProviderTemplate(clone);
-                        return buildShareTemplateWithHashedId(compacted, "provider", String(index), usedProviderShareIds);
-                    });
-                const sharePayload = pruneEmptyValues({ version: PROVIDER_SHARE_VERSION, providers: templates });
-                const payload = encodeBase64(JSON.stringify(sharePayload));
-                if (!payload) {
-                    alert("分享失败，请稍后重试。");
-                    return;
-                }
-                if (typeof GM_setClipboard !== "undefined") {
-                    GM_setClipboard(payload, "text");
-                    alert("已生成分享文本并复制到剪贴板。");
-                } else {
-                    prompt("分享文本已生成，请复制：", payload);
-                }
+                copyProviderSharePayload(getProviderTemplates().filter((tpl) => selectedProviderIds.has(tpl.id)));
             });
         }
 
@@ -11242,13 +11734,17 @@
         if (btnToggleProviderAll) {
             btnToggleProviderAll.addEventListener("click", () => {
                 if (!providerSectionsContainer) return;
-                const sections = Array.from(providerSectionsContainer.querySelectorAll("[data-provider-section]"));
+                const sections = Array.from(providerSectionsContainer.querySelectorAll("[data-provider-section], [data-subscription-section]"));
                 if (!sections.length) return;
                 const allExpanded = sections.every((section) => isSectionExpanded(section));
                 sections.forEach((section) => {
-                    const providerId = section.dataset.providerSection;
                     const nextState = !allExpanded;
-                    providerSectionStates.set(providerId, nextState);
+                    if (section.dataset.providerSection) {
+                        providerSectionStates.set(section.dataset.providerSection, nextState);
+                    }
+                    if (section.dataset.subscriptionSection) {
+                        providerSubscriptionSectionStates.set(section.dataset.subscriptionSection, nextState);
+                    }
                     setSectionAnimatedVisibility(section, nextState);
                 });
                 updateProviderToggleLabels();
@@ -11688,6 +12184,7 @@
 
         const loadConfig = () => {
             providerTemplatesCache = null;
+            providerSubscriptionsCache = null;
             actionTemplatesCache = null;
             renderProviderUI();
             renderActionUI();
@@ -12235,6 +12732,7 @@
             if (confirm("确定要重置所有配置吗？\n所有自定义设置将恢复为默认值。")) {
                 clearAllStoredKeys();
                 GM_deleteValue("coolauxv_installed_version"); // 重置更新状态
+                saveProviderSubscriptions([]);
                 saveProviderTemplates(getDefaultProviderTemplates());
                 saveActionTemplates(getDefaultActionTemplates());
                 refreshConfigUI();
@@ -14478,6 +14976,7 @@
         const minBtn = popup.querySelector("#coolauxv-min");
         const closeBtn = popup.querySelector("#coolauxv-close");
         const quitBtn = popup.querySelector("#coolauxv-quit");
+        const docOriginInfoBtn = popup.querySelector("#coolauxv-doc-origin-info");
         const rawToggle = popup.querySelector("#coolauxv-raw-toggle");
         const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle");
         const mainActionButtons = popup.querySelector("#coolauxv-main-action-buttons");
@@ -14497,6 +14996,39 @@
         if (minBtn) minBtn.onclick = minimizeWindow;
         if (closeBtn) closeBtn.onclick = closeWindow;
         if (quitBtn) quitBtn.onclick = quitScript;
+        if (docOriginInfoBtn) {
+            const updateDocInfoTitle = () => {
+                const infoText = getCurrentDocumentInfoText();
+                docOriginInfoBtn.style.display = infoText ? "inline-flex" : "none";
+                docOriginInfoBtn.title = infoText ? getCurrentDocumentInfoTitle(infoText) : "";
+                return infoText;
+            };
+            updateDocInfoTitle();
+            docOriginInfoBtn.addEventListener("mouseenter", updateDocInfoTitle);
+            docOriginInfoBtn.onclick = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const infoText = updateDocInfoTitle();
+                if (!infoText) return;
+                let copied = false;
+                try {
+                    if (typeof GM_setClipboard === "function") {
+                        GM_setClipboard(infoText, "text");
+                        copied = true;
+                    } else if (navigator.clipboard && navigator.clipboard.writeText) {
+                        await navigator.clipboard.writeText(infoText);
+                        copied = true;
+                    }
+                } catch (err) {
+                    Logger.error("复制当前文档信息失败:", err);
+                }
+                const originalText = docOriginInfoBtn.textContent || "i";
+                docOriginInfoBtn.textContent = copied ? "✓" : "!";
+                setTimeout(() => {
+                    docOriginInfoBtn.textContent = originalText;
+                }, 1200);
+            };
+        }
 
         if (rawToggle) rawToggle.onchange = (e) => {
             isShowRaw = e.target.checked;
