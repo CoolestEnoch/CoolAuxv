@@ -728,7 +728,6 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
     }
   });
 
-  console.log("[CoolAuxv] debugger: intercepted request, injecting forbidden headers:", Object.keys(pending.forbiddenHeaders));
   log("debug", "Injecting forbidden headers via debugger", {
     debugId,
     url: params.request.url,
@@ -762,16 +761,16 @@ chrome.runtime.onConnect.addListener((port) => {
     if (msg.type !== "setup") return;
 
     tabId = port.sender && port.sender.tab ? port.sender.tab.id : null;
-    console.log("[CoolAuxv] debugger setup: tabId=", tabId, "hasDebugger=", !!chrome.debugger);
+    log("debug", "debugger setup", { tabId, hasDebugger: !!chrome.debugger });
 
     if (!tabId) {
-      console.error("[CoolAuxv] debugger: no tab id from sender");
+      log("error", "debugger: no tab id from sender");
       port.postMessage({ type: "error", message: "no tab id" });
       return;
     }
 
     if (!chrome.debugger) {
-      console.error("[CoolAuxv] debugger: chrome.debugger API not available. Check chrome://extensions — 'debugger' permission may not be granted");
+      log("error", "debugger API not available; check debugger permission");
       port.postMessage({ type: "error", message: "debugger API not available" });
       return;
     }
@@ -786,12 +785,16 @@ chrome.runtime.onConnect.addListener((port) => {
     });
 
     try {
-      console.log("[CoolAuxv] debugger: attempting attach to tab", tabId);
+      log("debug", "debugger: attempting attach to tab", { tabId });
       await attachTabDebugger(tabId, persistent);
-      console.log("[CoolAuxv] debugger: attach OK, Fetch.enable done");
+      log("debug", "debugger: attach OK, Fetch.enable done", { tabId, persistent });
       port.postMessage({ type: "debugger_ready", debugId });
     } catch (err) {
-      console.error("[CoolAuxv] debugger: attach FAILED:", err.message, err.stack);
+      log("error", "debugger: attach FAILED", {
+        tabId,
+        message: err && err.message ? err.message : "",
+        stack: err && err.stack ? err.stack : ""
+      });
       pendingDebuggerRequests.delete(debugId);
       port.postMessage({ type: "error", message: err.message || "debugger attach failed" });
     }

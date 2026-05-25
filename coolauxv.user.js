@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.4.3
+// @version      v16.4.4
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -224,6 +224,10 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.4.4
+        ## 🔧 问题修复
+        *   修复部分场景下出现的乱码输出问题
+        ---
         v16.4.3
         ## ✨ 新功能
         *   支持覆写Header了
@@ -13111,7 +13115,7 @@
 
     function appendReasoningChunk(reasoningChunk) {
         if (reasoningChunk === undefined || reasoningChunk === null) return;
-        const text = String(reasoningChunk);
+        const text = repairUtf8Mojibake(String(reasoningChunk));
         if (!text) return;
         if (!hasReasoning) {
             hasReasoning = true;
@@ -13123,7 +13127,7 @@
 
     function appendContentChunk(contentChunk, isChatMode) {
         if (contentChunk === undefined || contentChunk === null) return;
-        const text = String(contentChunk);
+        const text = repairUtf8Mojibake(String(contentChunk));
         if (!text) return;
         const isFirstContentChunk = isChatMode ? chatAssistantBuffer.length === 0 : streamTextBuffer.length === 0;
         if (isFirstContentChunk && hasReasoning) {
@@ -13159,7 +13163,7 @@
     function parseContentChunkByReasoningTag(template, rawChunk) {
         const streamCfg = resolveTemplateStreamConfig(template);
         const reasoningTag = streamCfg && streamCfg.reasoningTag ? String(streamCfg.reasoningTag).trim().toLowerCase() : "";
-        const rawText = rawChunk === undefined || rawChunk === null ? "" : String(rawChunk);
+        const rawText = rawChunk === undefined || rawChunk === null ? "" : repairUtf8Mojibake(String(rawChunk));
         const parser = streamCfg && streamCfg.parser ? String(streamCfg.parser).trim().toLowerCase() : "";
         const lowerText = rawText.toLowerCase();
         const hasThinkToken = lowerText.includes("<think>")
@@ -15324,7 +15328,8 @@
         const canRetrySingleActionGmRequest = () => {
             if (gmAttemptIndex >= gmRequestAttempts.length - 1) return false;
             if (streamTextBuffer.length > 0 || streamReasoningBuffer.length > 0) return false;
-            if (gmRawText.trim()) return false;
+            const raw = gmRawText.trim();
+            if (raw && raw !== "[DONE]") return false;
             return true;
         };
 
@@ -15455,6 +15460,12 @@
 
                         const fullText = res.responseText || (typeof res.response === 'string' ? res.response : "");
                         logAiRawResponse(provider, config.modelName, resolvedActionId, fullText);
+
+                        if (currentAttempt.label === "stream-fetch" && (!res.response || !res.response.getReader) && (!fullText.trim() || fullText.trim() === "[DONE]")) {
+                            if (retrySingleActionGmRequest("stream-unavailable", { status: res.status, statusText: res.statusText, responseText: fullText })) {
+                                return;
+                            }
+                        }
 
                         if (res.status === 401 || res.status === 403) {
                             if (!shouldSuppressResultError()) {
@@ -15733,8 +15744,38 @@
         }
     }
 
+    function countCjkChars(text) {
+        const match = String(text || "").match(/[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/g);
+        return match ? match.length : 0;
+    }
+
+    function countMojibakeChars(text) {
+        const match = String(text || "").match(/[\u00c0-\u00ff\u20ac\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u017d\u2018-\u201d]/g);
+        return match ? match.length : 0;
+    }
+
+    function repairUtf8Mojibake(text) {
+        if (typeof text !== "string" || !text) return text;
+        if (!/[\u00c0-\u00ff]/.test(text)) return text;
+        if (typeof TextDecoder === "undefined") return text;
+        try {
+            const bytes = Uint8Array.from(text, (ch) => ch.charCodeAt(0) & 0xff);
+            const repaired = new TextDecoder("utf-8").decode(bytes);
+            if (!repaired || repaired === text) return text;
+            const beforeCjk = countCjkChars(text);
+            const afterCjk = countCjkChars(repaired);
+            const beforeMojibake = countMojibakeChars(text);
+            const afterMojibake = countMojibakeChars(repaired);
+            if (afterCjk > beforeCjk) return repaired;
+            if (afterMojibake < beforeMojibake) return repaired;
+        } catch (e) {
+            // ignore
+        }
+        return text;
+    }
+
     function logAiRawResponse(provider, model, mode, raw) {
-        const output = formatRawLogPayload(raw);
+        const output = repairUtf8Mojibake(formatRawLogPayload(raw));
         if (!output.trim()) return;
         const label = [provider, model, mode].filter(Boolean).join("/");
         const prefix = label ? `AI Raw Response (${label})` : "AI Raw Response";
@@ -15839,7 +15880,7 @@
     }
 
     function logAiRawStreamLine(template, line) {
-        const output = formatRawLogPayload(line);
+        const output = repairUtf8Mojibake(formatRawLogPayload(line));
         if (!output.trim()) return;
         const providerId = template && template.id ? template.id : "provider";
         const label = [providerId, streamMode].filter(Boolean).join("/");
@@ -16027,7 +16068,8 @@
         if (payload === null || payload === undefined) return null;
         let data = payload;
         if (typeof payload === "string") {
-            const trimmed = payload.trim();
+            const normalizedPayload = repairUtf8Mojibake(payload);
+            const trimmed = normalizedPayload.trim();
             if (!trimmed) return null;
             const cleaned = stripResponseStats(trimmed);
             try {
@@ -16230,21 +16272,22 @@
 
     function processStreamLine(template, line) {
         if (ignoreIncomingOutput) return;
-        logAiRawStreamLine(template, line);
+        const normalizedLine = repairUtf8Mojibake(line);
+        logAiRawStreamLine(template, normalizedLine);
         const parser = template && template.stream ? template.stream.parser : "";
         if (parser === "openai-responses") {
-            processOpenaiStreamLine(template, line);
+            processOpenaiStreamLine(template, normalizedLine);
             return;
         }
         if (parser === "chat-parts") {
-            processChatPartsStreamLine(template, line);
+            processChatPartsStreamLine(template, normalizedLine);
             return;
         }
         if (parser === "ollama") {
-            processOllamaStreamLine(template, line);
+            processOllamaStreamLine(template, normalizedLine);
             return;
         }
-        processChatCompletionsStreamLine(template, line);
+        processChatCompletionsStreamLine(template, normalizedLine);
     }
 
     // ========================================================================
@@ -17213,7 +17256,8 @@
             if (chatGmAttemptIndex >= chatGmRequestAttempts.length - 1) return false;
             if (chatAssistantBuffer.trim()) return false;
             if (streamReasoningBuffer.trim()) return false;
-            if (chatRawText.trim()) return false;
+            const raw = chatRawText.trim();
+            if (raw && raw !== "[DONE]") return false;
             return true;
         };
 
@@ -17339,11 +17383,17 @@
                         appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
                         return;
                     }
+                    const fullText = res.responseText || (typeof res.response === "string" ? res.response : "");
+                    if (currentAttempt.label === "stream-fetch" && (!res.response || !res.response.getReader) && (!fullText.trim() || fullText.trim() === "[DONE]")) {
+                        if (retryChatGmRequest("stream-unavailable", { status: res.status, statusText: res.statusText, responseText: fullText })) {
+                            return;
+                        }
+                    }
                     if (res.status === 429) {
                         stopRenderLoop();
                         finalizeChatResponse(actionToken);
-                        logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
-                        const apiErr = parseApiError(res.responseText);
+                        logAiRawResponse(provider, config.modelVision, "chat", fullText);
+                        const apiErr = parseApiError(fullText);
                         const html = (apiErr && isQuotaError(apiErr))
                             ? getQuotaErrorHTML(provider, apiErr.message)
                             : get429ErrorHTML();
@@ -17353,16 +17403,16 @@
                     if (res.status === 401 || res.status === 403) {
                         stopRenderLoop();
                         finalizeChatResponse(actionToken);
-                        logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
+                        logAiRawResponse(provider, config.modelVision, "chat", fullText);
                         appendChatError(getInvalidKeyErrorHTML(provider), { allowHtml: true });
                         return;
                     }
                     if (res.status !== 200) {
                         stopRenderLoop();
                         finalizeChatResponse(actionToken);
-                        logAiRawResponse(provider, config.modelVision, "chat", res.responseText);
-                        const apiErr = parseApiError(res.responseText);
-                        const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: res.responseText, rawText: res.responseText };
+                        logAiRawResponse(provider, config.modelVision, "chat", fullText);
+                        const apiErr = parseApiError(fullText);
+                        const err = apiErr || { type: "http_error", message: `HTTP ${res.status}`, raw: fullText, rawText: fullText };
                         appendChatError(buildApiErrorHtml(provider, err), { allowHtml: true });
                     }
                 },
