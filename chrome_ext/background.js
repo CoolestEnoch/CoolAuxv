@@ -139,6 +139,66 @@ const getHeaderValue = (responseHeaders, headerName) => {
   return "";
 };
 
+const parseCookieHeader = (headerValue) => {
+  const result = [];
+  const raw = String(headerValue || "").trim();
+  if (!raw) return result;
+  raw.split(";").forEach((part) => {
+    const item = String(part || "").trim();
+    if (!item) return;
+    const eq = item.indexOf("=");
+    if (eq <= 0) return;
+    const name = item.slice(0, eq).trim();
+    const value = item.slice(eq + 1).trim();
+    if (!name) return;
+    result.push({ name, value });
+  });
+  return result;
+};
+
+const setCookiesForRequest = async (requestUrl, cookieHeader) => {
+  if (!chrome.cookies || !chrome.cookies.set) return;
+  let targetHost = "";
+  try {
+    targetHost = new URL(String(requestUrl || "")).hostname || "";
+  } catch (e) {
+    targetHost = "";
+  }
+  const cookies = parseCookieHeader(cookieHeader);
+  if (!cookies.length) return;
+  for (const c of cookies) {
+    try {
+      if (chrome.cookies.getAll && targetHost) {
+        const existing = await chrome.cookies.getAll({ domain: targetHost, name: c.name });
+        for (const item of (existing || [])) {
+          try {
+            const scheme = item.secure ? "https" : "http";
+            const removeUrl = `${scheme}://${(item.domain || "").replace(/^\./, "")}${item.path || "/"}`;
+            await chrome.cookies.remove({ url: removeUrl, name: item.name, storeId: item.storeId });
+          } catch (e) {
+            // ignore remove failures
+          }
+        }
+      }
+      await chrome.cookies.set({
+        url: requestUrl,
+        name: c.name,
+        value: c.value,
+        path: "/",
+        secure: true,
+        sameSite: "no_restriction"
+      });
+      log("debug", "Cookie prepared for background fetch", {
+        host: targetHost,
+        name: c.name,
+        valueLen: String(c.value || "").length
+      });
+    } catch (err) {
+      log("warn", "Failed to set cookie before background fetch", { url: requestUrl, name: c.name, err });
+    }
+  }
+};
+
 const isPdfResponseByHeaders = (responseHeaders) => {
   const contentType = getHeaderValue(responseHeaders, "content-type").toLowerCase();
   if (contentType.includes("application/pdf")) {
@@ -290,10 +350,103 @@ const normalizeTemplates = (input) => {
   return Array.isArray(input) ? input : [];
 };
 
+let customJsContextCache = {};
+const invalidateCustomJsCache = () => { customJsContextCache = {}; };
+
+const executeCustomJs = (template, baseContext) => {
+  if (!template || !template.customJsCode) return {};
+  const providerId = template.id;
+  const runOnce = template.customJsRunOnce !== false;
+  if (runOnce && customJsContextCache[providerId] && Object.keys(customJsContextCache[providerId]).length > 0) {
+    return customJsContextCache[providerId];
+  }
+  const code = String(template.customJsCode).trim();
+  if (!code) return {};
+  const hasAwait = /\bawait\b/.test(code);
+  try {
+    const validIdent = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+    const allKeys = Object.keys(baseContext);
+    const sandboxKeys = allKeys.filter(k => validIdent.test(k));
+    const sandboxValues = sandboxKeys.map(k => baseContext[k]);
+    const declarationNames = [];
+    code.replace(/^(?:\s*(?:const|let|var)\s+(\w+)\b\s*[=;])|(?:\s*function\s+(\w+)\b)/gm, (match, varName, funcName) => {
+      const name = varName || funcName;
+      if (name) declarationNames.push(name);
+      return match;
+    });
+    const exportLines = declarationNames
+      .filter((name, i, arr) => arr.indexOf(name) === i)
+      .map(name => `__exports__["${name}"] = typeof ${name} !== "undefined" ? ${name} : undefined;`)
+      .join("\n");
+    const fnPrefix = hasAwait ? "async " : "";
+    const allParamKeys = ["__bgFetch__"].concat(sandboxKeys);
+    const allParamValues = [(typeof fetch === "function" ? fetch : null)].concat(sandboxValues);
+    const wrapper = new Function(...allParamKeys, `
+      "use strict";
+      var GM_xmlhttpRequest = __bgFetch__ ? function(opts) {
+        return __bgFetch__(opts.url, {
+          method: opts.method || "GET",
+          headers: opts.headers || {},
+          body: opts.data || opts.body || undefined
+        }).then(function(resp) {
+          return resp.text().then(function(txt) {
+            return {
+              status: resp.status,
+              statusText: resp.statusText || "",
+              responseText: txt,
+              responseHeaders: "",
+              finalUrl: resp.url || opts.url || ""
+            };
+          });
+        });
+      } : null;
+      return (${fnPrefix} function() {
+        const __exports__ = {};
+        ${code}
+        ${exportLines}
+        return __exports__;
+      })();
+    `);
+    const normalizeContext = (raw) => {
+      const context = {};
+      Object.keys(raw || {}).forEach((key) => {
+        const val = raw[key];
+        if (typeof val === "function" || typeof val === "string" ||
+            typeof val === "number" || typeof val === "boolean") {
+          context[key] = val;
+        }
+      });
+      return context;
+    };
+    const result = wrapper(...allParamValues);
+    if (result && typeof result.then === "function") {
+      return result.then((resolved) => {
+        const context = normalizeContext(resolved || {});
+        if (runOnce) customJsContextCache[providerId] = context;
+        return context;
+      }).catch((err) => {
+        if (runOnce) delete customJsContextCache[providerId];
+        throw err;
+      });
+    }
+    const context = normalizeContext(result || {});
+    if (runOnce) customJsContextCache[providerId] = context;
+    return context;
+  } catch (e) {
+    console.warn("[CoolAuxv] Custom JS execution failed (bg):", e.message);
+    return {};
+  }
+};
+
 const applyTemplateString = (value, context) => {
   return String(value || "").replace(/{{\s*([a-zA-Z0-9_.-]+)\s*}}/g, (_, key) => {
     if (context && Object.prototype.hasOwnProperty.call(context, key)) {
-      return context[key] ?? "";
+      const v = context[key];
+      if (typeof v === "function") {
+        try { const r = v(context); return r == null ? "" : String(r); }
+        catch (e) { return ""; }
+      }
+      return v ?? "";
     }
     return "";
   });
@@ -311,7 +464,8 @@ const buildTemplateContext = (template, secretsStore) => {
       merged[key] = secrets[key];
     }
   });
-  return merged;
+  const jsContext = executeCustomJs(template, merged);
+  return Object.assign({}, merged, jsContext);
 };
 
 const resolveTemplateBaseUrl = (template, secretsStore) => {
@@ -334,6 +488,7 @@ const loadProviderStorageSnapshot = () => new Promise((resolve) => {
       resolve({ templates: [], secrets: {} });
       return;
     }
+    invalidateCustomJsCache();
     const templates = normalizeTemplates(items[PROVIDER_TEMPLATE_STORAGE_KEY]);
     const secrets = normalizeSecretStore(items[PROVIDER_SECRET_STORAGE_KEY]);
     resolve({ templates, secrets });
@@ -349,11 +504,16 @@ const resolveHeadersTemplate = (tpl, secrets) => {
   if (!headers || typeof headers !== "object") return {};
   const context = Object.assign({}, buildTemplateContext(tpl, secrets), { apiKey: tpl.apiKey || "" });
   const resolved = {};
+  const dnrSkipHeaders = new Set(["cookie"]);
   Object.keys(headers).forEach((key) => {
     const raw = headers[key];
     if (raw === undefined || raw === null) return;
-    const value = applyTemplateString(String(raw), context).trim();
     const normalizedKey = String(key || "").toLowerCase().trim();
+    if (!normalizedKey || dnrSkipHeaders.has(normalizedKey)) return;
+    const rawStr = String(raw);
+    // Skip dynamic template headers in DNR; they are resolved at runtime with full custom-js context.
+    if (/{{\s*[^}]+\s*}}/.test(rawStr)) return;
+    const value = applyTemplateString(rawStr, context).trim();
     if (value && normalizedKey) resolved[normalizedKey] = value;
   });
   return resolved;
@@ -527,12 +687,15 @@ chrome.runtime.onConnect.addListener((port) => {
     if (Object.keys(forbiddenHeaders).length) {
       log("debug", "Request has fetch-forbidden headers, relying on DNR rules", forbiddenHeaders);
     }
+    if (forbiddenHeaders.cookie) {
+      await setCookiesForRequest(msg.url, forbiddenHeaders.cookie);
+    }
     const requestInit = {
       method: msg.method || "GET",
       headers: safeHeaders,
       body: msg.data,
       signal: controller.signal,
-      credentials: "omit"
+      credentials: "include"
     };
     if (forbiddenHeaders.referer) {
       requestInit.referrer = forbiddenHeaders.referer;
@@ -622,7 +785,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
 // --- debugger-based custom header injection ---
 
-const pendingDebuggerRequests = new Map(); // debugId -> {port, tabId, forbiddenHeaders, persistent}
+const pendingDebuggerRequests = new Map(); // debugId -> {port, tabId, forbiddenHeaders, persistent, targetUrl, targetMethod}
 const tabDebuggerRefs = new Map(); // tabId -> count
 const persistentDebuggerTabs = new Set();
 
@@ -693,11 +856,22 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
   if (!tabId) return;
 
   const headers = params.request.headers || {};
-  const markerKey = Object.keys(headers).find(
-    (k) => k.toLowerCase() === "x-coolauxv-debug-id"
-  );
-  const debugId = markerKey ? headers[markerKey] : null;
-  if (!debugId || !pendingDebuggerRequests.has(debugId)) {
+  const requestUrl = String(params.request && params.request.url ? params.request.url : "");
+  const requestMethod = String(params.request && params.request.method ? params.request.method : "GET").toUpperCase();
+  let matchedDebugId = null;
+  let pending = null;
+  const pendingEntries = Array.from(pendingDebuggerRequests.entries()).reverse();
+  for (const [debugId, entry] of pendingEntries) {
+    if (!entry || entry.tabId !== tabId) continue;
+    const targetMethod = String(entry.targetMethod || "GET").toUpperCase();
+    if (targetMethod && requestMethod !== targetMethod) continue;
+    const targetUrl = String(entry.targetUrl || "");
+    if (targetUrl && requestUrl !== targetUrl) continue;
+    matchedDebugId = debugId;
+    pending = entry;
+    break;
+  }
+  if (!matchedDebugId || !pending) {
     // Not our request, continue unmodified
     try {
       await chrome.debugger.sendCommand({ tabId }, "Fetch.continueRequest", {
@@ -707,15 +881,17 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
     return;
   }
 
-  const pending = pendingDebuggerRequests.get(debugId);
   if (!pending.persistent) {
-    pendingDebuggerRequests.delete(debugId);
+    pendingDebuggerRequests.delete(matchedDebugId);
   }
 
-  // Build modified headers: existing minus marker + forbidden headers
+  // Build modified headers + forbidden headers
   const modifiedHeaders = [];
   Object.keys(headers).forEach((name) => {
-    if (name.toLowerCase() === "x-coolauxv-debug-id") return;
+    const lower = String(name || "").toLowerCase();
+    // Drop browser fetch-metadata style headers to better match curl-like requests.
+    if (lower.startsWith("sec-fetch-")) return;
+    if (lower === "priority") return;
     modifiedHeaders.push({ name, value: headers[name] });
   });
   Object.keys(pending.forbiddenHeaders || {}).forEach((name) => {
@@ -729,8 +905,8 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
   });
 
   log("debug", "Injecting forbidden headers via debugger", {
-    debugId,
-    url: params.request.url,
+    debugId: matchedDebugId,
+    url: requestUrl,
     headers: Object.keys(pending.forbiddenHeaders)
   });
 
@@ -781,7 +957,9 @@ chrome.runtime.onConnect.addListener((port) => {
       port,
       tabId,
       forbiddenHeaders: msg.forbiddenHeaders || {},
-      persistent
+      persistent,
+      targetUrl: msg.url || "",
+      targetMethod: msg.method || "GET"
     });
 
     try {
@@ -836,6 +1014,32 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
   if (changes[PROVIDER_TEMPLATE_STORAGE_KEY] || changes[PROVIDER_SECRET_STORAGE_KEY]) {
     scheduleOriginStripRuleUpdate();
+  }
+});
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.action === "evaluateCustomJs" && msg.providerId) {
+    chrome.storage.local.get([PROVIDER_TEMPLATE_STORAGE_KEY, PROVIDER_SECRET_STORAGE_KEY], (items) => {
+      const templates = normalizeTemplates(items[PROVIDER_TEMPLATE_STORAGE_KEY]);
+      const secretsStore = normalizeSecretStore(items[PROVIDER_SECRET_STORAGE_KEY]);
+      const template = templates.find(t => t.id === msg.providerId);
+      if (!template || !template.customJsCode) {
+        sendResponse({});
+        return;
+      }
+      const baseContext = buildTemplateContext(template, secretsStore);
+      const context = executeCustomJs(template, baseContext);
+      if (context && typeof context.then === "function") {
+        context.then((resolved) => {
+          sendResponse(resolved || {});
+        }).catch(() => {
+          sendResponse({});
+        });
+        return;
+      }
+      sendResponse(context || {});
+    });
+    return true;
   }
 });
 

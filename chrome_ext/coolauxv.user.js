@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.5
+// @version      v16.6
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -11,6 +11,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_addElement
 // @grant        GM_deleteValue
 // @grant        GM_setClipboard
 // @grant        GM_getResourceText
@@ -24,6 +25,7 @@
 // @connect      open.bigmodel.cn
 // @connect      api.openai.com
 // @connect      api.cnb.cool
+// @connect      cnb.cool
 // @connect      *
 // @license      GPL-3.0
 // @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js
@@ -33,6 +35,12 @@
 
 (function () {
     'use strict';
+
+    try {
+        if (typeof location !== "undefined" && location.protocol === "chrome-extension:" && /\/sandbox\/eval\.html$/i.test(location.pathname || "")) {
+            return;
+        }
+    } catch (e) {}
 
     const BRIDGE_SOURCE_EXT = "coolauxv-extension";
     const BRIDGE_SOURCE_US = "coolauxv-userscript";
@@ -272,6 +280,10 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.6
+        ## ✨ 新功能
+        *   AI大模型提供商高级设置支持添加自定义js hook了
+        ---
         v16.5
         ## ✨ 新功能
         *   AI大模型提供商可以订阅形式导入了
@@ -1326,7 +1338,9 @@
             modelGroups: modelGroups,
             display: display,
             customFields: customFields,
-            customFieldMeta: customFieldMeta
+            customFieldMeta: customFieldMeta,
+            customJsCode: String(tpl.customJsCode || ""),
+            customJsRunOnce: tpl.customJsRunOnce !== false
         };
         if (tpl.subscriptionId) {
             normalized.subscriptionId = normalizeProviderId(tpl.subscriptionId);
@@ -1364,6 +1378,23 @@
         return normalizeProviderTemplates(templates);
     };
 
+    const hasNonEmptyCustomJsCode = (template) => {
+        if (!template) return false;
+        return String(template.customJsCode || "").trim().length > 0;
+    };
+
+    const prewarmRunOnceCustomJsForProvider = (providerId) => {
+        const templates = getProviderTemplates();
+        const resolvedId = resolveProviderId(providerId || GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), templates);
+        const template = templates.find((tpl) => tpl.id === resolvedId) || null;
+        if (!template) return;
+        if (template.customJsRunOnce === false) return;
+        if (!hasNonEmptyCustomJsCode(template)) return;
+        try {
+            executeCustomJs(template, buildTemplateBaseContext(template), { awaitAsync: true });
+        } catch (e) {}
+    };
+
     const loadProviderTemplates = () => {
         let stored = null;
         try {
@@ -1386,6 +1417,10 @@
         templates = normalizeProviderTemplates(templates);
         templates = sanitizeMaskedCustomFields(templates);
         providerTemplatesCache = templates;
+        setTimeout(() => {
+            const defaultProviderId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), templates);
+            prewarmRunOnceCustomJsForProvider(defaultProviderId);
+        }, 0);
         return templates;
     };
 
@@ -1395,6 +1430,7 @@
         const normalized = normalizeProviderTemplates(list);
         providerTemplatesCache = normalized;
         GM_setValue(PROVIDER_TEMPLATE_STORAGE_KEY, normalized);
+        invalidateCustomJsCache();
         return normalized;
     };
 
@@ -8400,6 +8436,7 @@
             if (clone.stream && isDeepEqual(clone.stream, defaultStream)) delete clone.stream;
 
             if (clone.supportsContinuousChat === true) delete clone.supportsContinuousChat;
+            if (clone.customJsRunOnce === true) delete clone.customJsRunOnce;
             if (clone.supportsVision !== undefined) {
                 const defaultSupportsVision = Array.isArray(clone.modelGroups)
                     && clone.modelGroups.some((group) => (group.type || "text") === "vision");
@@ -9094,7 +9131,9 @@
                 supportsContinuousChat: true,
                 modelGroups: [{ id: "general", label: "通用模型", type: "text", models: [] }],
                 display: Object.assign({}, DEFAULT_DISPLAY_FIELDS),
-                customFields: {}
+                customFields: {},
+                customJsCode: "",
+                customJsRunOnce: true
             };
             const displayState = Object.assign({}, DEFAULT_DISPLAY_FIELDS, baseTemplate.display || {});
             let modelGroups = normalizeModelGroups(baseTemplate);
@@ -9305,8 +9344,21 @@
                             </div>
                         </div>
 
+                        <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">自定义 JavaScript</div>
+                        <div style="font-size:11px; color:#888;">
+                            定义变量和函数，可在请求头/请求体/Base URL 中通过 <code>{&#123;变量名&#125;}</code> 引用。函数会被自动调用并取其返回值。
+                        </div>
+                        <textarea id="coolauxv-provider-form-custom-js" class="coolauxv-setting-input coolauxv-resizable-input" rows="6" placeholder="const timestamp = Date.now();&#10;function sign(text) { return btoa(text); }">${escapeText(baseTemplate.customJsCode || "")}</textarea>
+                        <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                            <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                                <input type="checkbox" id="coolauxv-provider-form-js-run-once" ${baseTemplate.customJsRunOnce !== false ? "checked" : ""}>
+                                仅在页面加载时执行一次
+                            </label>
+                            <span style="font-size:11px; color:#888;">（关闭后每次发起请求前重新执行）</span>
+                        </div>
+
                         <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">模板</div>
-                        <div style="font-size:11px; color:#888;">内置变量：{{model}} / {{messages}} / {{latestUserText}} / {{latestUserInputText}} / {{latestSystemPrompt}} / {{conversationId}} / {{requestId}} / {{sessionId}} / {{trigger}}</div>
+                        <div style="font-size:11px; color:#888;">内置变量：{{model}} / {{messages}} / {{latestUserText}} / {{latestUserInputText}} / {{latestSystemPrompt}} / {{conversationId}} / {{requestId}} / {{sessionId}} / {{trigger}}。上方自定义 JS 定义的变量和函数也可通过 {&#123;名称&#125;} 引用，函数会自动调用并取其返回值。</div>
                         <div class="coolauxv-sub-label coolauxv-sub-label-inline">请求头模板 (JSON, {{headersTemplate}})
                             <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="headersTemplate" ${displayCheck("headersTemplate")}> 默认展示
@@ -9394,6 +9446,8 @@
             const addGroupBtn = box.querySelector("#coolauxv-provider-add-group");
             const customFieldContainer = box.querySelector("#coolauxv-provider-form-custom-fields");
             const addCustomFieldBtn = box.querySelector("#coolauxv-provider-add-custom-field");
+            const customJsInput = box.querySelector("#coolauxv-provider-form-custom-js");
+            const jsRunOnceCheckbox = box.querySelector("#coolauxv-provider-form-js-run-once");
 
             let modeTab = "manual";
             let idTouched = false;
@@ -9800,6 +9854,8 @@
                     const groups = buildModelGroupsPayload();
                     let customFields = buildCustomFieldsPayload();
                     const customFieldMeta = buildCustomFieldMetaPayload();
+                    const customJsCode = (customJsInput ? customJsInput.value : "").trim() || "";
+                    const customJsRunOnce = !!(jsRunOnceCheckbox ? jsRunOnceCheckbox.checked : true);
                     const apiKeyValue = existing ? existing.apiKey : "";
                     const normalizedId = normalizeProviderId(idValue || "");
                     const generatedId = normalizeProviderId(label || `provider-${Date.now().toString(36)}`);
@@ -9874,7 +9930,9 @@
                         modelGroups: groups,
                         display: display,
                         customFields: customFields,
-                        customFieldMeta: customFieldMeta
+                        customFieldMeta: customFieldMeta,
+                        customJsCode: customJsCode,
+                        customJsRunOnce: customJsRunOnce
                     });
 
                     if (!template) {
@@ -9887,6 +9945,10 @@
                         : templates.concat(template);
 
                     saveProviderTemplates(nextTemplates);
+                    if (template.customJsRunOnce !== false && hasNonEmptyCustomJsCode(template)) {
+                        customJsContextCache[template.id] = {};
+                        prewarmRunOnceCustomJsForProvider(template.id);
+                    }
                     renderProviderUI();
                     closeModal();
                 };
@@ -11026,6 +11088,7 @@
                 const templates = getProviderTemplates();
                 const providerId = resolveProviderId(target.value, templates);
                 GM_setValue("coolauxv_default_provider", providerId);
+                prewarmRunOnceCustomJsForProvider(providerId);
                 if (inputModelProvider) {
                     inputModelProvider.value = providerId;
                     GM_setValue("coolauxv_model_provider", providerId);
@@ -13219,38 +13282,356 @@
         }
     };
 
-    const applyTemplateString = (value, context) => {
-        return String(value).replace(/{{\s*([a-zA-Z0-9_.-]+)\s*}}/g, (match, key) => {
-            if (!Object.prototype.hasOwnProperty.call(context, key)) return "";
-            const replacement = context[key];
-            return replacement === undefined || replacement === null ? "" : String(replacement);
+    let customJsContextCache = {};
+    const invalidateCustomJsCache = () => { customJsContextCache = {}; };
+    let customJsEvalBlocked = false;
+    let sandboxFramePromise = null;
+    const sandboxPending = new Map();
+    const sandboxGmPending = new Map();
+
+    const ensureSandboxFrame = () => {
+        if (sandboxFramePromise) return sandboxFramePromise;
+        sandboxFramePromise = new Promise((resolve, reject) => {
+            try {
+                if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.getURL) {
+                    reject(new Error("extension runtime unavailable"));
+                    return;
+                }
+                const iframe = document.createElement("iframe");
+                iframe.style.display = "none";
+                iframe.setAttribute("aria-hidden", "true");
+                iframe.setAttribute("sandbox", "allow-scripts");
+                iframe.onload = () => resolve(iframe);
+                iframe.onerror = () => reject(new Error("sandbox frame load failed"));
+                iframe.src = chrome.runtime.getURL("sandbox/eval.html");
+                (document.documentElement || document.body || document.head).appendChild(iframe);
+            } catch (err) {
+                reject(err);
+            }
+        });
+        sandboxFramePromise.catch(() => {
+            sandboxFramePromise = null;
+        });
+        return sandboxFramePromise;
+    };
+
+    const withTimeout = async (promise, timeoutMs, fallbackValue) => {
+        let timer = null;
+        try {
+            return await Promise.race([
+                promise,
+                new Promise((resolve) => {
+                    timer = setTimeout(() => resolve(fallbackValue), timeoutMs);
+                })
+            ]);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    };
+
+    if (typeof window !== "undefined") {
+        window.addEventListener("message", async (event) => {
+            const data = event && event.data;
+            if (!data || data.source !== "coolauxv-sandbox-frame") return;
+            if (data.type === "coolauxv-sandbox-eval-result" && data.id) {
+                const pending = sandboxPending.get(data.id);
+                if (!pending) return;
+                sandboxPending.delete(data.id);
+                if (data.ok) pending.resolve(data.context || {});
+                else pending.reject(new Error((data.err && data.err.message) || "sandbox eval failed"));
+                return;
+            }
+            if (data.type === "coolauxv-sandbox-gm-request" && data.gmId) {
+                if (sandboxGmPending.has(data.gmId)) return;
+                sandboxGmPending.set(data.gmId, true);
+                const postBack = (payload) => {
+                    try {
+                        event.source.postMessage({
+                            source: "coolauxv-sandbox-host",
+                            type: "coolauxv-sandbox-gm-result",
+                            gmId: data.gmId,
+                            ...payload
+                        }, "*");
+                    } catch (e) {}
+                    sandboxGmPending.delete(data.gmId);
+                };
+                try {
+                    const opts = data.options || {};
+                    if (typeof GM_xmlhttpRequest !== "function") {
+                        postBack({ ok: false, err: { message: "GM_xmlhttpRequest unavailable" } });
+                        return;
+                    }
+                    GM_xmlhttpRequest({
+                        ...opts,
+                        onload: (res) => {
+                            postBack({ ok: true, res: res || {} });
+                        },
+                        onerror: (err) => {
+                            postBack({ ok: false, err: { message: (err && err.message) ? err.message : String(err || "error") } });
+                        },
+                        ontimeout: (err) => {
+                            postBack({ ok: false, err: { message: (err && err.statusText) ? err.statusText : "timeout" } });
+                        }
+                    });
+                } catch (err) {
+                    postBack({ ok: false, err: { message: err && err.message ? err.message : String(err) } });
+                }
+            }
+        });
+    }
+
+    const executeCustomJsViaSandbox = async (code, baseContext) => {
+        const expectedKeys = [];
+        try {
+            const collect = (input) => {
+                String(input || "").replace(/{{\s*([a-zA-Z0-9_$.-]+)\s*}}/g, (_, key) => {
+                    if (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(key) && expectedKeys.indexOf(key) < 0) {
+                        expectedKeys.push(key);
+                    }
+                    return "";
+                });
+            };
+            collect(JSON.stringify(baseContext && baseContext.headersTemplate ? baseContext.headersTemplate : {}));
+            collect(JSON.stringify(baseContext && baseContext.bodyTemplate ? baseContext.bodyTemplate : {}));
+            collect(baseContext && baseContext.baseUrl ? baseContext.baseUrl : "");
+        } catch (e) {}
+        const iframe = await ensureSandboxFrame();
+        const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                sandboxPending.delete(id);
+                reject(new Error("sandbox eval timeout"));
+            }, 15000);
+            sandboxPending.set(id, {
+                resolve: (ctx) => {
+                    clearTimeout(timer);
+                    resolve(ctx || {});
+                },
+                reject: (err) => {
+                    clearTimeout(timer);
+                    reject(err || new Error("sandbox eval failed"));
+                }
+            });
+            iframe.contentWindow.postMessage({
+                source: "coolauxv-sandbox-host",
+                type: "coolauxv-sandbox-eval",
+                id,
+                code: String(code || ""),
+                baseContext: baseContext || {},
+                expectedKeys
+            }, "*");
         });
     };
 
-    const applyTemplateValue = (value, context) => {
-        if (Array.isArray(value)) return value.map((item) => applyTemplateValue(item, context));
-        if (value && typeof value === "object") {
-            const output = {};
-            Object.keys(value).forEach((key) => {
-                output[key] = applyTemplateValue(value[key], context);
+    const executeCustomJs = (template, baseContext, options = {}) => {
+        if (!template || !hasNonEmptyCustomJsCode(template)) return {};
+        const providerId = template.id;
+        const runOnce = template.customJsRunOnce !== false;
+        if (runOnce && customJsContextCache[providerId] && Object.keys(customJsContextCache[providerId]).length > 0) {
+            return customJsContextCache[providerId];
+        }
+        const code = String(template.customJsCode).trim();
+        if (!code) return {};
+        const hasAwait = /\bawait\b/.test(code);
+        const validIdent = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+        const allKeys = Object.keys(baseContext);
+        const sandboxKeys = allKeys.filter(k => validIdent.test(k));
+        const sandboxValues = sandboxKeys.map(k => baseContext[k]);
+        const declarationNames = [];
+        code.replace(/^(?:\s*(?:const|let|var)\s+(\w+)\b\s*[=;])|(?:\s*function\s+(\w+)\b)/gm, (match, varName, funcName) => {
+            const name = varName || funcName;
+            if (name) declarationNames.push(name);
+            return match;
+        });
+        const exportLines = declarationNames
+            .filter((name, i, arr) => arr.indexOf(name) === i)
+            .map(name => `__exports__["${name}"] = typeof ${name} !== "undefined" ? ${name} : undefined;`)
+            .join("\n");
+        const fnPrefix = hasAwait ? "async " : "";
+        const buildResult = (raw) => {
+            const context = {};
+            Object.keys(raw || {}).forEach((key) => {
+                const val = raw[key];
+                if (typeof val === "function" || typeof val === "string" ||
+                    typeof val === "number" || typeof val === "boolean") {
+                    context[key] = val;
+                }
             });
-            return output;
-        }
-        if (typeof value === "string") {
-            const exact = value.match(/^{{\s*([a-zA-Z0-9_.-]+)\s*}}$/);
-            if (exact && Object.prototype.hasOwnProperty.call(context, exact[1])) {
-                return context[exact[1]];
+            return context;
+        };
+        const resolveAsync = (promise) => {
+            promise.then((resolvedContext) => {
+                const next = buildResult(resolvedContext || {});
+                if (Object.keys(next).length > 0) {
+                    customJsContextCache[providerId] = next;
+                    return;
+                }
+                const prev = customJsContextCache[providerId];
+                if (!prev || Object.keys(prev).length === 0) {
+                    customJsContextCache[providerId] = next;
+                }
+            }).catch(() => {
+                // keep last good cache to avoid async stale failures wiping context
+            });
+        };
+        const runViaNewFunction = () => {
+            const allParamKeys = ["__origGMXHR__"].concat(sandboxKeys);
+            const allParamValues = [typeof GM_xmlhttpRequest === "function" ? GM_xmlhttpRequest : null].concat(sandboxValues);
+            const wrapper = new Function(...allParamKeys, `
+                "use strict";
+                var GM_xmlhttpRequest = __origGMXHR__ ? function(opts) {
+                    return new Promise(function(resolve, reject) {
+                        var o = {};
+                        var keys = Object.keys(opts || {});
+                        for (var i = 0; i < keys.length; i++) { o[keys[i]] = opts[keys[i]]; }
+                        o.onload = resolve;
+                        o.onerror = reject;
+                        o.ontimeout = reject;
+                        __origGMXHR__(o);
+                    });
+                } : null;
+                return (${fnPrefix} function() {
+                    const __exports__ = {};
+                    ${code}
+                    ${exportLines}
+                    return __exports__;
+                })();
+            `);
+            return wrapper(...allParamValues);
+        };
+        const runViaGMAddElement = () => {
+            const ga = typeof GM_addElement === "function" ? GM_addElement
+                : (typeof GM !== "undefined" && GM && typeof GM.addElement === "function" ? GM.addElement.bind(GM) : null);
+            if (!ga) return null;
+            const hasGMXhr = typeof GM_xmlhttpRequest === "function";
+            if (hasGMXhr && typeof unsafeWindow !== "undefined") {
+                unsafeWindow.__coolauxv_gm_xhr_async = function(optsJson) {
+                    try {
+                        var opts = JSON.parse(optsJson);
+                        return new Promise(function(resolve) {
+                            var called = false;
+                            var finish = function(data) {
+                                if (called) return;
+                                called = true;
+                                resolve(JSON.stringify(data));
+                            };
+                            opts.onload = function(raw) {
+                                finish(raw && typeof raw === "object" ? {
+                                    status: raw.status,
+                                    responseText: String(raw.responseText || ""),
+                                    responseHeaders: String(raw.responseHeaders || ""),
+                                    finalUrl: String(raw.finalUrl || "")
+                                } : {});
+                            };
+                            opts.onerror = function() { finish({}); };
+                            opts.ontimeout = function() { finish({}); };
+                            GM_xmlhttpRequest(opts);
+                        });
+                    } catch (e) { return Promise.resolve("{}"); }
+                };
             }
-            return applyTemplateString(value, context);
+            const sandboxDefs = sandboxKeys.map(k => `const ${k} = ${JSON.stringify(baseContext[k])};`).join("\n");
+            var gmXhrStub = '';
+            if (hasGMXhr && typeof unsafeWindow !== "undefined") {
+                gmXhrStub = 'var GM_xmlhttpRequest = function(opts) { return window.__coolauxv_gm_xhr_async(JSON.stringify(opts)).then(function(j) { return JSON.parse(j); }); };';
+            }
+            const wrapped = `
+                ${gmXhrStub}
+                document.currentScript.__coolauxv_cj_result = (${fnPrefix} function() {
+                    ${sandboxDefs}
+                    var __exports__ = {};
+                    ${code}
+                    ${exportLines}
+                    return __exports__;
+                })();
+            `;
+            try {
+                const script = ga("script", { textContent: wrapped });
+                (document.head || document.documentElement).appendChild(script);
+                const result = script.__coolauxv_cj_result;
+                if (script.parentNode) script.parentNode.removeChild(script);
+                if (result !== undefined) return result || {};
+            } catch (e) {}
+            return undefined;
+        };
+        const handleResult = (result) => {
+            if (result && typeof result.then === "function") {
+                if (options && options.awaitAsync) {
+                    return result.then((resolved) => {
+                        const context = buildResult(resolved || {});
+                        if (runOnce) {
+                            if (Object.keys(context).length > 0) {
+                                customJsContextCache[providerId] = context;
+                            } else if (!customJsContextCache[providerId] || Object.keys(customJsContextCache[providerId]).length === 0) {
+                                customJsContextCache[providerId] = context;
+                            }
+                        }
+                        return context;
+                    }).catch(() => {
+                        // keep last good cache to avoid async stale failures wiping context
+                        return buildResult({});
+                    });
+                }
+                if (runOnce) {
+                    resolveAsync(result);
+                    return buildResult({});
+                }
+                return buildResult({});
+            }
+            const context = buildResult(result || {});
+            if (runOnce) {
+                if (Object.keys(context).length > 0) {
+                    customJsContextCache[providerId] = context;
+                } else if (!customJsContextCache[providerId] || Object.keys(customJsContextCache[providerId]).length === 0) {
+                    customJsContextCache[providerId] = context;
+                }
+            }
+            return context;
+        };
+        const requestBackgroundEval = () => {
+            if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return;
+            chrome.runtime.sendMessage({action: "evaluateCustomJs", providerId: providerId}, function(response) {
+                if (response && typeof response === "object" && Object.keys(response).length > 0) {
+                    customJsContextCache[providerId] = response;
+                }
+            });
+        };
+        const hasExtensionRuntime = () => {
+            return typeof chrome !== "undefined" && !!(chrome.runtime && chrome.runtime.id);
+        };
+        try {
+            if (!customJsEvalBlocked) {
+                return handleResult(runViaNewFunction());
+            }
+            throw new Error("eval blocked");
+        } catch (e) {
+            const firstBlocked = !customJsEvalBlocked;
+            customJsEvalBlocked = true;
+            if (firstBlocked) {
+                console.warn("[CoolAuxv] new Function() blocked:", e.message);
+            }
+            if (hasExtensionRuntime()) {
+                const sandboxPromise = executeCustomJsViaSandbox(code, Object.assign({}, baseContext))
+                    .then((ctx) => buildResult(ctx || {}))
+                    .catch(() => ({}));
+                return handleResult(sandboxPromise);
+            }
+            try {
+                const gaResult = runViaGMAddElement();
+                if (gaResult) return handleResult(gaResult);
+            } catch (e2) {
+                console.warn("[CoolAuxv] GM_addElement also failed:", e2.message);
+            }
+            if (hasExtensionRuntime()) requestBackgroundEval();
+            return {};
         }
-        return value;
     };
 
-    const buildTemplateContext = (template, extra) => {
+    const buildTemplateBaseContext = (template) => {
         const custom = getTemplateCustomFields(template);
         const roles = template && template.roles ? template.roles : {};
         const stream = template && template.stream ? template.stream : {};
-        const defaults = {
+        return Object.assign({}, {
             providerId: template && template.id ? String(template.id) : "",
             providerLabel: template && template.label ? String(template.label) : "",
             providerType: normalizeProviderType(template && template.type ? template.type : ""),
@@ -13273,8 +13654,52 @@
             reasoningTag: stream.reasoningTag ? String(stream.reasoningTag) : "",
             supportsVision: !!(template && template.supportsVision),
             supportsContinuousChat: template ? template.supportsContinuousChat !== false : true
-        };
-        return Object.assign({}, defaults, custom, extra || {});
+        }, custom);
+    };
+
+    const applyTemplateString = (value, context) => {
+        return String(value).replace(/{{\s*([a-zA-Z0-9_.-]+)\s*}}/g, (match, key) => {
+            if (!Object.prototype.hasOwnProperty.call(context, key)) return "";
+            const replacement = context[key];
+            if (typeof replacement === "function") {
+                try { const r = replacement(context); return r == null ? "" : String(r); }
+                catch (e) { console.warn("[CoolAuxv] Custom JS function error:", e.message); return ""; }
+            }
+            return replacement === undefined || replacement === null ? "" : String(replacement);
+        });
+    };
+
+    const applyTemplateValue = (value, context) => {
+        if (Array.isArray(value)) return value.map((item) => applyTemplateValue(item, context));
+        if (value && typeof value === "object") {
+            const output = {};
+            Object.keys(value).forEach((key) => {
+                output[key] = applyTemplateValue(value[key], context);
+            });
+            return output;
+        }
+        if (typeof value === "string") {
+            const exact = value.match(/^{{\s*([a-zA-Z0-9_.-]+)\s*}}$/);
+            if (exact && Object.prototype.hasOwnProperty.call(context, exact[1])) {
+                const replacement = context[exact[1]];
+                if (typeof replacement === "function") {
+                    try { return replacement(context); } catch (e) { return ""; }
+                }
+                return replacement;
+            }
+            return applyTemplateString(value, context);
+        }
+        return value;
+    };
+
+    const buildTemplateContext = (template, extra) => {
+        const base = buildTemplateBaseContext(template);
+        const providerId = template && template.id ? template.id : "";
+        const cached = (providerId && customJsContextCache[providerId] && Object.keys(customJsContextCache[providerId]).length > 0)
+            ? customJsContextCache[providerId]
+            : null;
+        const jsContext = cached || executeCustomJs(template, Object.assign({}, base));
+        return Object.assign({}, base, jsContext, extra || {});
     };
 
     const extractTemplateKeys = (value) => {
@@ -13306,7 +13731,8 @@
 
     const buildProviderHeaders = (template, context) => {
         if (!template) return { "Content-Type": "application/json" };
-        const headers = applyTemplateValue(template.headersTemplate || {}, buildTemplateContext(template, context || {}));
+        const tplCtx = buildTemplateContext(template, context || {});
+        const headers = applyTemplateValue(template.headersTemplate || {}, tplCtx);
         const cleaned = {};
         Object.keys(headers || {}).forEach((key) => {
             const value = headers[key];
@@ -13315,7 +13741,63 @@
             if (!str) return;
             cleaned[key] = str;
         });
+        try {
+            if (template && template.id) {
+                console.log("[CoolAuxv] header context snapshot", {
+                    providerId: template.id,
+                    ctxKeys: Object.keys(tplCtx || {}),
+                    cookieHeader: cleaned.Cookie || cleaned.cookie || ""
+                });
+            }
+        } catch (e) {}
         return cleaned;
+    };
+
+    const ensureCustomJsContextReady = async (template, maxRetries = 3, retryDelayMs = 120) => {
+        if (!template || !hasNonEmptyCustomJsCode(template)) return;
+        const providerId = template.id;
+        if (!providerId) return;
+        const current = customJsContextCache[providerId];
+        if (current && Object.keys(current).length > 0) return;
+        const base = buildTemplateBaseContext(template);
+        if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
+            try {
+                const sandboxCtx = await executeCustomJsViaSandbox(String(template.customJsCode || ""), Object.assign({}, base));
+                if (sandboxCtx && Object.keys(sandboxCtx).length > 0) {
+                    customJsContextCache[providerId] = sandboxCtx;
+                    try {
+                        console.log("[CoolAuxv] sandbox custom js context ready", {
+                            providerId,
+                            keys: Object.keys(sandboxCtx)
+                        });
+                    } catch (e) {}
+                    return;
+                }
+                console.warn("[CoolAuxv] sandbox custom js returned empty context", { providerId });
+            } catch (e) {
+                console.warn("[CoolAuxv] sandbox custom js failed", { providerId, message: e && e.message ? e.message : String(e) });
+            }
+        }
+        for (let i = 0; i < maxRetries; i += 1) {
+            let response = {};
+            try {
+                const direct = executeCustomJs(template, Object.assign({}, base), { awaitAsync: true });
+                response = (direct && typeof direct.then === "function") ? await direct : (direct || {});
+            } catch (e) {
+                response = {};
+            }
+            if (response && Object.keys(response).length > 0) {
+                customJsContextCache[providerId] = response;
+                try {
+                    console.log("[CoolAuxv] custom js context ready", { providerId, keys: Object.keys(response) });
+                } catch (e) {}
+                return;
+            }
+            if (i < maxRetries - 1) {
+                await new Promise((r) => setTimeout(r, retryDelayMs));
+            }
+        }
+        console.warn("[CoolAuxv] custom js context still empty after retries", { providerId });
     };
 
     const hasCustomHeaders = (headers) => {
@@ -15648,6 +16130,7 @@
     // 网络引擎 (Stream)
     // ========================================================================
     async function doAction(actionId) {
+        try {
         const input = popup.querySelector("#coolauxv-input");
         if (!input) return;
         const actionTemplate = getActionTemplateById(actionId);
@@ -15699,6 +16182,7 @@
         if (abortController) abortController.abort();
         if (gmRequest && gmRequest.abort) gmRequest.abort();
 
+        await withTimeout(ensureCustomJsContextReady(providerTemplate), 1800, null);
         const url = buildProviderUrl(providerTemplate);
         const systemPrompt = actionTemplate
             ? actionTemplate.systemPrompt
@@ -16111,6 +16595,15 @@
         };
 
         startSingleActionGmRequest();
+        } catch (err) {
+            Logger.error("doAction fatal error", err);
+            try {
+                const resultDiv = popup ? popup.querySelector("#coolauxv-result") : null;
+                if (resultDiv && !shouldSuppressResultError()) {
+                    resultDiv.innerHTML = "<span style='color:#b91c1c;font-weight:bold;'>请求执行异常，请查看控制台日志。</span>";
+                }
+            } catch (e) {}
+        }
     }
 
 
@@ -17412,6 +17905,7 @@
             popup.querySelector("#coolauxv-separator").style.display = "flex";
         }
 
+        await withTimeout(ensureCustomJsContextReady(providerTemplate), 1800, null);
         const url = buildProviderUrl(providerTemplate);
 
         const payload = buildVisionPayload(providerTemplate, config.modelVision, textPrompt, imageBase64);
@@ -17636,6 +18130,7 @@
 
         streamMode = "chat";
 
+        await withTimeout(ensureCustomJsContextReady(providerTemplate), 1800, null);
         const url = buildProviderUrl(providerTemplate);
         const payload = buildChatPayload(providerTemplate, config.modelVision, chatMessages);
 
@@ -18117,3 +18612,10 @@
     }, BRIDGE_DETECT_TIMEOUT_MS);
 
 })();
+    const isExtensionPageContext = () => {
+        try {
+            return typeof location !== "undefined" && location.protocol === "chrome-extension:";
+        } catch (e) {
+            return false;
+        }
+    };

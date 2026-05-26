@@ -1,12 +1,15 @@
 {
   "manifest_version": 3,
   "name": "CoolAuxv 网页翻译与阅读助手",
-  "version": "16.5",
+  "version": "16.6",
   "description": "网页翻译与阅读助手（Chromium 类浏览器扩展版，基于 CoolAuxv 用户脚本）。",
-  "permissions": ["clipboardWrite", "debugger", "storage", "tabs", "webNavigation", "webRequest", "declarativeNetRequest", "declarativeNetRequestWithHostAccess"],
+  "permissions": ["clipboardWrite", "cookies", "debugger", "storage", "tabs", "webNavigation", "webRequest", "declarativeNetRequest", "declarativeNetRequestWithHostAccess"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"
+  },
+  "sandbox": {
+    "pages": ["sandbox/eval.html"]
   },
   "content_scripts": [
     {
@@ -26,7 +29,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["vendor/mermaid.min.js"],
+      "resources": ["vendor/mermaid.min.js", "sandbox/eval.html", "sandbox/eval.js"],
       "matches": ["<all_urls>"]
     }
   ],

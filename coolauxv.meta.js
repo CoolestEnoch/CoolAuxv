@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.5
+// @version      v16.6
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -15,6 +15,7 @@
 // @grant        GM_setClipboard
 // @grant        GM_getResourceText
 // @grant        GM_listValues
+// @grant        GM_addElement
 // @require      https://cdn.jsdelivr.net/npm/marked/marked.min.js
 // @require      https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js
 // @require      https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js
@@ -24,6 +25,7 @@
 // @connect      open.bigmodel.cn
 // @connect      api.openai.com
 // @connect      api.cnb.cool
+// @connect      cnb.cool
 // @connect      *
 // @license      GPL-3.0
 // @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js

@@ -826,6 +826,7 @@
   const isDebuggerPersistentModeEnabled = () => {
     return !!GM_getValue("coolauxv_enable_debugger_header_persistent", false);
   };
+  let debuggerRequestQueue = Promise.resolve();
 
   const GM_xmlhttpRequestWithDebugger = (options) => {
     const opts = options || {};
@@ -834,6 +835,14 @@
     let completed = false;
     let debuggerPort = null;
     let debuggerReady = false;
+    let slotReleased = false;
+    let releaseSlot = null;
+    const slotDone = new Promise((resolve) => { releaseSlot = resolve; });
+    const releaseQueueSlot = () => {
+      if (slotReleased) return;
+      slotReleased = true;
+      try { releaseSlot(); } catch (e) { /* ignore */ }
+    };
 
     const cleanup = () => {
       if (timeoutId) {
@@ -844,6 +853,7 @@
         try { debuggerPort.disconnect(); } catch (e) { /* ignore */ }
         debuggerPort = null;
       }
+      releaseQueueSlot();
     };
 
     const fail = (err) => {
@@ -940,45 +950,52 @@
       });
     };
 
-    debuggerPort = chrome.runtime.connect({ name: "coolauxv-gm-xhr-debugger" });
+    const startDebuggerFlow = () => {
+      if (completed) {
+        releaseQueueSlot();
+        return;
+      }
+      debuggerPort = chrome.runtime.connect({ name: "coolauxv-gm-xhr-debugger" });
 
-    let debugMarkerId = null;
+      console.log("[CoolAuxv] debugger: connecting to background for forbidden header injection", Object.keys(forbiddenHeaders));
+      log("debug", "debugger: connecting to background for forbidden header injection", Object.keys(forbiddenHeaders));
 
-    console.log("[CoolAuxv] debugger: connecting to background for forbidden header injection", Object.keys(forbiddenHeaders));
-    log("debug", "debugger: connecting to background for forbidden header injection", Object.keys(forbiddenHeaders));
-
-    debuggerPort.onMessage.addListener((msg) => {
-      if (completed) return;
-      if (msg.type === "debugger_ready") {
-        console.log("[CoolAuxv] debugger: ready, making fetch with safe headers + marker");
-        log("debug", "debugger: ready, making fetch");
-        debuggerReady = true;
-        debugMarkerId = msg.debugId || null;
-        if (debugMarkerId) {
-          safeHeaders["X-CoolAuxv-Debug-Id"] = debugMarkerId;
+      debuggerPort.onMessage.addListener((msg) => {
+        if (completed) return;
+        if (msg.type === "debugger_ready") {
+          console.log("[CoolAuxv] debugger: ready, making fetch");
+          log("debug", "debugger: ready, making fetch");
+          debuggerReady = true;
+          doFetch();
+        } else if (msg.type === "error") {
+          console.error("[CoolAuxv] debugger: setup failed:", msg.message);
+          log("error", "debugger setup failed:", msg.message);
+          fail(new Error(msg.message || "debugger setup failed"));
         }
-        doFetch();
-      } else if (msg.type === "error") {
-        console.error("[CoolAuxv] debugger: setup failed:", msg.message);
-        log("error", "debugger setup failed:", msg.message);
-        fail(new Error(msg.message || "debugger setup failed"));
-      }
-    });
+      });
 
-    debuggerPort.onDisconnect.addListener(() => {
-      if (!completed && !debuggerReady) {
-        console.error("[CoolAuxv] debugger: background disconnected before ready");
-        log("error", "debugger: background disconnected before ready");
-        fail(new Error("debugger disconnected before ready"));
-      }
-    });
+      debuggerPort.onDisconnect.addListener(() => {
+        if (!completed && !debuggerReady) {
+          console.error("[CoolAuxv] debugger: background disconnected before ready");
+          log("error", "debugger: background disconnected before ready");
+          fail(new Error("debugger disconnected before ready"));
+        }
+      });
 
-    debuggerPort.postMessage({
-      type: "setup",
-      url: opts.url,
-      method: opts.method || "GET",
-      forbiddenHeaders: forbiddenHeaders
-    });
+      debuggerPort.postMessage({
+        type: "setup",
+        url: opts.url,
+        method: opts.method || "GET",
+        forbiddenHeaders: forbiddenHeaders
+      });
+    };
+
+    debuggerRequestQueue = debuggerRequestQueue
+      .catch(() => {})
+      .then(() => {
+        startDebuggerFlow();
+        return slotDone;
+      });
 
     return {
       abort: () => {
@@ -1002,7 +1019,7 @@
     try {
       return GM_xmlhttpRequestViaBackground(opts);
     } catch (err) {
-      if (hasForbiddenHeaders(opts.headers)) {
+      if (isExtensionPageContext() && hasForbiddenHeaders(opts.headers)) {
         log("warn", "background request failed, fallback to debugger injection for forbidden headers");
         return GM_xmlhttpRequestWithDebugger(opts);
       }
@@ -1010,6 +1027,38 @@
     }
   };
 
+  const GM_addElement = (parentOrTag, tagNameOrAttrs, maybeAttrs) => {
+    let parent = null;
+    let tagName;
+    let attrs;
+    if (typeof tagNameOrAttrs === "string") {
+      tagName = tagNameOrAttrs;
+      attrs = maybeAttrs || {};
+    } else {
+      parent = parentOrTag;
+      tagName = String(tagNameOrAttrs || "div");
+      attrs = maybeAttrs || {};
+    }
+    if (typeof parent === "string") {
+      parent = null;
+      tagName = parentOrTag;
+      attrs = tagNameOrAttrs || {};
+    }
+    const el = document.createElement(tagName);
+    Object.keys(attrs || {}).forEach((key) => {
+      if (key === "textContent") {
+        el.textContent = attrs[key];
+      } else {
+        el.setAttribute(key, attrs[key]);
+      }
+    });
+    if (parent) {
+      parent.appendChild(el);
+    }
+    return el;
+  };
+
+  globalThis.GM_addElement = GM_addElement;
   globalThis.GM_addStyle = GM_addStyle;
   globalThis.GM_getValue = GM_getValue;
   globalThis.GM_setValue = GM_setValue;

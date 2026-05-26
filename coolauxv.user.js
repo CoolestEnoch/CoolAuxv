@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.5
+// @version      v16.6
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -11,6 +11,7 @@
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_addElement
 // @grant        GM_deleteValue
 // @grant        GM_setClipboard
 // @grant        GM_getResourceText
@@ -24,6 +25,7 @@
 // @connect      open.bigmodel.cn
 // @connect      api.openai.com
 // @connect      api.cnb.cool
+// @connect      cnb.cool
 // @connect      *
 // @license      GPL-3.0
 // @downloadURL  https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js
@@ -262,6 +264,10 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.6
+        ## ✨ 新功能
+        *   AI大模型提供商高级设置支持添加自定义js hook了
+        ---
         v16.5
         ## ✨ 新功能
         *   AI大模型提供商可以订阅形式导入了
@@ -1316,7 +1322,9 @@
             modelGroups: modelGroups,
             display: display,
             customFields: customFields,
-            customFieldMeta: customFieldMeta
+            customFieldMeta: customFieldMeta,
+            customJsCode: String(tpl.customJsCode || ""),
+            customJsRunOnce: tpl.customJsRunOnce !== false
         };
         if (tpl.subscriptionId) {
             normalized.subscriptionId = normalizeProviderId(tpl.subscriptionId);
@@ -1354,6 +1362,23 @@
         return normalizeProviderTemplates(templates);
     };
 
+    const hasNonEmptyCustomJsCode = (template) => {
+        if (!template) return false;
+        return String(template.customJsCode || "").trim().length > 0;
+    };
+
+    const prewarmRunOnceCustomJsForProvider = (providerId) => {
+        const templates = getProviderTemplates();
+        const resolvedId = resolveProviderId(providerId || GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), templates);
+        const template = templates.find((tpl) => tpl.id === resolvedId) || null;
+        if (!template) return;
+        if (template.customJsRunOnce === false) return;
+        if (!hasNonEmptyCustomJsCode(template)) return;
+        try {
+            executeCustomJs(template, Object.assign({}, getTemplateCustomFields(template)));
+        } catch (e) {}
+    };
+
     const loadProviderTemplates = () => {
         let stored = null;
         try {
@@ -1376,6 +1401,10 @@
         templates = normalizeProviderTemplates(templates);
         templates = sanitizeMaskedCustomFields(templates);
         providerTemplatesCache = templates;
+        setTimeout(() => {
+            const defaultProviderId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), templates);
+            prewarmRunOnceCustomJsForProvider(defaultProviderId);
+        }, 0);
         return templates;
     };
 
@@ -1385,6 +1414,7 @@
         const normalized = normalizeProviderTemplates(list);
         providerTemplatesCache = normalized;
         GM_setValue(PROVIDER_TEMPLATE_STORAGE_KEY, normalized);
+        invalidateCustomJsCache();
         return normalized;
     };
 
@@ -8382,6 +8412,7 @@
             if (clone.stream && isDeepEqual(clone.stream, defaultStream)) delete clone.stream;
 
             if (clone.supportsContinuousChat === true) delete clone.supportsContinuousChat;
+            if (clone.customJsRunOnce === true) delete clone.customJsRunOnce;
             if (clone.supportsVision !== undefined) {
                 const defaultSupportsVision = Array.isArray(clone.modelGroups)
                     && clone.modelGroups.some((group) => (group.type || "text") === "vision");
@@ -9076,7 +9107,9 @@
                 supportsContinuousChat: true,
                 modelGroups: [{ id: "general", label: "通用模型", type: "text", models: [] }],
                 display: Object.assign({}, DEFAULT_DISPLAY_FIELDS),
-                customFields: {}
+                customFields: {},
+                customJsCode: "",
+                customJsRunOnce: true
             };
             const displayState = Object.assign({}, DEFAULT_DISPLAY_FIELDS, baseTemplate.display || {});
             let modelGroups = normalizeModelGroups(baseTemplate);
@@ -9287,8 +9320,21 @@
                             </div>
                         </div>
 
+                        <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">自定义 JavaScript</div>
+                        <div style="font-size:11px; color:#888;">
+                            定义变量和函数，可在请求头/请求体/Base URL 中通过 <code>{&#123;变量名&#125;}</code> 引用。函数会被自动调用并取其返回值。
+                        </div>
+                        <textarea id="coolauxv-provider-form-custom-js" class="coolauxv-setting-input coolauxv-resizable-input" rows="6" placeholder="const timestamp = Date.now();&#10;function sign(text) { return btoa(text); }">${escapeText(baseTemplate.customJsCode || "")}</textarea>
+                        <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+                            <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                                <input type="checkbox" id="coolauxv-provider-form-js-run-once" ${baseTemplate.customJsRunOnce !== false ? "checked" : ""}>
+                                仅在页面加载时执行一次
+                            </label>
+                            <span style="font-size:11px; color:#888;">（关闭后每次发起请求前重新执行）</span>
+                        </div>
+
                         <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">模板</div>
-                        <div style="font-size:11px; color:#888;">内置变量：{{model}} / {{messages}} / {{latestUserText}} / {{latestUserInputText}} / {{latestSystemPrompt}} / {{conversationId}} / {{requestId}} / {{sessionId}} / {{trigger}}</div>
+                        <div style="font-size:11px; color:#888;">内置变量：{{model}} / {{messages}} / {{latestUserText}} / {{latestUserInputText}} / {{latestSystemPrompt}} / {{conversationId}} / {{requestId}} / {{sessionId}} / {{trigger}}。上方自定义 JS 定义的变量和函数也可通过 {&#123;名称&#125;} 引用，函数会自动调用并取其返回值。</div>
                         <div class="coolauxv-sub-label coolauxv-sub-label-inline">请求头模板 (JSON, {{headersTemplate}})
                             <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="headersTemplate" ${displayCheck("headersTemplate")}> 默认展示
@@ -9376,6 +9422,8 @@
             const addGroupBtn = box.querySelector("#coolauxv-provider-add-group");
             const customFieldContainer = box.querySelector("#coolauxv-provider-form-custom-fields");
             const addCustomFieldBtn = box.querySelector("#coolauxv-provider-add-custom-field");
+            const customJsInput = box.querySelector("#coolauxv-provider-form-custom-js");
+            const jsRunOnceCheckbox = box.querySelector("#coolauxv-provider-form-js-run-once");
 
             let modeTab = "manual";
             let idTouched = false;
@@ -9782,6 +9830,8 @@
                     const groups = buildModelGroupsPayload();
                     let customFields = buildCustomFieldsPayload();
                     const customFieldMeta = buildCustomFieldMetaPayload();
+                    const customJsCode = (customJsInput ? customJsInput.value : "").trim() || "";
+                    const customJsRunOnce = !!(jsRunOnceCheckbox ? jsRunOnceCheckbox.checked : true);
                     const apiKeyValue = existing ? existing.apiKey : "";
                     const normalizedId = normalizeProviderId(idValue || "");
                     const generatedId = normalizeProviderId(label || `provider-${Date.now().toString(36)}`);
@@ -9856,7 +9906,9 @@
                         modelGroups: groups,
                         display: display,
                         customFields: customFields,
-                        customFieldMeta: customFieldMeta
+                        customFieldMeta: customFieldMeta,
+                        customJsCode: customJsCode,
+                        customJsRunOnce: customJsRunOnce
                     });
 
                     if (!template) {
@@ -9869,6 +9921,10 @@
                         : templates.concat(template);
 
                     saveProviderTemplates(nextTemplates);
+                    if (template.customJsRunOnce !== false && hasNonEmptyCustomJsCode(template)) {
+                        customJsContextCache[template.id] = {};
+                        prewarmRunOnceCustomJsForProvider(template.id);
+                    }
                     renderProviderUI();
                     closeModal();
                 };
@@ -11008,6 +11064,7 @@
                 const templates = getProviderTemplates();
                 const providerId = resolveProviderId(target.value, templates);
                 GM_setValue("coolauxv_default_provider", providerId);
+                prewarmRunOnceCustomJsForProvider(providerId);
                 if (inputModelProvider) {
                     inputModelProvider.value = providerId;
                     GM_setValue("coolauxv_model_provider", providerId);
@@ -13191,10 +13248,165 @@
         }
     };
 
+    let customJsContextCache = {};
+    const invalidateCustomJsCache = () => { customJsContextCache = {}; };
+
+    const executeCustomJs = (template, baseContext) => {
+        if (!template || !hasNonEmptyCustomJsCode(template)) return {};
+        const providerId = template.id;
+        const runOnce = template.customJsRunOnce !== false;
+        if (runOnce && customJsContextCache[providerId]) return customJsContextCache[providerId];
+        const code = String(template.customJsCode).trim();
+        if (!code) return {};
+        const hasAwait = /\bawait\b/.test(code);
+        const validIdent = /^[a-zA-Z_$][a-zA-Z0-9_$]*$/;
+        const allKeys = Object.keys(baseContext);
+        const sandboxKeys = allKeys.filter(k => validIdent.test(k));
+        const sandboxValues = sandboxKeys.map(k => baseContext[k]);
+        const declarationNames = [];
+        code.replace(/^(?:\s*(?:const|let|var)\s+(\w+)\b\s*[=;])|(?:\s*function\s+(\w+)\b)/gm, (match, varName, funcName) => {
+            const name = varName || funcName;
+            if (name) declarationNames.push(name);
+            return match;
+        });
+        const exportLines = declarationNames
+            .filter((name, i, arr) => arr.indexOf(name) === i)
+            .map(name => `__exports__["${name}"] = typeof ${name} !== "undefined" ? ${name} : undefined;`)
+            .join("\n");
+        const fnPrefix = hasAwait ? "async " : "";
+        const buildResult = (raw) => {
+            const context = {};
+            Object.keys(raw || {}).forEach((key) => {
+                const val = raw[key];
+                if (typeof val === "function" || typeof val === "string" ||
+                    typeof val === "number" || typeof val === "boolean") {
+                    context[key] = val;
+                }
+            });
+            return context;
+        };
+        const resolveAsync = (promise) => {
+            promise.then((resolvedContext) => {
+                customJsContextCache[providerId] = resolvedContext;
+            }).catch(() => {
+                delete customJsContextCache[providerId];
+            });
+        };
+        const runViaNewFunction = () => {
+            const allParamKeys = ["__origGMXHR__"].concat(sandboxKeys);
+            const allParamValues = [typeof GM_xmlhttpRequest === "function" ? GM_xmlhttpRequest : null].concat(sandboxValues);
+            const wrapper = new Function(...allParamKeys, `
+                "use strict";
+                var GM_xmlhttpRequest = __origGMXHR__ ? function(opts) {
+                    return new Promise(function(resolve, reject) {
+                        var o = {};
+                        var keys = Object.keys(opts || {});
+                        for (var i = 0; i < keys.length; i++) { o[keys[i]] = opts[keys[i]]; }
+                        o.onload = resolve;
+                        o.onerror = reject;
+                        o.ontimeout = reject;
+                        __origGMXHR__(o);
+                    });
+                } : null;
+                return (${fnPrefix} function() {
+                    const __exports__ = {};
+                    ${code}
+                    ${exportLines}
+                    return __exports__;
+                })();
+            `);
+            return wrapper(...allParamValues);
+        };
+        const runViaGMAddElement = () => {
+            const ga = typeof GM_addElement === "function" ? GM_addElement
+                : (typeof GM !== "undefined" && GM && typeof GM.addElement === "function" ? GM.addElement.bind(GM) : null);
+            if (!ga) return null;
+            const hasGMXhr = typeof GM_xmlhttpRequest === "function";
+            if (hasGMXhr && typeof unsafeWindow !== "undefined") {
+                unsafeWindow.__coolauxv_gm_xhr_async = function(optsJson) {
+                    try {
+                        var opts = JSON.parse(optsJson);
+                        return new Promise(function(resolve) {
+                            var called = false;
+                            var finish = function(data) {
+                                if (called) return;
+                                called = true;
+                                resolve(JSON.stringify(data));
+                            };
+                            opts.onload = function(raw) {
+                                finish(raw && typeof raw === "object" ? {
+                                    status: raw.status,
+                                    responseText: String(raw.responseText || ""),
+                                    responseHeaders: String(raw.responseHeaders || ""),
+                                    finalUrl: String(raw.finalUrl || "")
+                                } : {});
+                            };
+                            opts.onerror = function() { finish({}); };
+                            opts.ontimeout = function() { finish({}); };
+                            GM_xmlhttpRequest(opts);
+                        });
+                    } catch (e) { return Promise.resolve("{}"); }
+                };
+            }
+            const sandboxDefs = sandboxKeys.map(k => `const ${k} = ${JSON.stringify(baseContext[k])};`).join("\n");
+            var gmXhrStub = '';
+            if (hasGMXhr && typeof unsafeWindow !== "undefined") {
+                gmXhrStub = 'var GM_xmlhttpRequest = function(opts) { return window.__coolauxv_gm_xhr_async(JSON.stringify(opts)).then(function(j) { return JSON.parse(j); }); };';
+            }
+            const wrapped = `
+                ${gmXhrStub}
+                document.currentScript.__coolauxv_cj_result = (${fnPrefix} function() {
+                    ${sandboxDefs}
+                    var __exports__ = {};
+                    ${code}
+                    ${exportLines}
+                    return __exports__;
+                })();
+            `;
+            try {
+                const script = ga("script", { textContent: wrapped });
+                (document.head || document.documentElement).appendChild(script);
+                const result = script.__coolauxv_cj_result;
+                if (script.parentNode) script.parentNode.removeChild(script);
+                return result || {};
+            } catch (e2) {
+                return null;
+            }
+        };
+        const handleResult = (result) => {
+            if (result && typeof result.then === "function") {
+                if (runOnce) {
+                    resolveAsync(result);
+                    return buildResult({});
+                }
+                return buildResult({});
+            }
+            const context = buildResult(result || {});
+            if (runOnce) customJsContextCache[providerId] = context;
+            return context;
+        };
+        try {
+            return handleResult(runViaNewFunction());
+        } catch (e) {
+            console.warn("[CoolAuxv] new Function() blocked, trying GM_addElement:", e.message);
+            try {
+                const gaResult = runViaGMAddElement();
+                if (gaResult) return handleResult(gaResult);
+            } catch (e2) {
+                console.warn("[CoolAuxv] GM_addElement also failed:", e2.message);
+            }
+            return {};
+        }
+    };
+
     const applyTemplateString = (value, context) => {
         return String(value).replace(/{{\s*([a-zA-Z0-9_.-]+)\s*}}/g, (match, key) => {
             if (!Object.prototype.hasOwnProperty.call(context, key)) return "";
             const replacement = context[key];
+            if (typeof replacement === "function") {
+                try { const r = replacement(context); return r == null ? "" : String(r); }
+                catch (e) { console.warn("[CoolAuxv] Custom JS function error:", e.message); return ""; }
+            }
             return replacement === undefined || replacement === null ? "" : String(replacement);
         });
     };
@@ -13211,7 +13423,11 @@
         if (typeof value === "string") {
             const exact = value.match(/^{{\s*([a-zA-Z0-9_.-]+)\s*}}$/);
             if (exact && Object.prototype.hasOwnProperty.call(context, exact[1])) {
-                return context[exact[1]];
+                const replacement = context[exact[1]];
+                if (typeof replacement === "function") {
+                    try { return replacement(context); } catch (e) { return ""; }
+                }
+                return replacement;
             }
             return applyTemplateString(value, context);
         }
@@ -13246,7 +13462,8 @@
             supportsVision: !!(template && template.supportsVision),
             supportsContinuousChat: template ? template.supportsContinuousChat !== false : true
         };
-        return Object.assign({}, defaults, custom, extra || {});
+        const jsContext = executeCustomJs(template, Object.assign({}, defaults, custom));
+        return Object.assign({}, defaults, custom, jsContext, extra || {});
     };
 
     const extractTemplateKeys = (value) => {
