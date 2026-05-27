@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.6
+// @version      v16.6.1
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -264,6 +264,13 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.6.1
+        ## ✨ 新功能
+        *   自定义js hook可以主动运行并修补上下文了
+        ## 🔧 问题修复
+        *   修复chromium插件自定义js hook在多开标签页不生效的问题
+        *   修复油猴插件自定义js hook在切换标签页不生效的问题
+        ---
         v16.6
         ## ✨ 新功能
         *   AI大模型提供商高级设置支持添加自定义js hook了
@@ -10119,6 +10126,7 @@
                             <span class="coolauxv-provider-title">${escapeAttr(resolvedProviderLabel || provider.label)}</span>
                             <span class="coolauxv-provider-subtitle">提供商</span>
                             <span class="coolauxv-link-btn" data-provider-toggle="${provider.id}" style="margin-left:auto; cursor:pointer; user-select:none;">收起</span>
+                            ${hasNonEmptyCustomJsCode(provider) ? `<span class="coolauxv-link-btn" data-action="run-provider-hook" data-provider-id="${provider.id}" style="cursor:pointer; user-select:none;">run hook</span>` : ""}
                             <span class="coolauxv-link-btn" data-action="edit-provider" data-provider-id="${provider.id}" style="cursor:pointer; user-select:none;">⚙️ 高级选项</span>
                             ${display.apiKey ? `<span class="coolauxv-link-btn" data-action="toggle-key" data-target="${keyInputId}" style="cursor:pointer; user-select:none;">👁️ 显示</span>` : ""}
                             ${resolvedKeyLink ? `<a href="${resolvedKeyLink}" target="_blank" class="coolauxv-link-btn" title="${escapeAttr(resolvedKeyLinkTitle)}">🔑 获取KEY</a>` : ""}
@@ -11274,6 +11282,25 @@
                     const providerId = target.dataset.providerId;
                     if (!providerId) return;
                     openProviderModal({ mode: "edit", providerId: providerId });
+                    return;
+                }
+                if (action === "run-provider-hook") {
+                    const providerId = target.dataset.providerId;
+                    if (!providerId) return;
+                    const templates = getProviderTemplates();
+                    const template = templates.find((item) => item.id === providerId);
+                    if (!template || !hasNonEmptyCustomJsCode(template)) return;
+                    const oldText = target.textContent;
+                    target.textContent = "running...";
+                    runProviderHookOnce(template)
+                        .then(() => {
+                            target.textContent = oldText || "run hook";
+                            alert("Hook 已执行。");
+                        })
+                        .catch(() => {
+                            target.textContent = oldText || "run hook";
+                            alert("Hook 执行失败。");
+                        });
                     return;
                 }
                 const subscriptionToggleId = target.dataset.subscriptionToggle;
@@ -13255,7 +13282,9 @@
         if (!template || !hasNonEmptyCustomJsCode(template)) return {};
         const providerId = template.id;
         const runOnce = template.customJsRunOnce !== false;
-        if (runOnce && customJsContextCache[providerId]) return customJsContextCache[providerId];
+        if (runOnce && customJsContextCache[providerId] && Object.keys(customJsContextCache[providerId]).length > 0) {
+            return customJsContextCache[providerId];
+        }
         const code = String(template.customJsCode).trim();
         if (!code) return {};
         const hasAwait = /\bawait\b/.test(code);
@@ -13287,9 +13316,17 @@
         };
         const resolveAsync = (promise) => {
             promise.then((resolvedContext) => {
-                customJsContextCache[providerId] = resolvedContext;
+                const next = buildResult(resolvedContext || {});
+                if (Object.keys(next).length > 0) {
+                    customJsContextCache[providerId] = next;
+                    return;
+                }
+                const prev = customJsContextCache[providerId];
+                if (!prev || Object.keys(prev).length === 0) {
+                    customJsContextCache[providerId] = next;
+                }
             }).catch(() => {
-                delete customJsContextCache[providerId];
+                // 保留上一次成功缓存，避免偶发失败把可用上下文清空
             });
         };
         const runViaNewFunction = () => {
@@ -13382,7 +13419,13 @@
                 return buildResult({});
             }
             const context = buildResult(result || {});
-            if (runOnce) customJsContextCache[providerId] = context;
+            if (runOnce) {
+                if (Object.keys(context).length > 0) {
+                    customJsContextCache[providerId] = context;
+                } else if (!customJsContextCache[providerId] || Object.keys(customJsContextCache[providerId]).length === 0) {
+                    customJsContextCache[providerId] = context;
+                }
+            }
             return context;
         };
         try {
@@ -13397,6 +13440,53 @@
             }
             return {};
         }
+    };
+
+    const buildCustomJsBaseContext = (template) => {
+        const custom = getTemplateCustomFields(template);
+        const roles = template && template.roles ? template.roles : {};
+        const stream = template && template.stream ? template.stream : {};
+        return Object.assign({}, {
+            providerId: template && template.id ? String(template.id) : "",
+            providerLabel: template && template.label ? String(template.label) : "",
+            providerType: normalizeProviderType(template && template.type ? template.type : ""),
+            baseUrl: template && template.baseUrl ? String(template.baseUrl) : "",
+            apiKey: template && template.apiKey ? String(template.apiKey) : "",
+            apiKeyPlaceholder: template && template.apiKeyPlaceholder ? String(template.apiKeyPlaceholder) : "",
+            keyLink: template && template.keyLink ? String(template.keyLink) : "",
+            keyLinkTitle: template && template.keyLinkTitle ? String(template.keyLinkTitle) : "",
+            headersTemplate: template && template.headersTemplate ? template.headersTemplate : {},
+            bodyTemplate: template && template.bodyTemplate ? template.bodyTemplate : {},
+            modelGroups: template && Array.isArray(template.modelGroups) ? template.modelGroups : [],
+            roleSystem: roles.system ? String(roles.system) : "system",
+            roleUser: roles.user ? String(roles.user) : "user",
+            roleAssistant: roles.assistant ? String(roles.assistant) : "assistant",
+            streamParser: stream.parser ? String(stream.parser) : "",
+            deltaPath: stream.deltaPath ? String(stream.deltaPath) : "",
+            reasoningPath: stream.reasoningPath ? String(stream.reasoningPath) : "",
+            sessionIdPath: stream.sessionIdPath ? String(stream.sessionIdPath) : "",
+            sessionIdKey: stream.sessionIdKey ? String(stream.sessionIdKey) : DEFAULT_PROVIDER_SESSION_FIELD_KEY,
+            reasoningTag: stream.reasoningTag ? String(stream.reasoningTag) : "",
+            supportsVision: !!(template && template.supportsVision),
+            supportsContinuousChat: template ? template.supportsContinuousChat !== false : true
+        }, custom);
+    };
+
+    const runProviderHookOnce = async (template) => {
+        if (!template || !hasNonEmptyCustomJsCode(template) || !template.id) return {};
+        const raw = executeCustomJs(template, buildCustomJsBaseContext(template)) || {};
+        const resolved = (raw && typeof raw.then === "function") ? await raw : raw;
+        const filtered = {};
+        Object.keys(resolved || {}).forEach((key) => {
+            const val = resolved[key];
+            if (typeof val === "function" || typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
+                filtered[key] = val;
+            }
+        });
+        if (Object.keys(filtered).length > 0) {
+            customJsContextCache[template.id] = filtered;
+        }
+        return filtered;
     };
 
     const applyTemplateString = (value, context) => {
@@ -13462,8 +13552,12 @@
             supportsVision: !!(template && template.supportsVision),
             supportsContinuousChat: template ? template.supportsContinuousChat !== false : true
         };
+        const providerId = template && template.id ? template.id : "";
+        const cached = (providerId && customJsContextCache[providerId] && Object.keys(customJsContextCache[providerId]).length > 0)
+            ? customJsContextCache[providerId]
+            : null;
         const jsContext = executeCustomJs(template, Object.assign({}, defaults, custom));
-        return Object.assign({}, defaults, custom, jsContext, extra || {});
+        return Object.assign({}, defaults, custom, cached || {}, jsContext, extra || {});
     };
 
     const extractTemplateKeys = (value) => {

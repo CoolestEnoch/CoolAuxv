@@ -448,6 +448,7 @@
     let completed = false;
     let debuggerPort = null;
     let debuggerReady = false;
+    let fallbackStarted = false;
 
     const cleanup = () => {
       if (timeoutId) {
@@ -465,6 +466,17 @@
       completed = true;
       cleanup();
       if (opts.onerror) opts.onerror(err);
+    };
+
+    const startFallbackRequest = () => {
+      if (completed || fallbackStarted) return;
+      fallbackStarted = true;
+      cleanup();
+      try {
+        GM_xmlhttpRequestViaBackground(opts);
+      } catch (e) {
+        fail(e);
+      }
     };
 
     const safeHeaders = {};
@@ -490,7 +502,7 @@
         headers: safeHeaders,
         body: opts.data,
         signal: abortController.signal,
-        credentials: "omit"
+        credentials: "include"
       }).then(async (response) => {
         if (completed) return;
         const base = {
@@ -543,11 +555,13 @@
         if (msg.debugId) safeHeaders["X-CoolAuxv-Debug-Id"] = msg.debugId;
         doFetch();
       } else if (msg.type === "error") {
-        fail(new Error(msg.message || "debugger setup failed"));
+        startFallbackRequest();
       }
     });
     debuggerPort.onDisconnect.addListener(() => {
-      if (!completed && !debuggerReady) fail(new Error("debugger disconnected before ready"));
+      if (!completed && !debuggerReady) {
+        startFallbackRequest();
+      }
     });
     debuggerPort.postMessage({
       type: "setup",

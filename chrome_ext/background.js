@@ -788,6 +788,29 @@ chrome.runtime.onConnect.addListener((port) => {
 const pendingDebuggerRequests = new Map(); // debugId -> {port, tabId, forbiddenHeaders, persistent, targetUrl, targetMethod}
 const tabDebuggerRefs = new Map(); // tabId -> count
 const persistentDebuggerTabs = new Set();
+const DEBUG_REQUEST_ID_HEADER = "x-coolauxv-debug-id";
+
+const getHeaderValueByName = (headers, name) => {
+  const target = String(name || "").toLowerCase();
+  if (!target) return "";
+  if (Array.isArray(headers)) {
+    for (const item of headers) {
+      if (!item || !item.name) continue;
+      if (String(item.name).toLowerCase() === target) {
+        return String(item.value || "");
+      }
+    }
+    return "";
+  }
+  if (headers && typeof headers === "object") {
+    for (const key of Object.keys(headers)) {
+      if (String(key).toLowerCase() === target) {
+        return String(headers[key] || "");
+      }
+    }
+  }
+  return "";
+};
 
 const isTabDebuggerAttached = async (tabId) => {
   if (!chrome.debugger || !chrome.debugger.getTargets) {
@@ -824,6 +847,10 @@ const detachTabDebugger = async (tabId, force = false) => {
 
 const attachTabDebugger = async (tabId, persistent = false) => {
   if (persistent) {
+    for (const oldTabId of Array.from(persistentDebuggerTabs)) {
+      if (oldTabId === tabId) continue;
+      await detachTabDebugger(oldTabId, true);
+    }
     persistentDebuggerTabs.add(tabId);
   }
   if (await isTabDebuggerAttached(tabId)) {
@@ -858,18 +885,28 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
   const headers = params.request.headers || {};
   const requestUrl = String(params.request && params.request.url ? params.request.url : "");
   const requestMethod = String(params.request && params.request.method ? params.request.method : "GET").toUpperCase();
+  const debugIdFromHeader = getHeaderValueByName(headers, DEBUG_REQUEST_ID_HEADER);
   let matchedDebugId = null;
   let pending = null;
-  const pendingEntries = Array.from(pendingDebuggerRequests.entries()).reverse();
-  for (const [debugId, entry] of pendingEntries) {
-    if (!entry || entry.tabId !== tabId) continue;
-    const targetMethod = String(entry.targetMethod || "GET").toUpperCase();
-    if (targetMethod && requestMethod !== targetMethod) continue;
-    const targetUrl = String(entry.targetUrl || "");
-    if (targetUrl && requestUrl !== targetUrl) continue;
-    matchedDebugId = debugId;
-    pending = entry;
-    break;
+  if (debugIdFromHeader) {
+    const direct = pendingDebuggerRequests.get(debugIdFromHeader);
+    if (direct && direct.tabId === tabId) {
+      matchedDebugId = debugIdFromHeader;
+      pending = direct;
+    }
+  }
+  if (!pending) {
+    const pendingEntries = Array.from(pendingDebuggerRequests.entries()).reverse();
+    for (const [debugId, entry] of pendingEntries) {
+      if (!entry || entry.tabId !== tabId) continue;
+      const targetMethod = String(entry.targetMethod || "GET").toUpperCase();
+      if (targetMethod && requestMethod !== targetMethod) continue;
+      const targetUrl = String(entry.targetUrl || "");
+      if (targetUrl && requestUrl !== targetUrl) continue;
+      matchedDebugId = debugId;
+      pending = entry;
+      break;
+    }
   }
   if (!matchedDebugId || !pending) {
     // Not our request, continue unmodified
@@ -892,6 +929,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
     // Drop browser fetch-metadata style headers to better match curl-like requests.
     if (lower.startsWith("sec-fetch-")) return;
     if (lower === "priority") return;
+    if (lower === DEBUG_REQUEST_ID_HEADER) return;
     modifiedHeaders.push({ name, value: headers[name] });
   });
   Object.keys(pending.forbiddenHeaders || {}).forEach((name) => {
@@ -952,11 +990,19 @@ chrome.runtime.onConnect.addListener((port) => {
     }
 
     const debugId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const persistent = debuggerHeaderInjectionPersistent && hasCriticalInjectedHeaders(msg.forbiddenHeaders || {});
+    const forbiddenHeaders = Object.assign({}, msg.forbiddenHeaders || {});
+    if (forbiddenHeaders.cookie && msg.url) {
+      try {
+        await setCookiesForRequest(msg.url, forbiddenHeaders.cookie);
+      } catch (e) {
+        // keep fallback injection path
+      }
+    }
+    const persistent = debuggerHeaderInjectionPersistent && hasCriticalInjectedHeaders(forbiddenHeaders);
     pendingDebuggerRequests.set(debugId, {
       port,
       tabId,
-      forbiddenHeaders: msg.forbiddenHeaders || {},
+      forbiddenHeaders,
       persistent,
       targetUrl: msg.url || "",
       targetMethod: msg.method || "GET"

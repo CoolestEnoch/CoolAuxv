@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.6
+// @version      v16.6.1
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -280,6 +280,12 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.6.1
+        ## ✨ 新功能
+        *   自定义js hook可以主动运行并修补上下文了
+        ## 🔧 问题修复
+        *   修复chromium插件自定义js hook在多开标签页不生效的问题
+        ---
         v16.6
         ## ✨ 新功能
         *   AI大模型提供商高级设置支持添加自定义js hook了
@@ -10143,6 +10149,7 @@
                             <span class="coolauxv-provider-title">${escapeAttr(resolvedProviderLabel || provider.label)}</span>
                             <span class="coolauxv-provider-subtitle">提供商</span>
                             <span class="coolauxv-link-btn" data-provider-toggle="${provider.id}" style="margin-left:auto; cursor:pointer; user-select:none;">收起</span>
+                            ${hasNonEmptyCustomJsCode(provider) ? `<span class="coolauxv-link-btn" data-action="run-provider-hook" data-provider-id="${provider.id}" style="cursor:pointer; user-select:none;">run hook</span>` : ""}
                             <span class="coolauxv-link-btn" data-action="edit-provider" data-provider-id="${provider.id}" style="cursor:pointer; user-select:none;">⚙️ 高级选项</span>
                             ${display.apiKey ? `<span class="coolauxv-link-btn" data-action="toggle-key" data-target="${keyInputId}" style="cursor:pointer; user-select:none;">👁️ 显示</span>` : ""}
                             ${resolvedKeyLink ? `<a href="${resolvedKeyLink}" target="_blank" class="coolauxv-link-btn" title="${escapeAttr(resolvedKeyLinkTitle)}">🔑 获取KEY</a>` : ""}
@@ -11298,6 +11305,25 @@
                     const providerId = target.dataset.providerId;
                     if (!providerId) return;
                     openProviderModal({ mode: "edit", providerId: providerId });
+                    return;
+                }
+                if (action === "run-provider-hook") {
+                    const providerId = target.dataset.providerId;
+                    if (!providerId) return;
+                    const templates = getProviderTemplates();
+                    const template = templates.find((item) => item.id === providerId);
+                    if (!template || !hasNonEmptyCustomJsCode(template)) return;
+                    const oldText = target.textContent;
+                    target.textContent = "running...";
+                    ensureCustomJsContextReady(template, 3, 120, { forceCacheWrite: true })
+                        .then(() => {
+                            target.textContent = oldText || "run hook";
+                            alert("Hook 已执行。");
+                        })
+                        .catch(() => {
+                            target.textContent = oldText || "run hook";
+                            alert("Hook 执行失败。");
+                        });
                     return;
                 }
                 const subscriptionToggleId = target.dataset.subscriptionToggle;
@@ -13695,11 +13721,12 @@
     const buildTemplateContext = (template, extra) => {
         const base = buildTemplateBaseContext(template);
         const providerId = template && template.id ? template.id : "";
+        const runOnce = !template || template.customJsRunOnce !== false;
         const cached = (providerId && customJsContextCache[providerId] && Object.keys(customJsContextCache[providerId]).length > 0)
             ? customJsContextCache[providerId]
             : null;
-        const jsContext = cached || executeCustomJs(template, Object.assign({}, base));
-        return Object.assign({}, base, jsContext, extra || {});
+        const jsContext = (runOnce && cached) ? cached : executeCustomJs(template, Object.assign({}, base));
+        return Object.assign({}, base, cached || {}, jsContext, extra || {});
     };
 
     const extractTemplateKeys = (value) => {
@@ -13753,18 +13780,20 @@
         return cleaned;
     };
 
-    const ensureCustomJsContextReady = async (template, maxRetries = 3, retryDelayMs = 120) => {
+    const ensureCustomJsContextReady = async (template, maxRetries = 3, retryDelayMs = 120, options = {}) => {
         if (!template || !hasNonEmptyCustomJsCode(template)) return;
         const providerId = template.id;
         if (!providerId) return;
+        const runOnce = template.customJsRunOnce !== false;
+        const forceCacheWrite = !!(options && options.forceCacheWrite);
         const current = customJsContextCache[providerId];
-        if (current && Object.keys(current).length > 0) return;
+        if (runOnce && current && Object.keys(current).length > 0) return;
         const base = buildTemplateBaseContext(template);
         if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
             try {
                 const sandboxCtx = await executeCustomJsViaSandbox(String(template.customJsCode || ""), Object.assign({}, base));
                 if (sandboxCtx && Object.keys(sandboxCtx).length > 0) {
-                    customJsContextCache[providerId] = sandboxCtx;
+                    if (runOnce || forceCacheWrite) customJsContextCache[providerId] = sandboxCtx;
                     try {
                         console.log("[CoolAuxv] sandbox custom js context ready", {
                             providerId,
@@ -13787,7 +13816,7 @@
                 response = {};
             }
             if (response && Object.keys(response).length > 0) {
-                customJsContextCache[providerId] = response;
+                if (runOnce || forceCacheWrite) customJsContextCache[providerId] = response;
                 try {
                     console.log("[CoolAuxv] custom js context ready", { providerId, keys: Object.keys(response) });
                 } catch (e) {}
