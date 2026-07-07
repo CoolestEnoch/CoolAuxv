@@ -862,6 +862,11 @@ const attachTabDebugger = async (tabId, persistent = false) => {
     } catch (e) {
       // keep going; the session may already be configured
     }
+    try {
+      await chrome.debugger.sendCommand({ tabId }, "Security.enable");
+    } catch (e) {
+      // Security domain may not be available
+    }
     return;
   }
 
@@ -875,6 +880,11 @@ const attachTabDebugger = async (tabId, persistent = false) => {
   await chrome.debugger.sendCommand({ tabId }, "Fetch.enable", {
     patterns: [{ requestStage: "Request" }]
   });
+  try {
+    await chrome.debugger.sendCommand({ tabId }, "Security.enable");
+  } catch (e) {
+    // Security domain may not be available
+  }
 };
 
 chrome.debugger.onEvent.addListener(async (source, method, params) => {
@@ -1085,6 +1095,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
       sendResponse(context || {});
     });
+    return true;
+  }
+  if (msg && msg.action === "setIgnoreCertErrors") {
+    const tabId = sender && sender.tab ? sender.tab.id : null;
+    const ignore = !!msg.ignore;
+    if (!tabId) {
+      sendResponse({ ok: false, error: "no tab id" });
+      return false;
+    }
+    (async () => {
+      try {
+        if (ignore) {
+          await attachTabDebugger(tabId);
+          try {
+            await chrome.debugger.sendCommand({ tabId }, "Security.enable");
+          } catch (e) { /* domain may already be enabled */ }
+          await chrome.debugger.sendCommand({ tabId }, "Security.setIgnoreCertificateErrors", { ignore: true });
+        } else {
+          try {
+            await chrome.debugger.sendCommand({ tabId }, "Security.setIgnoreCertificateErrors", { ignore: false });
+          } catch (e) { /* ignore */ }
+          await detachTabDebugger(tabId);
+        }
+        sendResponse({ ok: true });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message || "failed" });
+      }
+    })();
     return true;
   }
 });

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.6.1
+// @version      v16.6.2
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -264,6 +264,10 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.6.2
+        ## 🔧 问题修复
+        *   修复大模型提供商订阅解析失败的问题
+        ---
         v16.6.1
         ## ✨ 新功能
         *   自定义js hook可以主动运行并修补上下文了
@@ -1306,7 +1310,7 @@
                 user: (tpl.roles && tpl.roles.user) ? String(tpl.roles.user) : "user",
                 assistant: (tpl.roles && tpl.roles.assistant) ? String(tpl.roles.assistant) : "assistant"
             },
-            headersTemplate: headersTemplate && typeof headersTemplate === "object" ? headersTemplate : { "Content-Type": "application/json" },
+            headersTemplate: headersTemplate && typeof headersTemplate === "object" ? headersTemplate : { "Content-Type": "application/json", "Origin": "example.com" },
             bodyTemplate: bodyTemplate && typeof bodyTemplate === "object" ? bodyTemplate : getDefaultBodyTemplateByType(normalizedType),
             stream: tpl.stream && typeof tpl.stream === "object" ? {
                 parser: (() => {
@@ -1331,7 +1335,8 @@
             customFields: customFields,
             customFieldMeta: customFieldMeta,
             customJsCode: String(tpl.customJsCode || ""),
-            customJsRunOnce: tpl.customJsRunOnce !== false
+            customJsRunOnce: tpl.customJsRunOnce !== false,
+            verifySsl: tpl.verifySsl !== false
         };
         if (tpl.subscriptionId) {
             normalized.subscriptionId = normalizeProviderId(tpl.subscriptionId);
@@ -1508,6 +1513,46 @@
         return merge(base, raw);
     };
 
+    const normalizeRawSubscriptionItem = (item) => {
+        if (!item || typeof item !== "object") return item;
+        if (item.id || item.type) return item;
+        const url = String(item.url || item.baseUrl || "").trim();
+        if (!url) return item;
+        const speeds = Array.isArray(item.speeds) ? item.speeds : [];
+        const rawModels = Array.isArray(item.models) ? item.models : [];
+        const hasSpeedsKey = Object.prototype.hasOwnProperty.call(item, "speeds");
+        if (hasSpeedsKey && speeds.length === 0 && rawModels.length === 0) return null;
+        const allModels = speeds.length > 0 ? speeds : rawModels;
+        const urlObj = (() => {
+            try { return new URL(url); } catch (e) { return null; }
+        })();
+        const host = urlObj ? urlObj.hostname : url.replace(/^https?:\/\//, "").replace(/[:\/].*$/, "");
+        const port = urlObj ? urlObj.port : "";
+        const label = urlObj ? host + (port ? ":" + port : "") : url;
+        const result = {
+            id: normalizeProviderId("ollama-" + host + (port ? "-" + port : "")),
+            label: label,
+            type: "ollama",
+            baseUrl: url.replace(/\/+$/, ""),
+            headersTemplate: { "Content-Type": "application/json", "Origin": "example.com" }
+        };
+        if (allModels.length > 0) {
+            result.modelGroups = allModels.map((m) => {
+                const modelId = String(typeof m === "string" ? m : (m.model || m.id || m.name || ""));
+                const speed = typeof m.speed === "number" ? m.speed : undefined;
+                const tag = speed !== undefined ? speed.toFixed(1) + " t/s" : "";
+                return {
+                    id: normalizeProviderId(modelId) || modelId,
+                    label: String(modelId),
+                    type: "text",
+                    models: [{ id: String(modelId), class: "", tag: tag }],
+                    selectedModel: String(modelId)
+                };
+            });
+        }
+        return result;
+    };
+
     const parseProviderExportPayload = (text) => {
         const raw = String(text || "").trim();
         if (!raw) return [];
@@ -1534,7 +1579,8 @@
         if (!subId) return [];
         return parseProviderExportPayload(text)
             .map((item) => {
-                const raw = mergeProviderDefaultsForImport(item);
+                const normalized = normalizeRawSubscriptionItem(item);
+                const raw = mergeProviderDefaultsForImport(normalized);
                 if (!raw || typeof raw !== "object") return null;
                 const clone = cloneDeep(raw);
                 clone.subscriptionId = subId;
@@ -8420,6 +8466,7 @@
 
             if (clone.supportsContinuousChat === true) delete clone.supportsContinuousChat;
             if (clone.customJsRunOnce === true) delete clone.customJsRunOnce;
+            if (clone.verifySsl === true) delete clone.verifySsl;
             if (clone.supportsVision !== undefined) {
                 const defaultSupportsVision = Array.isArray(clone.modelGroups)
                     && clone.modelGroups.some((group) => (group.type || "text") === "vision");
@@ -9067,6 +9114,12 @@
             providerSectionsContainer.querySelectorAll(".coolauxv-provider-select").forEach((checkbox) => {
                 checkbox.checked = selectedProviderIds.has(checkbox.dataset.providerId);
             });
+            providerSectionsContainer.querySelectorAll(".coolauxv-subscription-select").forEach((checkbox) => {
+                const idsStr = checkbox.dataset.subProviderIds;
+                if (!idsStr) return;
+                const ids = idsStr.split(",").filter(Boolean);
+                checkbox.checked = ids.length > 0 && ids.every(id => selectedProviderIds.has(id));
+            });
             providerSectionsContainer.querySelectorAll("[data-sort-kind=\"provider\"]").forEach((item) => {
                 item.draggable = !!isProviderBatchMode;
                 const handle = item.querySelector("[data-sort-handle=\"provider\"]");
@@ -9075,9 +9128,22 @@
                     item.classList.remove("coolauxv-dragging", "coolauxv-drag-over");
                 }
             });
-            if (!isProviderBatchMode) {
+            providerSectionsContainer.querySelectorAll("[data-sort-kind=\"subscription\"]").forEach((item) => {
+                item.draggable = !!isProviderBatchMode;
+                const handle = item.querySelector("[data-sort-handle=\"subscription\"]");
+                if (handle) handle.draggable = !!isProviderBatchMode;
+                if (!isProviderBatchMode) {
+                    item.classList.remove("coolauxv-dragging", "coolauxv-drag-over");
+                }
+            });
+            if (isProviderBatchMode) {
+                providerSectionsContainer.querySelectorAll("[data-subscription-section]").forEach((section) => {
+                    setSectionStateInstant(section, true);
+                });
+            } else {
                 draggingProviderId = "";
                 providerDragArmedId = "";
+                applyProviderSectionStates();
             }
         };
 
@@ -9099,7 +9165,8 @@
                 roles: { system: "system", user: "user", assistant: "assistant" },
                 headersTemplate: {
                     "Content-Type": "application/json",
-                    "Authorization": "Bearer {{apiKey}}"
+                    "Authorization": "Bearer {{apiKey}}",
+                    "Origin": "example.com"
                 },
                 bodyTemplate: defaultBodyTemplateForType("chat-completions"),
                 stream: {
@@ -9116,7 +9183,8 @@
                 display: Object.assign({}, DEFAULT_DISPLAY_FIELDS),
                 customFields: {},
                 customJsCode: "",
-                customJsRunOnce: true
+                customJsRunOnce: true,
+                verifySsl: true
             };
             const displayState = Object.assign({}, DEFAULT_DISPLAY_FIELDS, baseTemplate.display || {});
             let modelGroups = normalizeModelGroups(baseTemplate);
@@ -9327,6 +9395,13 @@
                             </div>
                         </div>
 
+                        <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">SSL 证书验证</div>
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none; margin-top:2px;">
+                            <input type="checkbox" id="coolauxv-provider-form-verify-ssl" ${baseTemplate.verifySsl !== false ? "checked" : ""}>
+                            验证 SSL 证书
+                        </label>
+                        <span style="font-size:11px; color:#888;">（关闭后可连接自签名/过期证书的服务器。Chrome 扩展通过调试模式实现，油猴版可能受浏览器限制）</span>
+
                         <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">自定义 JavaScript</div>
                         <div style="font-size:11px; color:#888;">
                             定义变量和函数，可在请求头/请求体/Base URL 中通过 <code>{&#123;变量名&#125;}</code> 引用。函数会被自动调用并取其返回值。
@@ -9431,6 +9506,7 @@
             const addCustomFieldBtn = box.querySelector("#coolauxv-provider-add-custom-field");
             const customJsInput = box.querySelector("#coolauxv-provider-form-custom-js");
             const jsRunOnceCheckbox = box.querySelector("#coolauxv-provider-form-js-run-once");
+            const verifySslCheckbox = box.querySelector("#coolauxv-provider-form-verify-ssl");
 
             let modeTab = "manual";
             let idTouched = false;
@@ -9839,6 +9915,7 @@
                     const customFieldMeta = buildCustomFieldMetaPayload();
                     const customJsCode = (customJsInput ? customJsInput.value : "").trim() || "";
                     const customJsRunOnce = !!(jsRunOnceCheckbox ? jsRunOnceCheckbox.checked : true);
+                    const verifySsl = !!(verifySslCheckbox ? verifySslCheckbox.checked : true);
                     const apiKeyValue = existing ? existing.apiKey : "";
                     const normalizedId = normalizeProviderId(idValue || "");
                     const generatedId = normalizeProviderId(label || `provider-${Date.now().toString(36)}`);
@@ -9915,7 +9992,8 @@
                         customFields: customFields,
                         customFieldMeta: customFieldMeta,
                         customJsCode: customJsCode,
-                        customJsRunOnce: customJsRunOnce
+                        customJsRunOnce: customJsRunOnce,
+                        verifySsl: verifySsl
                     });
 
                     if (!template) {
@@ -10159,9 +10237,14 @@
                 const providerHtml = providers.length
                     ? providers.map(renderProviderSectionHtml).join("")
                     : `<div style="font-size:12px; color:#999; padding:8px 2px;">该订阅暂无提供商。</div>`;
+                const subProviderIds = providers.map(p => p.id);
                 return `
-                    <div class="coolauxv-setting-group coolauxv-provider-subscription-group" data-subscription-id="${escapeAttr(sub.id)}">
+                    <div class="coolauxv-setting-group coolauxv-provider-subscription-group coolauxv-sort-item" data-sort-kind="subscription" data-subscription-id="${escapeAttr(sub.id)}" draggable="false">
                         <label class="coolauxv-setting-label">
+                            <span class="coolauxv-sort-handle coolauxv-provider-sort-handle" data-sort-handle="subscription" title="批量模式下拖动排序">⠿</span>
+                            <span class="coolauxv-provider-checkbox">
+                                <input type="checkbox" class="coolauxv-provider-select coolauxv-subscription-select" data-subscription-id="${escapeAttr(sub.id)}" data-sub-provider-ids="${escapeAttr(subProviderIds.join(","))}">
+                            </span>
                             <span class="coolauxv-provider-title">${escapeAttr(sub.name)}</span>
                             <span class="coolauxv-provider-subtitle">订阅 · ${providers.length} 个提供商</span>
                             <span class="coolauxv-link-btn" data-subscription-toggle="${escapeAttr(sub.id)}" style="margin-left:auto; cursor:pointer; user-select:none;">收起</span>
@@ -10171,6 +10254,7 @@
                         <div class="coolauxv-collapse-section" data-subscription-section="${escapeAttr(sub.id)}">
                             <div style="display:flex; gap:8px; justify-content:flex-end; margin:0 0 8px;">
                                 <button type="button" class="coolauxv-action-btn" data-action="share-subscription" data-subscription-id="${escapeAttr(sub.id)}" style="padding:4px 8px;">导出分享</button>
+                                <button type="button" class="coolauxv-action-btn" data-action="clear-subscription" data-subscription-id="${escapeAttr(sub.id)}" style="padding:4px 8px; background:#fff7ed; color:#c2410c; border-color:#fed7aa;">清空订阅</button>
                                 <button type="button" class="coolauxv-action-btn" data-action="delete-subscription" data-subscription-id="${escapeAttr(sub.id)}" style="padding:4px 8px; background:#ffe4e6; color:#b91c1c; border-color:#fecdd3;">删除订阅</button>
                             </div>
                             ${providerHtml}
@@ -11264,6 +11348,17 @@
                     copyProviderSharePayload(getProviderTemplates().filter((tpl) => tpl.subscriptionId === subId));
                     return;
                 }
+                if (action === "clear-subscription") {
+                    const subId = target.dataset.subscriptionId;
+                    if (!subId) return;
+                    if (!confirm("确定要清空该订阅的所有提供商吗？清空后需手动刷新订阅才能恢复。")) return;
+                    const removed = getProviderTemplates().filter((tpl) => tpl.subscriptionId === subId);
+                    replaceProviderSubscriptionTemplates(subId, []);
+                    removed.forEach((tpl) => clearProviderSecretFields(tpl.id));
+                    selectedProviderIds.clear();
+                    renderProviderUI();
+                    return;
+                }
                 if (action === "delete-subscription") {
                     const subId = target.dataset.subscriptionId;
                     if (!subId) return;
@@ -11327,6 +11422,19 @@
             providerSectionsContainer.addEventListener("change", (e) => {
                 const target = e.target;
                 if (!target) return;
+                if (target.classList.contains("coolauxv-subscription-select")) {
+                    const subId = target.dataset.subscriptionId;
+                    const idsStr = target.dataset.subProviderIds;
+                    if (!subId || !idsStr) return;
+                    const ids = idsStr.split(",").filter(Boolean);
+                    if (target.checked) {
+                        ids.forEach(id => selectedProviderIds.add(id));
+                    } else {
+                        ids.forEach(id => selectedProviderIds.delete(id));
+                    }
+                    updateBatchModeUI();
+                    return;
+                }
                 if (target.classList.contains("coolauxv-provider-select")) {
                     const providerId = target.dataset.providerId;
                     if (!providerId) return;
@@ -13585,6 +13693,22 @@
         } catch (err) {
             return false;
         }
+    };
+
+    const withCertBypass = async (template, fn) => {
+        if (!template || template.verifySsl !== false) return fn();
+        if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return fn();
+        try { await chrome.runtime.sendMessage({ action: "setIgnoreCertErrors", ignore: true }); } catch (e) { /* ignore */ }
+        try {
+            return await fn();
+        } finally {
+            try { await chrome.runtime.sendMessage({ action: "setIgnoreCertErrors", ignore: false }); } catch (e) { /* ignore */ }
+        }
+    };
+
+    const needsCertBypass = (template) => {
+        return template && template.verifySsl === false
+            && typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage;
     };
 
     const buildProviderHeaders = (template, context) => {
@@ -16004,19 +16128,20 @@
 
         const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
         const needsGmForHeaders = hasCustomHeaders(headers);
-        const shouldForceGmXhr = shouldForceGMRequestForUrl(url) || needsGmForHeaders;
+        const needsCertBypassForProvider = needsCertBypass(providerTemplate);
+        const shouldForceGmXhr = shouldForceGMRequestForUrl(url) || (needsGmForHeaders && !needsCertBypassForProvider);
 
         // 策略 A: Fetch
         if (!shouldForceGmXhr) {
             try {
                 Logger.info(`Fetch ${provider} Model: ${config.modelName}`);
                 abortController = new AbortController();
-                const response = await fetch(url, {
+                const response = await withCertBypass(providerTemplate, () => fetch(url, {
                     method: "POST",
                     headers: headers,
                     body: requestBody, // 使用已序列化的字符串
                     signal: abortController.signal
-                });
+                }));
 
                 if (!response.ok) {
                     if (response.status === 429) {
@@ -17927,19 +18052,20 @@
 
         const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
         const needsGmForHeaders = hasCustomHeaders(headers);
-        const shouldForceGmXhr = shouldForceGMRequestForUrl(url) || needsGmForHeaders;
+        const needsCertBypassForProvider = needsCertBypass(providerTemplate);
+        const shouldForceGmXhr = shouldForceGMRequestForUrl(url) || (needsGmForHeaders && !needsCertBypassForProvider);
 
         // 策略 A: Fetch (优先，避免缺少 @connect 时无法访问)
         if (!shouldForceGmXhr) {
             try {
                 Logger.info(`Fetch ${provider} Chat Model: ${config.modelVision}`);
                 abortController = new AbortController();
-                const response = await fetch(url, {
+                const response = await withCertBypass(providerTemplate, () => fetch(url, {
                     method: "POST",
                     headers: headers,
                     body: requestBody,
                     signal: abortController.signal
-                });
+                }));
 
                 if (!response.ok) {
                     stopRenderLoop();
