@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.6.2
+// @version      v16.6.3
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -280,6 +280,13 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.6.3
+        ## ✨ 新功能
+        *   支持获取 Chat Completions / OpenAI Responses 提供商的 API 模型列表，高级设置中可按提供商开启
+        *   支持可选的 Reasoning Effort 推理强度配置，高级设置启用后在主界面显示选择器
+        ## 🔧 问题修复
+        *   修复 OpenAI Responses 在部分情况下输出乱码的问题
+        ---
         v16.6.2
         ## 🔧 问题修复
         *   修复大模型提供商订阅解析失败的问题
@@ -608,6 +615,22 @@
         if (type === "ollama") return "ollama";
         if (type === "chat-no-history") return "chat-no-history";
         return "chat-completions";
+    };
+    const REASONING_EFFORT_OPTIONS = ["", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+    const normalizeReasoningEffort = (effort) => {
+        const value = String(effort || "").trim().toLowerCase();
+        return REASONING_EFFORT_OPTIONS.includes(value) ? value : "";
+    };
+    const applyProviderReasoningEffort = (template, normalizedType, payload) => {
+        const effort = normalizeReasoningEffort(template && template.reasoningEffort);
+        if (!template || template.supportsReasoningEffort !== true || !effort || !payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+        if (normalizedType === "openai-responses") {
+            const reasoning = payload.reasoning && typeof payload.reasoning === "object" && !Array.isArray(payload.reasoning) ? payload.reasoning : {};
+            payload.reasoning = Object.assign({}, reasoning, { effort: effort });
+        } else if (normalizedType === "chat-completions") {
+            payload.reasoning_effort = effort;
+        }
+        return payload;
     };
     const isChatCompletionsLikeProviderType = (type) => {
         const normalized = normalizeProviderType(type);
@@ -1315,6 +1338,9 @@
             id: normalizeProviderId(tpl.id),
             label: String(tpl.label || tpl.id || "Provider"),
             type: normalizedType,
+            supportsReasoningEffort: tpl.supportsReasoningEffort === true,
+            supportsModelList: tpl.supportsModelList === true,
+            reasoningEffort: normalizeReasoningEffort(tpl.reasoningEffort),
             baseUrl: String(tpl.baseUrl || ""),
             apiKey: String(tpl.apiKey || ""),
             apiKeyPlaceholder: String(tpl.apiKeyPlaceholder || ""),
@@ -9180,6 +9206,9 @@
                 id: "",
                 label: "",
                 type: "chat-completions",
+                supportsReasoningEffort: false,
+                supportsModelList: false,
+                reasoningEffort: "",
                 baseUrl: "",
                 apiKey: "",
                 apiKeyPlaceholder: "",
@@ -9357,6 +9386,23 @@
                             <option value="openai-responses" ${baseTemplate.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                         </select>
 
+                        <div class="coolauxv-sub-label">API 模型获取（高级可选）</div>
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-provider-form-model-list-enabled" ${baseTemplate.supportsModelList === true ? "checked" : ""}>
+                            在主界面显示“获取模型”
+                        </label>
+                        <div style="font-size:11px; color:#888;">默认关闭。仅适用于支持模型列表接口的 Chat Completions / Responses 提供商。</div>
+
+                        <div class="coolauxv-sub-label">Reasoning Effort（高级可选）</div>
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-provider-form-reasoning-enabled" ${baseTemplate.supportsReasoningEffort === true ? "checked" : ""}>
+                            启用推理强度参数，并在主界面显示选择器
+                        </label>
+                        <div id="coolauxv-provider-form-reasoning-controls" style="display:flex; gap:6px; flex-wrap:wrap;">
+                            ${REASONING_EFFORT_OPTIONS.map((effort) => `<button type="button" class="coolauxv-action-btn${effort === normalizeReasoningEffort(baseTemplate.reasoningEffort) ? " coolauxv-btn-primary" : ""}" data-reasoning-effort="${effort}" style="padding:4px 8px;">${effort || "默认"}</button>`).join("")}
+                        </div>
+                        <div style="font-size:11px; color:#888;">默认关闭；仅确认接口支持时启用。Chat Completions 使用 reasoning_effort，Responses 使用 reasoning.effort；选择“默认”不发送参数。</div>
+
                         <div class="coolauxv-sub-label coolauxv-sub-label-inline">支持识图 ({{supportsVision}})
                             <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="supportsVision" ${displayCheck("supportsVision")}> 默认展示
@@ -9513,6 +9559,24 @@
             const idInput = box.querySelector("#coolauxv-provider-form-id");
             const idWarning = box.querySelector("#coolauxv-provider-id-warning");
             const typeInput = box.querySelector("#coolauxv-provider-form-type");
+            const reasoningEnabledCheckbox = box.querySelector("#coolauxv-provider-form-reasoning-enabled");
+            const reasoningControls = box.querySelector("#coolauxv-provider-form-reasoning-controls");
+            let modalReasoningEffort = normalizeReasoningEffort(baseTemplate.reasoningEffort);
+            const refreshReasoningControls = () => {
+                const enabled = reasoningEnabledCheckbox.checked;
+                reasoningControls.style.opacity = enabled ? "1" : "0.45";
+                reasoningControls.querySelectorAll("button").forEach((button) => { button.disabled = !enabled; });
+            };
+            reasoningEnabledCheckbox.addEventListener("change", refreshReasoningControls);
+            reasoningControls.addEventListener("click", (e) => {
+                const button = e.target.closest("[data-reasoning-effort]");
+                if (!button || button.disabled) return;
+                modalReasoningEffort = normalizeReasoningEffort(button.dataset.reasoningEffort);
+                reasoningControls.querySelectorAll("button").forEach((item) => {
+                    item.classList.toggle("coolauxv-btn-primary", item === button);
+                });
+            });
+            refreshReasoningControls();
             const headersInput = box.querySelector("#coolauxv-provider-form-headers");
             const bodyInput = box.querySelector("#coolauxv-provider-form-body-template");
             const streamSection = box.querySelector("#coolauxv-provider-stream-section");
@@ -9992,6 +10056,9 @@
                         id: finalId,
                         label: finalLabel,
                         type: type,
+                        supportsReasoningEffort: reasoningEnabledCheckbox.checked,
+                        supportsModelList: box.querySelector("#coolauxv-provider-form-model-list-enabled").checked,
+                        reasoningEffort: modalReasoningEffort,
                         baseUrl: String(baseUrl || "").trim(),
                         apiKey: apiKeyValue,
                         apiKeyPlaceholder: String(apiKeyPlaceholder || "").trim(),
@@ -10311,6 +10378,33 @@
                 const showModels = provider.display ? provider.display.modelGroups !== false : true;
                 const providerContext = buildTemplateContext(provider, { apiKey: provider.apiKey || "" });
                 const resolvedProviderLabel = applyTemplateString(provider.label || provider.id || "", providerContext);
+                const supportsOpenAiModelList = provider.type === "chat-completions" || provider.type === "openai-responses";
+                const openAiControls = supportsOpenAiModelList && provider.supportsModelList === true
+                    ? `
+                        <div class="coolauxv-setting-group">
+                            <label class="coolauxv-setting-label">
+                                ${escapeAttr(resolvedProviderLabel || provider.label)} · API 模型
+                                <span class="coolauxv-sub-label" style="margin:0 0 0 6px;">${escapeAttr(getProviderTypeLabel(provider.type))}</span>
+                            </label>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                <button type="button" class="coolauxv-action-btn" data-action="fetch-provider-models" data-provider-id="${provider.id}">↻ 获取模型</button>
+                                <span data-model-fetch-status="${provider.id}" style="font-size:12px; color:#888;">自动从 /v1/models 获取并填入通用模型</span>
+                            </div>
+                        </div>
+                    `
+                    : "";
+                const reasoningControls = supportsOpenAiModelList && provider.supportsReasoningEffort === true
+                    ? `
+                        <div class="coolauxv-setting-group">
+                            <label class="coolauxv-setting-label">
+                                ${escapeAttr(resolvedProviderLabel || provider.label)} · Reasoning Effort
+                            </label>
+                            <select class="coolauxv-setting-input coolauxv-fixed-input" data-provider-reasoning-effort="${provider.id}" aria-label="推理强度">
+                                ${REASONING_EFFORT_OPTIONS.map((effort) => `<option value="${effort}" ${effort === normalizeReasoningEffort(provider.reasoningEffort) ? "selected" : ""}>${effort || "默认（不发送参数）"}</option>`).join("")}
+                            </select>
+                        </div>
+                    `
+                    : "";
                 const groupBlocks = showModels
                     ? groups.map((group) => {
                         const selectedModel = group.selectedModel || (group.models && group.models[0] ? (group.models[0].id || group.models[0].name || "") : "");
@@ -10336,6 +10430,8 @@
 
                 return `
                     <div class="coolauxv-model-provider-section${isVisible ? " coolauxv-model-visible" : ""}" data-model-provider-section="${provider.id}">
+                        ${openAiControls}
+                        ${reasoningControls}
                         ${groupBlocks}
                     </div>
                 `;
@@ -11864,7 +11960,50 @@
         }
 
         if (modelSectionsContainer) {
+            modelSectionsContainer.addEventListener("change", (e) => {
+                const target = e.target;
+                if (!target || !target.dataset || !target.dataset.providerReasoningEffort) return;
+                const templates = getProviderTemplates();
+                const provider = templates.find((item) => item.id === target.dataset.providerReasoningEffort);
+                if (!provider || provider.supportsReasoningEffort !== true) return;
+                provider.reasoningEffort = normalizeReasoningEffort(target.value);
+                saveProviderTemplates(templates);
+            });
             modelSectionsContainer.addEventListener("click", (e) => {
+                const fetchBtn = e.target.closest('[data-action="fetch-provider-models"]');
+                if (fetchBtn) {
+                    const providerId = fetchBtn.dataset.providerId;
+                    const templates = getProviderTemplates();
+                    const tpl = templates.find((item) => item.id === providerId);
+                    if (!tpl) return;
+                    const statusEl = modelSectionsContainer.querySelector(`[data-model-fetch-status="${providerId}"]`);
+                    const oldText = fetchBtn.textContent;
+                    fetchBtn.disabled = true;
+                    fetchBtn.textContent = "获取中...";
+                    if (statusEl) {
+                        statusEl.style.color = "#888";
+                        statusEl.textContent = "正在请求模型列表...";
+                    }
+                    fetchProviderModels(tpl)
+                        .then((result) => {
+                            const latestTemplates = getProviderTemplates();
+                            const latest = latestTemplates.find((item) => item.id === providerId);
+                            if (!latest) throw new Error("提供商已不存在");
+                            fillProviderModelGroups(latest, result.ids);
+                            saveProviderTemplates(latestTemplates);
+                            renderProviderUI();
+                            alert(`已获取并填入 ${result.ids.length} 个模型。`);
+                        })
+                        .catch((err) => {
+                            fetchBtn.disabled = false;
+                            fetchBtn.textContent = oldText;
+                            if (statusEl) {
+                                statusEl.style.color = "#dc2626";
+                                statusEl.textContent = err && err.message ? err.message : "获取模型失败";
+                            }
+                        });
+                    return;
+                }
                 const btn = e.target.closest(".coolauxv-model-btn");
                 if (!btn) return;
                 const providerId = btn.dataset.providerId;
@@ -13904,6 +14043,95 @@
         return cleaned;
     };
 
+    const buildProviderModelsUrl = (providerUrl) => {
+        const raw = String(providerUrl || "").trim();
+        if (!raw) return "";
+        const parsed = new URL(raw, typeof location !== "undefined" ? location.href : "http://localhost/");
+        const path = (parsed.pathname || "").replace(/\/+$/, "");
+        if (!path || path === "") {
+            parsed.pathname = "/v1/models";
+        } else if (/\/(?:chat\/completions|completions|responses)$/i.test(path)) {
+            parsed.pathname = path.replace(/\/(?:chat\/completions|completions|responses)$/i, "/models");
+        } else if (/\/models$/i.test(path)) {
+            parsed.pathname = path;
+        } else {
+            parsed.pathname = `${path}/models`;
+        }
+        parsed.hash = "";
+        return parsed.toString();
+    };
+
+    const parseProviderModelList = (payload) => {
+        const source = Array.isArray(payload)
+            ? payload
+            : (payload && Array.isArray(payload.data) ? payload.data
+                : (payload && Array.isArray(payload.models) ? payload.models : []));
+        const ids = [];
+        const seen = new Set();
+        source.forEach((item) => {
+            const id = typeof item === "string" ? item : (item && (item.id || item.model || item.name));
+            const value = String(id || "").trim();
+            if (!value || seen.has(value)) return;
+            seen.add(value);
+            ids.push(value);
+        });
+        return ids;
+    };
+
+    const fetchProviderModels = async (template) => {
+        if (!template) throw new Error("提供商配置不存在");
+        if (template.type !== "chat-completions" && template.type !== "openai-responses") {
+            throw new Error("仅支持 Chat Completions 和 OpenAI Responses 提供商");
+        }
+        const requestUrl = buildProviderModelsUrl(buildProviderUrl(template));
+        if (!requestUrl) throw new Error("请先填写 Base URL");
+        const headers = buildProviderHeaders(template, { apiKey: template.apiKey || "" });
+        if (typeof GM_xmlhttpRequest !== "function") throw new Error("当前环境不支持跨域请求");
+        const response = await withCertBypass(template, () => new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: requestUrl,
+                headers: headers,
+                responseType: "json",
+                timeout: 15000,
+                onload: (res) => {
+                    const status = Number(res && res.status) || 0;
+                    let payload = res && res.response;
+                    if (!payload || typeof payload !== "object") {
+                        try { payload = JSON.parse(String(res && (res.responseText || res.response) || "")); } catch (e) { payload = null; }
+                    }
+                    if (status < 200 || status >= 300) {
+                        const message = payload && payload.error
+                            ? (payload.error.message || String(payload.error))
+                            : `HTTP ${status || "请求失败"}`;
+                        reject(new Error(message));
+                        return;
+                    }
+                    resolve(payload);
+                },
+                onerror: () => reject(new Error("获取模型列表失败，请检查地址、Key 和网络")),
+                ontimeout: () => reject(new Error("获取模型列表超时"))
+            });
+        }));
+        const ids = parseProviderModelList(response);
+        if (!ids.length) throw new Error("接口返回中没有可识别的模型 ID");
+        return { url: requestUrl, ids: ids };
+    };
+
+    const fillProviderModelGroups = (template, ids) => {
+        const groups = Array.isArray(template.modelGroups) ? template.modelGroups : [];
+        if (!groups.length) return;
+        const textGroups = groups.filter((group) => group.type !== "vision");
+        const targets = textGroups.length ? textGroups : [groups[0]];
+        targets.forEach((group) => {
+            const existing = new Map((group.models || []).map((item) => [String(item.id || item.name || ""), item]));
+            group.models = ids.map((id) => existing.has(id)
+                ? Object.assign({}, existing.get(id), { id: id })
+                : { id: id, class: "", tag: "" });
+            if (!group.selectedModel || !ids.includes(group.selectedModel)) group.selectedModel = ids[0];
+        });
+    };
+
     const ensureCustomJsContextReady = async (template, maxRetries = 3, retryDelayMs = 120, options = {}) => {
         if (!template || !hasNonEmptyCustomJsCode(template)) return;
         const providerId = template.id;
@@ -14158,7 +14386,7 @@
         const trigger = Object.prototype.hasOwnProperty.call(customFields, "trigger")
             ? customFields.trigger
             : "submit-message";
-        return applyTemplateValue(bodyTemplate, buildTemplateContext(template, Object.assign({}, providerRuntimeFields, {
+        const payload = applyTemplateValue(bodyTemplate, buildTemplateContext(template, Object.assign({}, providerRuntimeFields, {
             model: model,
             messages: payloadMessages,
             input: payloadInput,
@@ -14175,6 +14403,7 @@
             conversationId: providerRuntimeFields[DEFAULT_PROVIDER_SESSION_FIELD_KEY] || "",
             providerRuntimeFields: providerRuntimeFields
         })));
+        return applyProviderReasoningEffort(template, normalizedType, payload);
     }
 
     function resolveTemplateStreamConfig(template) {

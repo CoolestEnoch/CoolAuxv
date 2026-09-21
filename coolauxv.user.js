@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.6.2
+// @version      v16.6.3
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -264,6 +264,13 @@
     ];
 
     const LATEST_CHANGELOG = `
+        v16.6.3
+        ## ✨ 新功能
+        *   支持获取 Chat Completions / OpenAI Responses 提供商的 API 模型列表，高级设置中可按提供商开启
+        *   支持可选的 Reasoning Effort 推理强度配置，高级设置启用后在主界面显示选择器
+        ## 🔧 问题修复
+        *   修复 OpenAI Responses 在部分情况下输出乱码的问题
+        ---
         v16.6.2
         ## 🔧 问题修复
         *   修复大模型提供商订阅解析失败的问题
@@ -593,6 +600,22 @@
         if (type === "ollama") return "ollama";
         if (type === "chat-no-history") return "chat-no-history";
         return "chat-completions";
+    };
+    const REASONING_EFFORT_OPTIONS = ["", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+    const normalizeReasoningEffort = (effort) => {
+        const value = String(effort || "").trim().toLowerCase();
+        return REASONING_EFFORT_OPTIONS.includes(value) ? value : "";
+    };
+    const applyProviderReasoningEffort = (template, normalizedType, payload) => {
+        const effort = normalizeReasoningEffort(template && template.reasoningEffort);
+        if (!template || template.supportsReasoningEffort !== true || !effort || !payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+        if (normalizedType === "openai-responses") {
+            const reasoning = payload.reasoning && typeof payload.reasoning === "object" && !Array.isArray(payload.reasoning) ? payload.reasoning : {};
+            payload.reasoning = Object.assign({}, reasoning, { effort: effort });
+        } else if (normalizedType === "chat-completions") {
+            payload.reasoning_effort = effort;
+        }
+        return payload;
     };
     const isChatCompletionsLikeProviderType = (type) => {
         const normalized = normalizeProviderType(type);
@@ -1300,6 +1323,9 @@
             id: normalizeProviderId(tpl.id),
             label: String(tpl.label || tpl.id || "Provider"),
             type: normalizedType,
+            supportsReasoningEffort: tpl.supportsReasoningEffort === true,
+            supportsModelList: tpl.supportsModelList === true,
+            reasoningEffort: normalizeReasoningEffort(tpl.reasoningEffort),
             baseUrl: String(tpl.baseUrl || ""),
             apiKey: String(tpl.apiKey || ""),
             apiKeyPlaceholder: String(tpl.apiKeyPlaceholder || ""),
@@ -9157,6 +9183,9 @@
                 id: "",
                 label: "",
                 type: "chat-completions",
+                supportsReasoningEffort: false,
+                supportsModelList: false,
+                reasoningEffort: "",
                 baseUrl: "",
                 apiKey: "",
                 apiKeyPlaceholder: "",
@@ -9334,6 +9363,23 @@
                             <option value="openai-responses" ${baseTemplate.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                         </select>
 
+                        <div class="coolauxv-sub-label">API 模型获取（高级可选）</div>
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-provider-form-model-list-enabled" ${baseTemplate.supportsModelList === true ? "checked" : ""}>
+                            在主界面显示“获取模型”
+                        </label>
+                        <div style="font-size:11px; color:#888;">默认关闭。仅适用于支持模型列表接口的 Chat Completions / Responses 提供商。</div>
+
+                        <div class="coolauxv-sub-label">Reasoning Effort（高级可选）</div>
+                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
+                            <input type="checkbox" id="coolauxv-provider-form-reasoning-enabled" ${baseTemplate.supportsReasoningEffort === true ? "checked" : ""}>
+                            启用推理强度参数，并在主界面显示选择器
+                        </label>
+                        <div id="coolauxv-provider-form-reasoning-controls" style="display:flex; gap:6px; flex-wrap:wrap;">
+                            ${REASONING_EFFORT_OPTIONS.map((effort) => `<button type="button" class="coolauxv-action-btn${effort === normalizeReasoningEffort(baseTemplate.reasoningEffort) ? " coolauxv-btn-primary" : ""}" data-reasoning-effort="${effort}" style="padding:4px 8px;">${effort || "默认"}</button>`).join("")}
+                        </div>
+                        <div style="font-size:11px; color:#888;">默认关闭；仅确认接口支持时启用。Chat Completions 使用 reasoning_effort，Responses 使用 reasoning.effort；选择“默认”不发送参数。</div>
+
                         <div class="coolauxv-sub-label coolauxv-sub-label-inline">支持识图 ({{supportsVision}})
                             <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="supportsVision" ${displayCheck("supportsVision")}> 默认展示
@@ -9490,6 +9536,24 @@
             const idInput = box.querySelector("#coolauxv-provider-form-id");
             const idWarning = box.querySelector("#coolauxv-provider-id-warning");
             const typeInput = box.querySelector("#coolauxv-provider-form-type");
+            const reasoningEnabledCheckbox = box.querySelector("#coolauxv-provider-form-reasoning-enabled");
+            const reasoningControls = box.querySelector("#coolauxv-provider-form-reasoning-controls");
+            let modalReasoningEffort = normalizeReasoningEffort(baseTemplate.reasoningEffort);
+            const refreshReasoningControls = () => {
+                const enabled = reasoningEnabledCheckbox.checked;
+                reasoningControls.style.opacity = enabled ? "1" : "0.45";
+                reasoningControls.querySelectorAll("button").forEach((button) => { button.disabled = !enabled; });
+            };
+            reasoningEnabledCheckbox.addEventListener("change", refreshReasoningControls);
+            reasoningControls.addEventListener("click", (e) => {
+                const button = e.target.closest("[data-reasoning-effort]");
+                if (!button || button.disabled) return;
+                modalReasoningEffort = normalizeReasoningEffort(button.dataset.reasoningEffort);
+                reasoningControls.querySelectorAll("button").forEach((item) => {
+                    item.classList.toggle("coolauxv-btn-primary", item === button);
+                });
+            });
+            refreshReasoningControls();
             const headersInput = box.querySelector("#coolauxv-provider-form-headers");
             const bodyInput = box.querySelector("#coolauxv-provider-form-body-template");
             const streamSection = box.querySelector("#coolauxv-provider-stream-section");
@@ -9969,6 +10033,9 @@
                         id: finalId,
                         label: finalLabel,
                         type: type,
+                        supportsReasoningEffort: reasoningEnabledCheckbox.checked,
+                        supportsModelList: box.querySelector("#coolauxv-provider-form-model-list-enabled").checked,
+                        reasoningEffort: modalReasoningEffort,
                         baseUrl: String(baseUrl || "").trim(),
                         apiKey: apiKeyValue,
                         apiKeyPlaceholder: String(apiKeyPlaceholder || "").trim(),
@@ -10288,6 +10355,33 @@
                 const showModels = provider.display ? provider.display.modelGroups !== false : true;
                 const providerContext = buildTemplateContext(provider, { apiKey: provider.apiKey || "" });
                 const resolvedProviderLabel = applyTemplateString(provider.label || provider.id || "", providerContext);
+                const supportsOpenAiModelList = provider.type === "chat-completions" || provider.type === "openai-responses";
+                const openAiControls = supportsOpenAiModelList && provider.supportsModelList === true
+                    ? `
+                        <div class="coolauxv-setting-group">
+                            <label class="coolauxv-setting-label">
+                                ${escapeAttr(resolvedProviderLabel || provider.label)} · API 模型
+                                <span class="coolauxv-sub-label" style="margin:0 0 0 6px;">${escapeAttr(getProviderTypeLabel(provider.type))}</span>
+                            </label>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                <button type="button" class="coolauxv-action-btn" data-action="fetch-provider-models" data-provider-id="${provider.id}">↻ 获取模型</button>
+                                <span data-model-fetch-status="${provider.id}" style="font-size:12px; color:#888;">自动从 /v1/models 获取并填入通用模型</span>
+                            </div>
+                        </div>
+                    `
+                    : "";
+                const reasoningControls = supportsOpenAiModelList && provider.supportsReasoningEffort === true
+                    ? `
+                        <div class="coolauxv-setting-group">
+                            <label class="coolauxv-setting-label">
+                                ${escapeAttr(resolvedProviderLabel || provider.label)} · Reasoning Effort
+                            </label>
+                            <select class="coolauxv-setting-input coolauxv-fixed-input" data-provider-reasoning-effort="${provider.id}" aria-label="推理强度">
+                                ${REASONING_EFFORT_OPTIONS.map((effort) => `<option value="${effort}" ${effort === normalizeReasoningEffort(provider.reasoningEffort) ? "selected" : ""}>${effort || "默认（不发送参数）"}</option>`).join("")}
+                            </select>
+                        </div>
+                    `
+                    : "";
                 const groupBlocks = showModels
                     ? groups.map((group) => {
                         const selectedModel = group.selectedModel || (group.models && group.models[0] ? (group.models[0].id || group.models[0].name || "") : "");
@@ -10313,6 +10407,8 @@
 
                 return `
                     <div class="coolauxv-model-provider-section${isVisible ? " coolauxv-model-visible" : ""}" data-model-provider-section="${provider.id}">
+                        ${openAiControls}
+                        ${reasoningControls}
                         ${groupBlocks}
                     </div>
                 `;
@@ -11841,7 +11937,50 @@
         }
 
         if (modelSectionsContainer) {
+            modelSectionsContainer.addEventListener("change", (e) => {
+                const target = e.target;
+                if (!target || !target.dataset || !target.dataset.providerReasoningEffort) return;
+                const templates = getProviderTemplates();
+                const provider = templates.find((item) => item.id === target.dataset.providerReasoningEffort);
+                if (!provider || provider.supportsReasoningEffort !== true) return;
+                provider.reasoningEffort = normalizeReasoningEffort(target.value);
+                saveProviderTemplates(templates);
+            });
             modelSectionsContainer.addEventListener("click", (e) => {
+                const fetchBtn = e.target.closest('[data-action="fetch-provider-models"]');
+                if (fetchBtn) {
+                    const providerId = fetchBtn.dataset.providerId;
+                    const templates = getProviderTemplates();
+                    const tpl = templates.find((item) => item.id === providerId);
+                    if (!tpl) return;
+                    const statusEl = modelSectionsContainer.querySelector(`[data-model-fetch-status="${providerId}"]`);
+                    const oldText = fetchBtn.textContent;
+                    fetchBtn.disabled = true;
+                    fetchBtn.textContent = "获取中...";
+                    if (statusEl) {
+                        statusEl.style.color = "#888";
+                        statusEl.textContent = "正在请求模型列表...";
+                    }
+                    fetchProviderModels(tpl)
+                        .then((result) => {
+                            const latestTemplates = getProviderTemplates();
+                            const latest = latestTemplates.find((item) => item.id === providerId);
+                            if (!latest) throw new Error("提供商已不存在");
+                            fillProviderModelGroups(latest, result.ids);
+                            saveProviderTemplates(latestTemplates);
+                            renderProviderUI();
+                            alert(`已获取并填入 ${result.ids.length} 个模型。`);
+                        })
+                        .catch((err) => {
+                            fetchBtn.disabled = false;
+                            fetchBtn.textContent = oldText;
+                            if (statusEl) {
+                                statusEl.style.color = "#dc2626";
+                                statusEl.textContent = err && err.message ? err.message : "获取模型失败";
+                            }
+                        });
+                    return;
+                }
                 const btn = e.target.closest(".coolauxv-model-btn");
                 if (!btn) return;
                 const providerId = btn.dataset.providerId;
@@ -13695,6 +13834,189 @@
         }
     };
 
+    const isFirefoxUserscript = () => typeof navigator !== "undefined"
+        && /Firefox\//i.test(navigator.userAgent)
+        && typeof GM_info !== "undefined";
+
+    // A Tampermonkey stream may exist before any response bytes arrive.
+    const requestProviderWithGM = (options) => {
+        if (!isFirefoxUserscript()) return GM_xmlhttpRequest(options);
+        let request;
+        let finished = false;
+        let streamController = null;
+        let streamReader = null;
+        let receivedBytes = 0;
+        const startedAt = Date.now();
+        const diagnosticId = generateRequestId();
+        let lastReadyState = -1;
+        let lastStatus = 0;
+        let targetHost = "";
+        try { targetHost = new URL(options.url, location.href).host; } catch (e) { /* invalid URL */ }
+        const diagnostics = () => ({
+            requestId: diagnosticId,
+            targetHost: targetHost,
+            elapsedMs: Date.now() - startedAt,
+            readyState: lastReadyState,
+            status: lastStatus,
+            receivedSize: receivedBytes,
+            receivedUnit: streamReader ? "bytes" : "characters"
+        });
+        const updateResponseState = (res) => {
+            if (typeof res.readyState === "number") lastReadyState = res.readyState;
+            if (typeof res.status === "number") lastStatus = res.status;
+        };
+        Logger.debug("Firefox GM request start", {
+            ...diagnostics(),
+            method: options.method || "GET",
+            fetch: options.fetch,
+            responseType: options.responseType || "text",
+            idleTimeoutMs: 60000,
+            requestTimeoutMs: options.timeout || 0,
+            scriptHandler: GM_info.scriptHandler || "",
+            handlerVersion: GM_info.version || ""
+        });
+        let timer;
+        const armTimer = () => {
+            clearTimeout(timer);
+            timer = setTimeout(() => finishError(new Error(
+                receivedBytes ? "GM 响应中断：60 秒未收到新数据。" : "GM 请求 60 秒未收到响应正文，当前请求已中止。"
+            )), 60000);
+        };
+        const finishError = (err) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            if (streamController) {
+                err.streamReadFailure = true;
+                err.retryableEmptyResponse = receivedBytes === 0;
+                try { streamController.error(err); } catch (e) { /* already closed */ }
+            }
+            if (streamReader) streamReader.cancel().catch(() => {});
+            Logger.error("Firefox GM request failed", {
+                ...diagnostics(),
+                message: err && err.message,
+                receivedBytes: receivedBytes,
+                elapsedMs: Date.now() - startedAt
+            });
+            try { if (request && request.abort) request.abort(); } catch (e) { /* still report failure */ }
+            if (options.onerror) options.onerror(err);
+        };
+        const markResponse = (res) => {
+            if (!streamReader && typeof res.responseText === "string" && res.responseText.length > receivedBytes) {
+                const isFirstChunk = receivedBytes === 0;
+                receivedBytes = res.responseText.length;
+                if (isFirstChunk) Logger.debug("Firefox GM first data", diagnostics());
+                armTimer();
+            }
+        };
+        armTimer();
+        try {
+            request = GM_xmlhttpRequest({
+                ...options,
+                onreadystatechange: (res) => {
+                    if (finished) return;
+                    const previousState = lastReadyState;
+                    const previousStatus = lastStatus;
+                    updateResponseState(res);
+                    if (lastReadyState !== previousState || lastStatus !== previousStatus) {
+                        Logger.debug("Firefox GM readyState", diagnostics());
+                    }
+                    if (options.onreadystatechange) options.onreadystatechange(res);
+                },
+                onloadstart: (res) => {
+                    if (finished) return;
+                    updateResponseState(res);
+                    Logger.debug("Firefox GM loadstart", {
+                        ...diagnostics(),
+                        hasStreamReader: !!(res.response && typeof res.response.getReader === "function")
+                    });
+                    markResponse(res);
+                    if (res.response && typeof res.response.getReader === "function") {
+                        streamReader = res.response.getReader();
+                        const stream = new ReadableStream({
+                            start(controller) { streamController = controller; },
+                            async pull(controller) {
+                                try {
+                                    const { done, value } = await streamReader.read();
+                                    if (finished) return;
+                                    if (done) {
+                                        Logger.debug("Firefox GM stream done", diagnostics());
+                                        if (receivedBytes === 0) {
+                                            finishError(new Error("GM 流已结束，但未收到任何正文（空流响应）。"));
+                                            return;
+                                        }
+                                        finished = true;
+                                        clearTimeout(timer);
+                                        controller.close();
+                                    } else {
+                                        if (value && value.byteLength) {
+                                            const isFirstChunk = receivedBytes === 0;
+                                            receivedBytes += value.byteLength;
+                                            if (isFirstChunk) Logger.debug("Firefox GM first data", diagnostics());
+                                            armTimer();
+                                        }
+                                        controller.enqueue(value);
+                                    }
+                                } catch (err) { finishError(err); }
+                            },
+                            cancel() {
+                                Logger.debug("Firefox GM stream cancelled", diagnostics());
+                                finished = true;
+                                clearTimeout(timer);
+                                try { if (request && request.abort) request.abort(); } catch (e) { /* aborted */ }
+                                return streamReader.cancel();
+                            }
+                        });
+                        if (options.onloadstart) options.onloadstart({ ...res, response: stream });
+                        return;
+                    }
+                    if (options.onloadstart) options.onloadstart(res);
+                },
+                onprogress: (res) => {
+                    if (finished) return;
+                    updateResponseState(res);
+                    markResponse(res);
+                    if (options.onprogress) options.onprogress(res);
+                },
+                onload: (res) => {
+                    if (finished) return;
+                    updateResponseState(res);
+                    Logger.debug("Firefox GM load", {
+                        ...diagnostics(),
+                        waitingForStreamEnd: !!streamReader
+                    });
+                    if (!streamReader) {
+                        if (!res.status || (res.status === 200 && !String(res.responseText || "").trim())) {
+                            finishError(new Error("GM 请求已结束，但未收到有效响应。"));
+                            return;
+                        }
+                        finished = true;
+                        clearTimeout(timer);
+                    }
+                    if (options.onload) options.onload(res);
+                },
+                onerror: finishError,
+                ontimeout: () => finishError(new Error("Provider 请求超时")),
+                onabort: () => finishError(new Error("Provider 请求已中止"))
+            });
+        } catch (err) {
+            finishError(err);
+        }
+        return {
+            abort() {
+                if (finished) return;
+                Logger.debug("Firefox GM request cancelled", diagnostics());
+                finished = true;
+                clearTimeout(timer);
+                if (streamController) {
+                    try { streamController.close(); } catch (e) { /* already closed */ }
+                }
+                if (streamReader) streamReader.cancel().catch(() => {});
+                if (request && request.abort) request.abort();
+            }
+        };
+    };
+
     const withCertBypass = async (template, fn) => {
         if (!template || template.verifySsl !== false) return fn();
         if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return fn();
@@ -13723,6 +14045,95 @@
             cleaned[key] = str;
         });
         return cleaned;
+    };
+
+    const buildProviderModelsUrl = (providerUrl) => {
+        const raw = String(providerUrl || "").trim();
+        if (!raw) return "";
+        const parsed = new URL(raw, typeof location !== "undefined" ? location.href : "http://localhost/");
+        const path = (parsed.pathname || "").replace(/\/+$/, "");
+        if (!path || path === "") {
+            parsed.pathname = "/v1/models";
+        } else if (/\/(?:chat\/completions|completions|responses)$/i.test(path)) {
+            parsed.pathname = path.replace(/\/(?:chat\/completions|completions|responses)$/i, "/models");
+        } else if (/\/models$/i.test(path)) {
+            parsed.pathname = path;
+        } else {
+            parsed.pathname = `${path}/models`;
+        }
+        parsed.hash = "";
+        return parsed.toString();
+    };
+
+    const parseProviderModelList = (payload) => {
+        const source = Array.isArray(payload)
+            ? payload
+            : (payload && Array.isArray(payload.data) ? payload.data
+                : (payload && Array.isArray(payload.models) ? payload.models : []));
+        const ids = [];
+        const seen = new Set();
+        source.forEach((item) => {
+            const id = typeof item === "string" ? item : (item && (item.id || item.model || item.name));
+            const value = String(id || "").trim();
+            if (!value || seen.has(value)) return;
+            seen.add(value);
+            ids.push(value);
+        });
+        return ids;
+    };
+
+    const fetchProviderModels = async (template) => {
+        if (!template) throw new Error("提供商配置不存在");
+        if (template.type !== "chat-completions" && template.type !== "openai-responses") {
+            throw new Error("仅支持 Chat Completions 和 OpenAI Responses 提供商");
+        }
+        const requestUrl = buildProviderModelsUrl(buildProviderUrl(template));
+        if (!requestUrl) throw new Error("请先填写 Base URL");
+        const headers = buildProviderHeaders(template, { apiKey: template.apiKey || "" });
+        if (typeof GM_xmlhttpRequest !== "function") throw new Error("当前环境不支持跨域请求");
+        const response = await withCertBypass(template, () => new Promise((resolve, reject) => {
+            GM_xmlhttpRequest({
+                method: "GET",
+                url: requestUrl,
+                headers: headers,
+                responseType: "json",
+                timeout: 15000,
+                onload: (res) => {
+                    const status = Number(res && res.status) || 0;
+                    let payload = res && res.response;
+                    if (!payload || typeof payload !== "object") {
+                        try { payload = JSON.parse(String(res && (res.responseText || res.response) || "")); } catch (e) { payload = null; }
+                    }
+                    if (status < 200 || status >= 300) {
+                        const message = payload && payload.error
+                            ? (payload.error.message || String(payload.error))
+                            : `HTTP ${status || "请求失败"}`;
+                        reject(new Error(message));
+                        return;
+                    }
+                    resolve(payload);
+                },
+                onerror: () => reject(new Error("获取模型列表失败，请检查地址、Key 和网络")),
+                ontimeout: () => reject(new Error("获取模型列表超时"))
+            });
+        }));
+        const ids = parseProviderModelList(response);
+        if (!ids.length) throw new Error("接口返回中没有可识别的模型 ID");
+        return { url: requestUrl, ids: ids };
+    };
+
+    const fillProviderModelGroups = (template, ids) => {
+        const groups = Array.isArray(template.modelGroups) ? template.modelGroups : [];
+        if (!groups.length) return;
+        const textGroups = groups.filter((group) => group.type !== "vision");
+        const targets = textGroups.length ? textGroups : [groups[0]];
+        targets.forEach((group) => {
+            const existing = new Map((group.models || []).map((item) => [String(item.id || item.name || ""), item]));
+            group.models = ids.map((id) => existing.has(id)
+                ? Object.assign({}, existing.get(id), { id: id })
+                : { id: id, class: "", tag: "" });
+            if (!group.selectedModel || !ids.includes(group.selectedModel)) group.selectedModel = ids[0];
+        });
     };
 
     const hasCustomHeaders = (headers) => {
@@ -13930,7 +14341,7 @@
         const trigger = Object.prototype.hasOwnProperty.call(customFields, "trigger")
             ? customFields.trigger
             : "submit-message";
-        return applyTemplateValue(bodyTemplate, buildTemplateContext(template, Object.assign({}, providerRuntimeFields, {
+        const payload = applyTemplateValue(bodyTemplate, buildTemplateContext(template, Object.assign({}, providerRuntimeFields, {
             model: model,
             messages: payloadMessages,
             input: payloadInput,
@@ -13947,6 +14358,7 @@
             conversationId: providerRuntimeFields[DEFAULT_PROVIDER_SESSION_FIELD_KEY] || "",
             providerRuntimeFields: providerRuntimeFields
         })));
+        return applyProviderReasoningEffort(template, normalizedType, payload);
     }
 
     function resolveTemplateStreamConfig(template) {
@@ -16129,7 +16541,7 @@
         const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
         const needsGmForHeaders = hasCustomHeaders(headers);
         const needsCertBypassForProvider = needsCertBypass(providerTemplate);
-        const shouldForceGmXhr = shouldForceGMRequestForUrl(url) || (needsGmForHeaders && !needsCertBypassForProvider);
+        const shouldForceGmXhr = isFirefoxUserscript() || shouldForceGMRequestForUrl(url) || (needsGmForHeaders && !needsCertBypassForProvider);
 
         // 策略 A: Fetch
         if (!shouldForceGmXhr) {
@@ -16242,7 +16654,12 @@
         let gmRawText = "";
         let isStreamModeActive = false;
         const isMixedProtocolRequest = shouldForceGMRequestForUrl(url);
-        const gmRequestAttempts = isMixedProtocolRequest
+        const gmRequestAttempts = isFirefoxUserscript()
+            ? [
+                { streamMode: "stream", fetchMode: true, label: "stream-fetch" },
+                { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" }
+            ]
+            : isMixedProtocolRequest
             ? [
                 { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" },
                 { streamMode: "progress", fetchMode: true, label: "onprogress-fetch" },
@@ -16320,6 +16737,8 @@
 
         const startSingleActionGmRequest = () => {
             const currentAttempt = getCurrentSingleActionAttempt();
+            const attemptIndex = gmAttemptIndex;
+            let attemptFailed = false;
             const currentUseProgressStreamMode = currentAttempt.streamMode === "progress";
             Logger.info(`GM 请求尝试 ${gmAttemptIndex + 1}/${gmRequestAttempts.length}（single action）：${currentAttempt.label}`);
             if (currentUseProgressStreamMode && isMixedProtocolRequest) {
@@ -16356,6 +16775,7 @@
                             try {
                                 while (true) {
                                     const { done, value } = await reader.read();
+                                    if (attemptFailed || attemptIndex !== gmAttemptIndex || ignoreIncomingOutput) return;
                                     if (done) break;
                                     const chunk = decoder.decode(value, { stream: true });
                                     flushSingleActionStreamChunk(chunk);
@@ -16363,7 +16783,7 @@
                             } catch (e) {
                                 Logger.error("Stream Read Error:", e);
                             } finally {
-                                finalizeSingleActionStream();
+                                if (!attemptFailed && attemptIndex === gmAttemptIndex) finalizeSingleActionStream();
                             }
                         })();
                     }
@@ -16484,7 +16904,8 @@
                 onerror: (e) => {
                     if (ignoreIncomingOutput) return;
                     Logger.error("GM onerror (single action)", buildErrorDebugInfo(e));
-                    if (retrySingleActionGmRequest("onerror", e)) return;
+                    attemptFailed = true;
+                    if ((!e || !e.streamReadFailure || e.retryableEmptyResponse) && retrySingleActionGmRequest("onerror", e)) return;
                     stopRenderLoop();
                     if (streamTextBuffer.length > 0 || streamReasoningBuffer.length > 0) {
                         resultDiv.innerHTML += "<br><br><span style='color:red; font-size:12px; font-weight:bold;'>[网络连接中断，但已保留现有内容]</span>";
@@ -16515,7 +16936,7 @@
             if (typeof currentAttempt.fetchMode === "boolean") {
                 requestOptions.fetch = currentAttempt.fetchMode;
             }
-            gmRequest = GM_xmlhttpRequest(requestOptions);
+            gmRequest = requestProviderWithGM(requestOptions);
         };
 
         startSingleActionGmRequest();
@@ -17840,7 +18261,7 @@
             actionId: resolvedActionId
         }));
 
-        gmRequest = GM_xmlhttpRequest({
+        gmRequest = requestProviderWithGM({
             method: "POST",
             url: url,
             headers: headers,
@@ -18053,7 +18474,7 @@
         const headers = buildProviderHeaders(providerTemplate, { apiKey: config.apiKey });
         const needsGmForHeaders = hasCustomHeaders(headers);
         const needsCertBypassForProvider = needsCertBypass(providerTemplate);
-        const shouldForceGmXhr = shouldForceGMRequestForUrl(url) || (needsGmForHeaders && !needsCertBypassForProvider);
+        const shouldForceGmXhr = isFirefoxUserscript() || shouldForceGMRequestForUrl(url) || (needsGmForHeaders && !needsCertBypassForProvider);
 
         // 策略 A: Fetch (优先，避免缺少 @connect 时无法访问)
         if (!shouldForceGmXhr) {
@@ -18163,7 +18584,12 @@
 
         let chatStreamActive = false;
         const isMixedProtocolChatRequest = shouldForceGMRequestForUrl(url);
-        const chatGmRequestAttempts = isMixedProtocolChatRequest
+        const chatGmRequestAttempts = isFirefoxUserscript()
+            ? [
+                { streamMode: "stream", fetchMode: true, label: "stream-fetch" },
+                { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" }
+            ]
+            : isMixedProtocolChatRequest
             ? [
                 { streamMode: "progress", fetchMode: false, label: "onprogress-xhr" },
                 { streamMode: "progress", fetchMode: true, label: "onprogress-fetch" },
@@ -18249,6 +18675,8 @@
 
         const startChatGmRequest = () => {
             const currentAttempt = getCurrentChatAttempt();
+            const attemptIndex = chatGmAttemptIndex;
+            let attemptFailed = false;
             const currentUseProgressStreamMode = currentAttempt.streamMode === "progress";
             Logger.info(`GM 请求尝试 ${chatGmAttemptIndex + 1}/${chatGmRequestAttempts.length}（chat）：${currentAttempt.label}`);
             if (currentUseProgressStreamMode && isMixedProtocolChatRequest) {
@@ -18287,6 +18715,7 @@
                             try {
                                 while (true) {
                                     const { done, value } = await reader.read();
+                                    if (attemptFailed || attemptIndex !== chatGmAttemptIndex || ignoreIncomingOutput) return;
                                     if (done) break;
                                     const chunk = decoder.decode(value, { stream: true });
                                     flushChatStreamChunk(chunk);
@@ -18295,7 +18724,7 @@
                                 Logger.error("Chat Stream Error", e);
                                 streamErr = `流读取错误: ${e.message}`;
                             } finally {
-                                finalizeChatStream(actionToken, streamErr);
+                                if (!attemptFailed && attemptIndex === chatGmAttemptIndex) finalizeChatStream(actionToken, streamErr);
                             }
                         })();
                     }
@@ -18389,7 +18818,8 @@
                     if (ignoreIncomingOutput) return;
                     if (streamErrorHandled) return;
                     Logger.error("GM onerror (chat)", buildErrorDebugInfo(e));
-                    if (retryChatGmRequest("onerror", e)) return;
+                    attemptFailed = true;
+                    if ((!e || !e.streamReadFailure || e.retryableEmptyResponse) && retryChatGmRequest("onerror", e)) return;
                     stopRenderLoop();
                     finalizeChatResponse(actionToken);
                     appendChatError(buildNetworkFailureHtml(provider, url, e), { allowHtml: true });
@@ -18411,7 +18841,7 @@
             if (typeof currentAttempt.fetchMode === "boolean") {
                 requestOptions.fetch = currentAttempt.fetchMode;
             }
-            gmRequest = GM_xmlhttpRequest(requestOptions);
+            gmRequest = requestProviderWithGM(requestOptions);
         };
 
         startChatGmRequest();
