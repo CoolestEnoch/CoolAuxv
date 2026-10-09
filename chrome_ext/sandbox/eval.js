@@ -92,7 +92,7 @@
             source: 'coolauxv-sandbox-frame',
             type: 'coolauxv-sandbox-gm-request',
             gmId,
-            options: opts || {}
+            options: Object.assign({}, opts || {}, { coolauxvProviderId: baseContext.providerId || "" })
           }, '*');
         });
       };

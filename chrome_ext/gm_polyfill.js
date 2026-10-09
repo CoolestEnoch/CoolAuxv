@@ -828,6 +828,24 @@
   };
   let debuggerRequestQueue = Promise.resolve();
 
+  const getDebuggerRequestProvider = (options) => {
+    let templates = GM_getValue("coolauxv_provider_templates_v1", []);
+    if (typeof templates === "string") {
+      try { templates = JSON.parse(templates); } catch (e) { return null; }
+    }
+    if (!Array.isArray(templates)) return null;
+    const providerId = options && options.coolauxvProviderId;
+    const selectedId = providerId || GM_getValue("coolauxv_default_provider", "zhipu");
+    return templates.find((item) => item && item.id === selectedId)
+      || (!providerId && (templates.find((item) => item && item.id === "zhipu") || templates[0]))
+      || null;
+  };
+
+  const isProviderDebuggerAllowed = (options) => {
+    const provider = getDebuggerRequestProvider(options);
+    return !!(provider && String(provider.customJsCode || "").trim());
+  };
+
   const GM_xmlhttpRequestWithDebugger = (options) => {
     const opts = options || {};
     const abortController = new AbortController();
@@ -984,6 +1002,7 @@
 
       debuggerPort.postMessage({
         type: "setup",
+        providerId: (getDebuggerRequestProvider(opts) || {}).id || "",
         url: opts.url,
         method: opts.method || "GET",
         forbiddenHeaders: forbiddenHeaders
@@ -1012,14 +1031,14 @@
     if (!globalThis.chrome || !chrome.runtime || !chrome.runtime.connect) {
       return GM_xmlhttpRequestWithFetch(opts);
     }
-    if (isExtensionPageContext() && isDebuggerHeaderInjectionEnabled() && hasCriticalInjectedHeaders(opts.headers)) {
+    if (isExtensionPageContext() && isDebuggerHeaderInjectionEnabled() && isProviderDebuggerAllowed(opts) && hasCriticalInjectedHeaders(opts.headers)) {
       log("debug", "Request has origin/referer, using debugger injection path");
       return GM_xmlhttpRequestWithDebugger(opts);
     }
     try {
       return GM_xmlhttpRequestViaBackground(opts);
     } catch (err) {
-      if (isExtensionPageContext() && hasForbiddenHeaders(opts.headers)) {
+      if (isExtensionPageContext() && isDebuggerHeaderInjectionEnabled() && isProviderDebuggerAllowed(opts) && hasForbiddenHeaders(opts.headers)) {
         log("warn", "background request failed, fallback to debugger injection for forbidden headers");
         return GM_xmlhttpRequestWithDebugger(opts);
       }

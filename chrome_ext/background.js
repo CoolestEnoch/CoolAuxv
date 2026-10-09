@@ -268,6 +268,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
       prewarmPersistentDebugger().catch(() => {});
     }
   }
+  if (changes[PROVIDER_TEMPLATE_STORAGE_KEY] || changes.coolauxv_default_provider) {
+    syncPersistentDebuggerProvider().catch(() => {});
+  }
 });
 
 const getActiveTab = () => new Promise((resolve) => {
@@ -308,6 +311,8 @@ const prewarmPersistentDebugger = async () => {
   if (!debuggerHeaderInjectionPersistent || persistentDebuggerTabs.size > 0) {
     return;
   }
+  const provider = await loadDebuggerProvider();
+  if (!providerHasCustomJs(provider)) return;
   const tab = await getActiveTab();
   if (!isDebuggerRelevantTab(tab)) {
     return;
@@ -348,6 +353,32 @@ const normalizeTemplates = (input) => {
     }
   }
   return Array.isArray(input) ? input : [];
+};
+
+const providerHasCustomJs = (template) => !!(template && String(template.customJsCode || "").trim());
+
+const loadDebuggerProvider = (providerId) => new Promise((resolve) => {
+  chrome.storage.local.get([PROVIDER_TEMPLATE_STORAGE_KEY, "coolauxv_default_provider"], (items) => {
+    if (chrome.runtime && chrome.runtime.lastError) {
+      resolve(null);
+      return;
+    }
+    const templates = normalizeTemplates(items && items[PROVIDER_TEMPLATE_STORAGE_KEY]);
+    const selectedId = providerId || (items && items.coolauxv_default_provider) || "zhipu";
+    const provider = templates.find((item) => item && item.id === selectedId);
+    resolve(provider || (!providerId && (templates.find((item) => item && item.id === "zhipu") || templates[0])) || null);
+  });
+});
+
+const syncPersistentDebuggerProvider = async () => {
+  const provider = await loadDebuggerProvider();
+  if (!debuggerHeaderInjectionPersistent || !providerHasCustomJs(provider)) {
+    for (const tabId of Array.from(persistentDebuggerTabs)) {
+      await detachTabDebugger(tabId, true);
+    }
+    return;
+  }
+  await prewarmPersistentDebugger();
 };
 
 let customJsContextCache = {};
@@ -464,8 +495,9 @@ const buildTemplateContext = (template, secretsStore) => {
       merged[key] = secrets[key];
     }
   });
-  const jsContext = executeCustomJs(template, merged);
-  return Object.assign({}, merged, jsContext);
+  // DNR configuration and custom-JS base contexts only read stored values.
+  // Hooks run explicitly for the requested provider, never while scanning all providers.
+  return merged;
 };
 
 const resolveTemplateBaseUrl = (template, secretsStore) => {
@@ -496,8 +528,14 @@ const loadProviderStorageSnapshot = () => new Promise((resolve) => {
 });
 
 const resolveHeadersTemplate = (tpl, secrets) => {
-  if (!tpl || !tpl.headersTemplate) return {};
+  if (!tpl) return {};
   let headers = tpl.headersTemplate;
+  if (headers === null || headers === undefined || (typeof headers === "string" && !headers.trim())) {
+    const type = tpl.type || "chat-completions";
+    headers = type === "chat-completions" || type === "openai-responses"
+      ? { "Content-Type": "application/json", Authorization: "Bearer {{apiKey}}" }
+      : null;
+  }
   if (typeof headers === "string") {
     try { headers = JSON.parse(headers); } catch (e) { return {}; }
   }
@@ -845,7 +883,11 @@ const detachTabDebugger = async (tabId, force = false) => {
   }
 };
 
-const attachTabDebugger = async (tabId, persistent = false) => {
+const attachTabDebugger = async (tabId, persistent = false, providerId) => {
+  const provider = await loadDebuggerProvider(providerId);
+  if (!providerHasCustomJs(provider)) {
+    throw new Error("Debugger is disabled for providers without custom JavaScript");
+  }
   if (persistent) {
     for (const oldTabId of Array.from(persistentDebuggerTabs)) {
       if (oldTabId === tabId) continue;
@@ -1020,7 +1062,7 @@ chrome.runtime.onConnect.addListener((port) => {
 
     try {
       log("debug", "debugger: attempting attach to tab", { tabId });
-      await attachTabDebugger(tabId, persistent);
+      await attachTabDebugger(tabId, persistent, msg.providerId);
       log("debug", "debugger: attach OK, Fetch.enable done", { tabId, persistent });
       port.postMessage({ type: "debugger_ready", debugId });
     } catch (err) {
@@ -1107,7 +1149,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     (async () => {
       try {
         if (ignore) {
-          await attachTabDebugger(tabId);
+          await attachTabDebugger(tabId, false, msg.providerId);
           try {
             await chrome.debugger.sendCommand({ tabId }, "Security.enable");
           } catch (e) { /* domain may already be enabled */ }

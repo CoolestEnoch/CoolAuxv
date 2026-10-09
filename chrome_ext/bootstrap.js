@@ -441,6 +441,24 @@
     };
   };
 
+  const getDebuggerRequestProvider = (options) => {
+    let templates = GM_getValue("coolauxv_provider_templates_v1", []);
+    if (typeof templates === "string") {
+      try { templates = JSON.parse(templates); } catch (e) { return null; }
+    }
+    if (!Array.isArray(templates)) return null;
+    const providerId = options && options.coolauxvProviderId;
+    const selectedId = providerId || GM_getValue("coolauxv_default_provider", "zhipu");
+    return templates.find((item) => item && item.id === selectedId)
+      || (!providerId && (templates.find((item) => item && item.id === "zhipu") || templates[0]))
+      || null;
+  };
+
+  const isProviderDebuggerAllowed = (options) => {
+    const provider = getDebuggerRequestProvider(options);
+    return !!(provider && String(provider.customJsCode || "").trim());
+  };
+
   const GM_xmlhttpRequestWithDebugger = (options) => {
     const opts = options || {};
     const abortController = new AbortController();
@@ -565,6 +583,7 @@
     });
     debuggerPort.postMessage({
       type: "setup",
+      providerId: (getDebuggerRequestProvider(opts) || {}).id || "",
       url: opts.url,
       method: opts.method || "GET",
       forbiddenHeaders
@@ -585,7 +604,7 @@
     if (!chrome.runtime || !chrome.runtime.connect) {
       return GM_xmlhttpRequestWithFetch(opts);
     }
-    if (hasCriticalInjectedHeaders(opts.headers || {})) {
+    if (GM_getValue("coolauxv_enable_debugger_header_injection", true) && isProviderDebuggerAllowed(opts) && hasCriticalInjectedHeaders(opts.headers || {})) {
       return GM_xmlhttpRequestWithDebugger(opts);
     }
     try {

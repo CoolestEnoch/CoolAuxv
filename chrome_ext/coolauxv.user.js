@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CoolAuxv 网页翻译与阅读助手
 // @namespace    https://github.com/CoolestEnoch/CoolAuxv
-// @version      v16.6.3
+// @version      v16.7
 // @description  使用模块化提供商的网页翻译与解读工具，支持多种语言模型和推理模型，提供丰富的配置选项，优化阅读体验。
 // @author       github@CoolestEnoch
 // @match        *://*/*
@@ -279,7 +279,29 @@
         "eyJ2ZXJzaW9uIjoxLCJhY3Rpb25zIjpbeyJpZCI6ImNoYXQiLCJsYWJlbCI6IuiBiuWkqSIsInN5c3RlbVByb21wdCI6IuWSjOeUqOaIt+i/m+ihjOS6pOa1geOAgiJ9XX0="
     ];
 
-    const LATEST_CHANGELOG = `
+    const CHANGELOG = `
+        v16.7
+        ## ✨ 新功能
+        *   模型配置改为平铺列表，移除大类和子类别，每个模型可独立勾选“推理”和“多模态”，兼容迁移原有配置
+        *   支持推理的模型在首页顶栏显示“启用推理”
+        *   OpenAI Chat Completions 和 OpenAI Responses 支持选择思考强度
+        *   新增独立的“推理请求体模板”，仅当前模型支持推理且启用推理时使用；留空继承普通请求体并添加推理参数，填写 JSON 后整体覆盖
+        *   推理模板可通过 {{reasoningEffort}} 引用顶栏思考强度，默认提示直接展示 Chat Completions 的 reasoning_effort 和 Responses 的 reasoning.effort 参数
+        *   首页识屏和图片输入入口跟随当前模型的“多模态”状态显示
+        ## 🎨 界面优化
+        *   “思考强度”和“显示推理”随“启用推理”动画展开或收起，受“高级动画”开关控制
+        *   顶栏控件优先同排，宽度不足时自动换行，右侧信息、退出、最小化和关闭按钮保持固定
+        *   顶栏换行或恢复单行时，输入框和下方按钮平滑下移或上移，受“高级动画”开关及动画速度设置控制
+        ## 🔧 问题修复
+        *   OpenAI Chat Completions 和 OpenAI Responses 的请求头、请求体模板留空时使用标准默认值，以灰色提示展示；填写 JSON 后整体替换默认模板
+        *   修复请求模板保存、分享及导入时空白值或自定义内容被内置默认值覆盖的问题，保留独立推理模板、显式空对象和所选协议
+        *   按两种 OpenAI 协议分别规范请求体、文字和图片输入及推理强度参数，补齐 Responses 思考摘要的流式解析
+        *   修复空输入打开弹窗时，切换“显示推理”会联动展开或收起底部连续对话区域的问题
+        *   修复 AI 输出完成后顶部输入区不会自动折叠的问题，覆盖文本、识屏和连续对话回复，并避免空回复、手动停止或过期请求误触发折叠
+        *   Chromium 扩展版禁止无自定义 JS（含纯空白代码）的提供商拉起 debugger，切换提供商或清空代码时回收常驻连接
+        *   修复初始化设置列表和后台请求头规则时误执行未选中提供商自定义 JS、间接拉起 debugger 的问题
+        *   Chromium 扩展版删除用于更新油猴插件的“检查更新”按钮
+        ---
         v16.6.3
         ## ✨ 新功能
         *   支持获取 Chat Completions / OpenAI Responses 提供商的 API 模型列表，高级设置中可按提供商开启
@@ -420,6 +442,7 @@
         streamReasoningTag: false,
         headersTemplate: false,
         bodyTemplate: false,
+        reasoningBodyTemplate: false,
         customFields: false,
         customFieldsMask: false
     };
@@ -616,19 +639,32 @@
         if (type === "chat-no-history") return "chat-no-history";
         return "chat-completions";
     };
-    const REASONING_EFFORT_OPTIONS = ["", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+    const REASONING_EFFORT_OPTIONS = ["", "minimal", "low", "medium", "high", "xhigh", "max"];
     const normalizeReasoningEffort = (effort) => {
         const value = String(effort || "").trim().toLowerCase();
         return REASONING_EFFORT_OPTIONS.includes(value) ? value : "";
     };
-    const applyProviderReasoningEffort = (template, normalizedType, payload) => {
-        const effort = normalizeReasoningEffort(template && template.reasoningEffort);
-        if (!template || template.supportsReasoningEffort !== true || !effort || !payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+    const getProviderSelectedModel = (template, modelId) => {
+        const group = template && template.modelGroups && template.modelGroups[0];
+        const models = group && Array.isArray(group.models) ? group.models : [];
+        const selectedId = modelId !== undefined ? modelId : (group && group.selectedModel || (models[0] && models[0].id) || "");
+        return models.find((model) => model.id === selectedId) || null;
+    };
+    const applyProviderReasoningEffort = (template, normalizedType, payload, modelId) => {
+        if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+        const selectedModel = getProviderSelectedModel(template, modelId);
+        if (!selectedModel || !selectedModel.supportsReasoning) return payload;
+        const enabled = template.reasoningEnabled === true;
+        const effort = enabled ? (normalizeReasoningEffort(template.reasoningEffort) || "medium") : "none";
         if (normalizedType === "openai-responses") {
-            const reasoning = payload.reasoning && typeof payload.reasoning === "object" && !Array.isArray(payload.reasoning) ? payload.reasoning : {};
-            payload.reasoning = Object.assign({}, reasoning, { effort: effort });
+            const reasoning = payload.reasoning && typeof payload.reasoning === "object" && !Array.isArray(payload.reasoning) ? Object.assign({}, payload.reasoning) : {};
+            reasoning.effort = effort;
+            if (enabled && reasoning.summary === undefined) reasoning.summary = "auto";
+            payload.reasoning = reasoning;
         } else if (normalizedType === "chat-completions") {
             payload.reasoning_effort = effort;
+        } else if (normalizedType === "ollama") {
+            payload.think = enabled;
         }
         return payload;
     };
@@ -642,12 +678,53 @@
         if (normalized === "chat-parts") return "Chat Parts";
         if (normalized === "ollama") return "Ollama";
         if (normalized === "chat-no-history") return "No-History Chat";
-        return "Chat Completions";
+        return "OpenAI Chat Completions";
     };
+    const isOpenAiProviderType = (type) => {
+        const normalized = normalizeProviderType(type);
+        return normalized === "chat-completions" || normalized === "openai-responses";
+    };
+    const getDefaultHeadersTemplateByType = (type) => isOpenAiProviderType(type)
+        ? { "Content-Type": "application/json", "Authorization": "Bearer {{apiKey}}" }
+        : { "Content-Type": "application/json", "Origin": "example.com" };
+    const getProviderHeadersTemplate = (template) => template && template.headersTemplate && typeof template.headersTemplate === "object"
+        ? template.headersTemplate : getDefaultHeadersTemplateByType(template && template.type);
+    const hasReasoningModels = (template) => !!(template && template.modelGroups && template.modelGroups.some(
+        (group) => Array.isArray(group.models) && group.models.some((model) => model.supportsReasoning)));
+    const shouldUseReasoningBodyTemplate = (template, modelId) => {
+        const model = getProviderSelectedModel(template, modelId);
+        return !!(template && template.reasoningEnabled && model && model.supportsReasoning);
+    };
+    const getProviderNormalBodyTemplate = (template) => template && template.bodyTemplate && typeof template.bodyTemplate === "object"
+        ? template.bodyTemplate : getDefaultBodyTemplateByType(template && template.type);
+    const getDefaultReasoningBodyTemplateByType = (type, normalBodyTemplate) => {
+        const body = cloneDeep(normalBodyTemplate || getDefaultBodyTemplateByType(type));
+        if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+        const normalized = normalizeProviderType(type);
+        if (normalized === "chat-completions") body.reasoning_effort = "{{reasoningEffort}}";
+        if (normalized === "openai-responses") {
+            const reasoning = body.reasoning && typeof body.reasoning === "object" && !Array.isArray(body.reasoning) ? body.reasoning : {};
+            reasoning.effort = "{{reasoningEffort}}";
+            if (reasoning.summary === undefined) reasoning.summary = "auto";
+            body.reasoning = reasoning;
+        }
+        if (normalized === "ollama") body.think = true;
+        return body;
+    };
+    const getProviderReasoningBodyTemplate = (template) => template && template.reasoningBodyTemplate && typeof template.reasoningBodyTemplate === "object"
+        ? template.reasoningBodyTemplate : getDefaultReasoningBodyTemplateByType(template && template.type, getProviderNormalBodyTemplate(template));
+    const getProviderBodyTemplate = (template, modelId) => shouldUseReasoningBodyTemplate(template, modelId)
+        ? getProviderReasoningBodyTemplate(template) : getProviderNormalBodyTemplate(template);
+    const getRequestTemplatePlaceholder = (type, field, normalBodyTemplate) => {
+        if (field === "reasoningBodyTemplate") return JSON.stringify(getDefaultReasoningBodyTemplateByType(type, normalBodyTemplate), null, 2);
+        return !isOpenAiProviderType(type) ? "" : JSON.stringify(
+            field === "headersTemplate" ? getDefaultHeadersTemplateByType(type) : getDefaultBodyTemplateByType(type), null, 2);
+    };
+
     const getDefaultBodyTemplateByType = (type) => {
         const normalized = normalizeProviderType(type);
         if (normalized === "openai-responses") {
-            return { model: "{{model}}", stream: true, input: "{{messages}}" };
+            return { model: "{{model}}", input: "{{input}}", stream: true };
         }
         if (normalized === "chat-parts") {
             return { model: "{{model}}", id: "{{requestId}}", messages: "{{messages}}", trigger: "{{trigger}}" };
@@ -1164,63 +1241,54 @@
     };
 
     const normalizeModelItem = (item) => {
+        if (typeof item === "string") item = { id: item };
         if (!item || typeof item !== "object") return null;
         const id = String(item.id || item.name || "").trim();
         if (!id) return null;
+        const legacyClass = String(item.class || item.sub || item.category || "");
         return {
             id: id,
-            class: String(item.class || item.sub || item.category || "").trim(),
+            supportsReasoning: item.supportsReasoning !== undefined ? !!item.supportsReasoning : /推理|思考|reasoning|thinking/i.test(legacyClass),
+            supportsMultimodal: item.supportsMultimodal !== undefined ? !!item.supportsMultimodal : /多模态|视觉|multimodal|vision/i.test(legacyClass + " " + (item.tag || "")),
             tag: String(item.tag || "").trim()
         };
     };
 
-    const normalizeModelGroup = (group, idx) => {
-        if (!group || typeof group !== "object") return null;
-        const label = String(group.label || group.name || `模型分类${idx + 1}`);
-        const id = normalizeProviderId(group.id || label || `group-${idx + 1}`);
-        const type = group.type === "vision" ? "vision" : "text";
-        const rawModels = Array.isArray(group.models) ? group.models : (Array.isArray(group.list) ? group.list : []);
-        const models = rawModels.map(normalizeModelItem).filter(Boolean);
-        let selectedModel = String(group.selectedModel || group.model || "").trim();
-        if (!selectedModel && models.length) {
-            selectedModel = models[0].id;
-        }
-        return {
-            id: id,
-            label: label,
-            type: type,
-            models: models,
-            selectedModel: selectedModel
-        };
-    };
-
     const normalizeModelGroups = (tpl) => {
+        // Keep one internal list in the existing storage format for older imports/hooks.
+        // Model categories and subcategories are replaced by independent capabilities.
         let groups = Array.isArray(tpl.modelGroups) ? tpl.modelGroups : null;
-        if (!groups && tpl.models) {
-            groups = [];
-            if (tpl.models.text && tpl.models.text.length) {
-                groups.push({
-                    id: "general",
-                    label: "通用模型",
-                    type: "text",
-                    models: tpl.models.text,
-                    selectedModel: tpl.modelName || ""
-                });
-            }
-            if (tpl.models.vision && tpl.models.vision.length) {
-                groups.push({
-                    id: "vision",
-                    label: "视觉模型",
-                    type: "vision",
-                    models: tpl.models.vision,
-                    selectedModel: tpl.visionModel || ""
-                });
-            }
+        if (!groups && Array.isArray(tpl.models)) {
+            groups = [{ models: tpl.models, selectedModel: tpl.selectedModel || tpl.modelName }];
+        } else if (!groups && tpl.models) {
+            groups = [
+                { models: tpl.models.text || [], selectedModel: tpl.modelName },
+                { type: "vision", models: tpl.models.vision || [], selectedModel: tpl.visionModel }
+            ];
         }
-        if (!groups || !groups.length) {
-            groups = [{ id: "general", label: "通用模型", type: "text", models: [], selectedModel: "" }];
-        }
-        return groups.map((group, idx) => normalizeModelGroup(group, idx)).filter(Boolean);
+        groups = groups || [];
+        const hasLegacyVisionModels = groups.some((group) => group && group.type === "vision" && (group.models || group.list || []).length);
+        const models = new Map();
+        groups.forEach((group) => {
+            if (!group || typeof group !== "object") return;
+            const rawModels = Array.isArray(group.models) ? group.models : (Array.isArray(group.list) ? group.list : []);
+            rawModels.forEach((raw) => {
+                const model = normalizeModelItem(raw);
+                if (!model) return;
+                if (raw.supportsReasoning === undefined && tpl.supportsReasoningEffort === true) model.supportsReasoning = true;
+                if (raw.supportsMultimodal === undefined && (group.type === "vision" || (!hasLegacyVisionModels && tpl.supportsVision === true))) model.supportsMultimodal = true;
+                const previous = models.get(model.id);
+                if (previous) {
+                    previous.supportsReasoning = previous.supportsReasoning || model.supportsReasoning;
+                    previous.supportsMultimodal = previous.supportsMultimodal || model.supportsMultimodal;
+                    if (!previous.tag) previous.tag = model.tag;
+                } else models.set(model.id, model);
+            });
+        });
+        const preferred = groups.find((group) => group && group.type !== "vision" && (group.selectedModel || group.model))
+            || groups.find((group) => group && (group.selectedModel || group.model));
+        const selectedModel = String(tpl.selectedModel || (preferred && (preferred.selectedModel || preferred.model)) || (models.size ? models.keys().next().value : "")).trim();
+        return [{ id: "models", label: "模型", type: "text", models: Array.from(models.values()), selectedModel: selectedModel }];
     };
 
     const normalizeTemplateKey = (key) => String(key || "").trim().replace(/[^a-zA-Z0-9_.-]/g, "");
@@ -1304,6 +1372,8 @@
 
     const ensureProviderTemplate = (tpl) => {
         if (!tpl || typeof tpl !== "object") return null;
+        const normalizedType = normalizeProviderType(tpl.type);
+        const useOpenAiDefaults = isOpenAiProviderType(normalizedType);
         const isEmptyPlainObject = (value) => value && typeof value === "object" && !Array.isArray(value) && !Object.keys(value).length;
         let headersTemplate = tpl.headersTemplate;
         if (typeof headersTemplate === "string") {
@@ -1313,8 +1383,12 @@
         if (typeof bodyTemplate === "string") {
             try { bodyTemplate = JSON.parse(bodyTemplate); } catch (e) { bodyTemplate = null; }
         }
-        if (isEmptyPlainObject(headersTemplate)) headersTemplate = null;
-        if (isEmptyPlainObject(bodyTemplate)) bodyTemplate = null;
+        let reasoningBodyTemplate = tpl.reasoningBodyTemplate;
+        if (typeof reasoningBodyTemplate === "string") {
+            try { reasoningBodyTemplate = JSON.parse(reasoningBodyTemplate); } catch (e) { reasoningBodyTemplate = null; }
+        }
+        if (!useOpenAiDefaults && isEmptyPlainObject(headersTemplate)) headersTemplate = null;
+        if (!useOpenAiDefaults && isEmptyPlainObject(bodyTemplate)) bodyTemplate = null;
 
         const modelGroups = normalizeModelGroups(tpl);
         const customFields = normalizeCustomFields(tpl.customFields);
@@ -1323,11 +1397,10 @@
         if (tpl.repo && !Object.prototype.hasOwnProperty.call(customFields, "repo")) {
             customFields.repo = String(tpl.repo || "");
         }
-        const normalizedType = normalizeProviderType(tpl.type);
-        const hasSupportsVision = tpl.supportsVision !== undefined && tpl.supportsVision !== null && tpl.supportsVision !== "";
-        const supportsVision = hasSupportsVision
-            ? !!tpl.supportsVision
-            : modelGroups.some((group) => group.type === "vision");
+        const supportsVision = modelGroups[0].models.some((model) => model.supportsMultimodal);
+        if (normalizedType === "openai-responses" && bodyTemplate && bodyTemplate.input === "{{messages}}") {
+            bodyTemplate = Object.assign({}, bodyTemplate, { input: "{{input}}" });
+        }
         const hasSupportsContinuousChat = tpl.supportsContinuousChat !== undefined && tpl.supportsContinuousChat !== null && tpl.supportsContinuousChat !== "";
         const supportsContinuousChat = hasSupportsContinuousChat
             ? !!tpl.supportsContinuousChat
@@ -1338,7 +1411,7 @@
             id: normalizeProviderId(tpl.id),
             label: String(tpl.label || tpl.id || "Provider"),
             type: normalizedType,
-            supportsReasoningEffort: tpl.supportsReasoningEffort === true,
+            reasoningEnabled: tpl.reasoningEnabled !== undefined ? !!tpl.reasoningEnabled : (tpl.supportsReasoningEffort === true && tpl.reasoningEffort !== "none"),
             supportsModelList: tpl.supportsModelList === true,
             reasoningEffort: normalizeReasoningEffort(tpl.reasoningEffort),
             baseUrl: String(tpl.baseUrl || ""),
@@ -1351,8 +1424,9 @@
                 user: (tpl.roles && tpl.roles.user) ? String(tpl.roles.user) : "user",
                 assistant: (tpl.roles && tpl.roles.assistant) ? String(tpl.roles.assistant) : "assistant"
             },
-            headersTemplate: headersTemplate && typeof headersTemplate === "object" ? headersTemplate : { "Content-Type": "application/json", "Origin": "example.com" },
-            bodyTemplate: bodyTemplate && typeof bodyTemplate === "object" ? bodyTemplate : getDefaultBodyTemplateByType(normalizedType),
+            headersTemplate: headersTemplate && typeof headersTemplate === "object" ? headersTemplate : (useOpenAiDefaults ? null : getDefaultHeadersTemplateByType(normalizedType)),
+            bodyTemplate: bodyTemplate && typeof bodyTemplate === "object" ? bodyTemplate : (useOpenAiDefaults ? null : getDefaultBodyTemplateByType(normalizedType)),
+            reasoningBodyTemplate: reasoningBodyTemplate && typeof reasoningBodyTemplate === "object" ? reasoningBodyTemplate : null,
             stream: tpl.stream && typeof tpl.stream === "object" ? {
                 parser: (() => {
                     if (tpl.stream.parser === "openai-responses") return "openai-responses";
@@ -1468,6 +1542,7 @@
         providerTemplatesCache = normalized;
         GM_setValue(PROVIDER_TEMPLATE_STORAGE_KEY, normalized);
         invalidateCustomJsCache();
+        updateProviderFeatureVisibility();
         return normalized;
     };
 
@@ -1545,9 +1620,9 @@
             const output = left && typeof left === "object" && !Array.isArray(left) ? cloneDeep(left) : {};
             Object.keys(right).forEach((key) => {
                 const value = right[key];
-                output[key] = value && typeof value === "object" && !Array.isArray(value)
-                    ? merge(output[key], value)
-                    : cloneDeep(value);
+                output[key] = key === "headersTemplate" || key === "bodyTemplate" || key === "reasoningBodyTemplate"
+                    ? cloneDeep(value)
+                    : (value && typeof value === "object" && !Array.isArray(value) ? merge(output[key], value) : cloneDeep(value));
             });
             return output;
         };
@@ -1992,29 +2067,24 @@
 
     const buildModelButtonsHTML = (group, providerId) => {
         if (!group || !Array.isArray(group.models)) return "";
-        const buckets = {};
-        group.models.forEach((m) => {
-            const groupName = m.class || "模型";
-            if (!buckets[groupName]) buckets[groupName] = [];
-            buckets[groupName].push(m);
-        });
-
-        return Object.keys(buckets).map((className) => `
-            <div class="coolauxv-sub-label" style="font-size: 12px; color: #999; margin: 8px 0 4px 0;">${className}</div>
+        const escapeAttr = escapeHTML;
+        const escapeText = escapeHTML;
+        return `
             <div class="coolauxv-tag-container">
-                ${buckets[className].map((m) => {
+                ${group.models.map((m) => {
                     const modelId = m.id || m.name || "";
                     const c = stringToColorStyles(m.tag || modelId || "");
+                    const capabilities = [m.supportsReasoning ? "推理" : "", m.supportsMultimodal ? "多模态" : ""].filter(Boolean).join(" · ");
                     return `
-                        <div class="coolauxv-model-btn" data-provider-id="${providerId}" data-group-id="${group.id}" data-val="${modelId}" data-tag="${m.tag || ""}"
+                        <div class="coolauxv-model-btn" data-provider-id="${escapeAttr(providerId)}" data-group-id="${escapeAttr(group.id)}" data-val="${escapeAttr(modelId)}" data-tag="${escapeAttr(m.tag || "")}" title="${escapeAttr(capabilities)}"
                              style="background:${c.bg}; border: 1px solid ${c.border}; color:${c.text};">
-                            <span class="coolauxv-model-name">${modelId}</span>
-                            <span class="coolauxv-model-tag" style="color:${c.tag}">${m.tag || ""}</span>
+                            <span class="coolauxv-model-name">${escapeText(modelId)}</span>
+                            <span class="coolauxv-model-tag" style="color:${c.tag}">${escapeText(m.tag || "")}</span>
                         </div>
                     `;
                 }).join("")}
             </div>
-        `).join("");
+        `;
     };
 
     // ========================================================================
@@ -2597,6 +2667,7 @@
         pointer-events: none;
     }
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-header-main-controls,
+    #coolauxv-translate-popup.coolauxv-basic-anim-off .coolauxv-header-capability-controls,
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-main-top-section,
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-chat-body,
     #coolauxv-translate-popup.coolauxv-basic-anim-off #coolauxv-reasoning-wrapper,
@@ -2648,6 +2719,8 @@
     .coolauxv-scroll-box::-webkit-scrollbar-track { background: #f1f1f1; }
     .coolauxv-scroll-box::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
     .coolauxv-scroll-box::-webkit-scrollbar-thumb:hover { background: #999; }
+
+    .coolauxv-request-template::placeholder { color: #999; opacity: 1; }
 
     /* 布局容器 */
     #coolauxv-view-stage {
@@ -3381,8 +3454,22 @@
     #coolauxv-header-left {
         display: flex;
         align-items: center;
-        flex-wrap: nowrap;
+        flex-wrap: wrap;
+        flex: 1 1 0;
+        gap: 6px 0;
         min-width: 0;
+    }
+    #coolauxv-header-left > span {
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+    #coolauxv-header-main-controls {
+        display: contents;
+    }
+    #coolauxv-header-window-controls {
+        flex-shrink: 0;
+        align-self: flex-start;
+        flex-wrap: nowrap;
     }
     #coolauxv-top-collapse-btn {
         cursor: pointer;
@@ -3398,7 +3485,7 @@
     #coolauxv-top-collapse-btn:hover {
         background: #e0efff;
     }
-    #coolauxv-header-main-controls {
+    .coolauxv-header-capability-controls {
         display: flex;
         align-items: center;
         flex-wrap: nowrap;
@@ -3412,8 +3499,9 @@
                     opacity 0.2s cubic-bezier(0.2, 0, 0, 1),
                     transform 0.25s cubic-bezier(0.2, 0, 0, 1);
         will-change: max-width, opacity, transform;
+        flex-shrink: 0;
     }
-    #coolauxv-header-main-controls.coolauxv-header-controls-collapsed {
+    .coolauxv-header-capability-controls.coolauxv-header-controls-collapsed {
         max-width: 0 !important;
         opacity: 0;
         transform: scaleX(0.96);
@@ -3851,7 +3939,12 @@
     .coolauxv-blur-glass-enabled #coolauxv-header,
     .coolauxv-blur-glass-enabled #coolauxv-settings-view {
         background: transparent !important;
+    }
+    .coolauxv-blur-glass-enabled #coolauxv-settings-view {
         border-bottom: 1px solid rgba(255, 255, 255, 0.3) !important;
+    }
+    .coolauxv-blur-glass-enabled #coolauxv-header {
+        border-bottom: none !important;
     }
 
     /* 3. 输入框玻璃特效 (统一) */
@@ -4207,12 +4300,14 @@
     let isShowReasoning = DEFAULT_SHOW_REASONING;
     let isQuitted = false;
     let activeView = "main";
+    let headerMainControlsVisible = true;
     let isViewSwitching = false;
     let viewSwitchTimer = null;
     let isPopupAnimating = false;
 
     requestBridgeCleanup = () => {
         isQuitted = true;
+        if (popup && popup._coolauxvHeaderLayout) popup._coolauxvHeaderLayout.dispose();
         if (popup) popup.style.display = "none";
         if (floatBall) floatBall.style.display = "none";
         if (cursorBtn) cursorBtn.style.display = "none";
@@ -4239,11 +4334,90 @@
         }
     };
 
+    const initHeaderLayoutAnimation = () => {
+        if (!popup || typeof ResizeObserver === "undefined" || popup._coolauxvHeaderLayout) return;
+        const root = popup;
+        const header = root.querySelector("#coolauxv-header");
+        const left = root.querySelector("#coolauxv-header-left");
+        const windowControls = root.querySelector("#coolauxv-header-window-controls");
+        if (!header || !left || !windowControls || typeof header.animate !== "function") return;
+        let previousHeight = null;
+        let animation = null;
+        const originalOverflow = header.style.overflow;
+        const cancel = () => {
+            const current = animation;
+            animation = null;
+            if (current) current.cancel();
+            header.style.overflow = originalOverflow;
+        };
+        const sync = () => {
+            if (!root.isConnected || root.getClientRects().length === 0) {
+                previousHeight = null;
+                cancel();
+                return;
+            }
+            const style = getComputedStyle(header);
+            const verticalInsets = ["paddingTop", "paddingBottom", "borderTopWidth", "borderBottomWidth"]
+                .reduce((total, key) => total + (Number.parseFloat(style[key]) || 0), 0);
+            const height = Math.max(left.offsetHeight, windowControls.offsetHeight) + verticalInsets;
+            const from = animation ? header.offsetHeight : previousHeight;
+            const changed = previousHeight !== null && Math.abs(previousHeight - height) > 0.5;
+            previousHeight = height;
+            if (!isMinimizeAnimEnabled() || isPopupAnimating || isViewSwitching || activeView !== "main") {
+                cancel();
+                return;
+            }
+            if (!changed) return;
+            cancel();
+            if (Math.abs(from - height) < 0.5) return;
+            // Animate the space reserved for the header, so the entire body moves
+            // with the layout and the window buttons keep their top-right position.
+            header.style.overflow = "hidden";
+            const current = header.animate([
+                { height: `${from}px` },
+                { height: `${height}px` }
+            ], { duration: Math.round(250 / getAnimSpeedFactor()), easing: POPUP_ANIM_EASING });
+            animation = current;
+            current.onfinish = () => {
+                if (animation !== current) return;
+                animation = null;
+                header.style.overflow = originalOverflow;
+            };
+        };
+        // Observe natural content heights, not the header height being animated.
+        const observer = new ResizeObserver(sync);
+        observer.observe(left);
+        observer.observe(windowControls);
+        root._coolauxvHeaderLayout = {
+            sync,
+            dispose: () => { observer.disconnect(); cancel(); }
+        };
+        sync();
+    };
+
+    const syncHeaderLayoutAnimation = () => {
+        if (popup && popup._coolauxvHeaderLayout) popup._coolauxvHeaderLayout.sync();
+    };
+
     const setHeaderMainControlsVisibility = (visible) => {
         if (!popup) return;
-        const controls = popup.querySelector("#coolauxv-header-main-controls");
+        headerMainControlsVisible = visible;
+        popup.querySelectorAll("[data-header-base-control]").forEach((controls) => {
+            setHeaderControlsVisibility(controls, visible, isBasicAnimEnabled());
+        });
+        updateProviderFeatureVisibility();
+    };
+
+    const setHeaderControlsVisibility = (controls, visible, animateEnabled) => {
         if (!controls) return;
-        if (!isBasicAnimEnabled()) {
+        if (controls._coolauxvTargetVisible === visible && controls._coolauxvAnimateEnabled === animateEnabled) return;
+        controls._coolauxvTargetVisible = visible;
+        controls._coolauxvAnimateEnabled = animateEnabled;
+        if (controls._coolauxvVisibilityCleanup) controls._coolauxvVisibilityCleanup();
+        controls.style.transition = animateEnabled ? "" : "none";
+        controls.setAttribute("aria-hidden", String(!visible));
+        controls.inert = !visible;
+        if (!animateEnabled) {
             if (visible) {
                 controls.style.display = "flex";
                 controls.style.overflow = "visible";
@@ -4286,6 +4460,7 @@
                 }
                 controls.removeEventListener("transitionend", onEnd);
             };
+            controls._coolauxvVisibilityCleanup = cleanup;
             controls.addEventListener("transitionend", onEnd);
             timeoutId = window.setTimeout(() => {
                 cleanup();
@@ -4320,6 +4495,7 @@
             }
             controls.removeEventListener("transitionend", onEnd);
         };
+        controls._coolauxvVisibilityCleanup = cleanup;
         controls.addEventListener("transitionend", onEnd);
         timeoutId = window.setTimeout(() => {
             cleanup();
@@ -4536,6 +4712,7 @@
 
     const setPopupAnimating = (animating) => {
         isPopupAnimating = animating;
+        if (animating) syncHeaderLayoutAnimation();
         if (popup) popup.style.pointerEvents = animating ? "none" : "auto";
         if (floatBall) floatBall.style.pointerEvents = animating ? "none" : "auto";
     };
@@ -5324,7 +5501,7 @@
             }).join("");
 
             popup.innerHTML = `
-            <div id="coolauxv-header" style="background:#f8f9fa; padding:10px 12px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; user-select:none; flex-shrink:0; cursor: move; flex-wrap:wrap; gap:5px;">
+            <div id="coolauxv-header" style="background:#f8f9fa; padding:10px 12px 0; border-bottom:none; display:flex; justify-content:space-between; align-items:flex-start; user-select:none; flex-shrink:0; cursor: move; flex-wrap:nowrap; gap:5px;">
               <div id="coolauxv-header-left">
                 <span style="font-weight:800; color:#a516e8; margin-right:10px;">⚡ CoolAuxv</span>
 
@@ -5336,16 +5513,35 @@
                 </span>
 
                 <div id="coolauxv-header-main-controls">
-                    <button type="button" id="coolauxv-top-collapse-btn" data-no-drag="true" title="展开/收起顶部区域">收起</button>
-                    <label class="coolauxv-toggle-label" title="显示原文" style="margin-left:8px;">
-                        <input type="checkbox" id="coolauxv-raw-toggle" ${DEFAULT_SHOW_RAW ? "checked" : ""}>原文
-                    </label>
-                    <label class="coolauxv-toggle-label" id="coolauxv-reasoning-toggle-container" style="display:none;" title="显示推理">
-                        <input type="checkbox" id="coolauxv-reasoning-toggle" ${DEFAULT_SHOW_REASONING ? "checked" : ""}>显示推理
-                    </label>
+                    <div class="coolauxv-header-capability-controls" data-header-base-control>
+                        <button type="button" id="coolauxv-top-collapse-btn" data-no-drag="true" title="展开/收起顶部区域">收起</button>
+                    </div>
+                    <div class="coolauxv-header-capability-controls" data-header-base-control>
+                        <label class="coolauxv-toggle-label" title="显示原文" style="margin-left:8px;">
+                            <input type="checkbox" id="coolauxv-raw-toggle" ${DEFAULT_SHOW_RAW ? "checked" : ""}>原文
+                        </label>
+                    </div>
+                    <div id="coolauxv-reasoning-enable-container" class="coolauxv-header-capability-controls coolauxv-header-controls-collapsed" style="display:none;">
+                        <label class="coolauxv-toggle-label" style="margin-left:8px;" title="为当前模型启用思考模式">
+                            <input type="checkbox" id="coolauxv-reasoning-enable" data-no-drag="true">启用推理
+                        </label>
+                    </div>
+                    <div id="coolauxv-reasoning-effort-container" class="coolauxv-header-capability-controls coolauxv-header-controls-collapsed" style="display:none;">
+                        <label class="coolauxv-toggle-label" style="margin-left:8px;" title="默认使用 medium；可用强度取决于模型">
+                            思考强度
+                            <select id="coolauxv-reasoning-effort" data-no-drag="true" aria-label="思考强度" style="margin-left:4px; font-size:12px; max-width:85px;">
+                                ${REASONING_EFFORT_OPTIONS.map((effort) => `<option value="${effort}">${effort || "默认"}</option>`).join("")}
+                            </select>
+                        </label>
+                    </div>
+                    <div id="coolauxv-reasoning-toggle-container" class="coolauxv-header-capability-controls coolauxv-header-controls-collapsed" style="display:none;">
+                        <label class="coolauxv-toggle-label" title="显示推理">
+                            <input type="checkbox" id="coolauxv-reasoning-toggle" ${DEFAULT_SHOW_REASONING ? "checked" : ""}>显示推理
+                        </label>
+                    </div>
                 </div>
               </div>
-              <div style="display:flex; gap:6px; align-items:center;">
+              <div id="coolauxv-header-window-controls" style="display:flex; gap:6px; align-items:center;">
                 <span id="coolauxv-doc-origin-info" class="coolauxv-ctrl-btn" data-no-drag="true" title="点击复制当前文档信息">i</span>
                 <span id="coolauxv-quit" class="coolauxv-ctrl-btn" title="退出">⏻</span>
                 <span id="coolauxv-min" class="coolauxv-ctrl-btn" title="最小化">－</span>
@@ -5356,7 +5552,7 @@
             <div id="coolauxv-view-stage">
             <!-- 主界面 -->
             <div id="coolauxv-main-view">
-                <div style="padding:15px; flex:1; display:flex; flex-direction:column; overflow:hidden;">
+                <div style="padding:10px 15px 15px; flex:1; display:flex; flex-direction:column; overflow:hidden;">
 
                   <div id="coolauxv-main-top-section">
                   <div style="position:relative; width:100%; margin-bottom:10px; flex-shrink:0;">
@@ -5440,7 +5636,6 @@
                             <svg height="16" width="16" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
                             CoolAuxv (GitHub)
                         </a>
-                        <a href="https://github.com/CoolestEnoch/CoolAuxv/raw/refs/heads/main/coolauxv.user.js" class="coolauxv-github-btn" title="检查更新">检查更新</a>
                         <a href="https://github.com/CoolestEnoch/CoolAuxv/commits/main" target="_blank" class="coolauxv-github-btn" title="查看历史版本更新日志">更新日志</a>
                     </div>
                 </h3>
@@ -5630,7 +5825,7 @@
                             <label class="coolauxv-toggle-label">
                                 <input type="checkbox" id="coolauxv-cfg-debugger-persistent"> Debugger 常驻
                             </label>
-                            <div class="coolauxv-settings-item-hint">开启后，当前 PDF 页会预先拉起 debugger，后续带受限头的请求复用同一连接；关闭后会立刻回收。</div>
+                            <div class="coolauxv-settings-item-hint">开启后，仅当前提供商填写了自定义 JS 时，PDF 页才会预先拉起 debugger；后续带受限头的请求复用连接，关闭或切换到无自定义 JS 的提供商时回收。</div>
                         </div>
                     </div>
                 </div>
@@ -5650,6 +5845,7 @@
             `;
             document.body.appendChild(popup);
             setViewImmediate("main");
+            initHeaderLayoutAnimation();
 
             // 截图加载提示
             const loadingToast = document.createElement("div");
@@ -8348,7 +8544,7 @@
             if (isPlainObject(value)) return Object.keys(value).length === 0;
             return false;
         };
-        const SHARE_PRESERVE_KEYS = new Set(["customFields", "customFieldMeta"]);
+        const SHARE_PRESERVE_KEYS = new Set(["customFields", "customFieldMeta", "headersTemplate", "bodyTemplate", "reasoningBodyTemplate"]);
         const pruneEmptyValues = (value, preserveKeys = SHARE_PRESERVE_KEYS) => {
             if (Array.isArray(value)) {
                 return value.map((item) => pruneEmptyValues(item, preserveKeys)).filter((item) => !isEmptyValue(item));
@@ -8358,7 +8554,7 @@
                 Object.keys(value).forEach((key) => {
                     const raw = value[key];
                     if (preserveKeys && preserveKeys.has(key)) {
-                        if (!isEmptyValue(raw)) {
+                        if (key === "headersTemplate" || key === "bodyTemplate" || key === "reasoningBodyTemplate" || !isEmptyValue(raw)) {
                             result[key] = raw;
                         }
                         return;
@@ -8401,7 +8597,7 @@
             const output = Object.assign({}, base);
             Object.keys(override).forEach((key) => {
                 const nextVal = override[key];
-                if (isPlainObject(nextVal) && isPlainObject(output[key])) {
+                if (key !== "headersTemplate" && key !== "bodyTemplate" && key !== "reasoningBodyTemplate" && isPlainObject(nextVal) && isPlainObject(output[key])) {
                     output[key] = deepMerge(output[key], nextVal);
                 } else {
                     output[key] = nextVal;
@@ -8490,14 +8686,14 @@
 
             if (defaultTpl) {
                 Object.keys(clone).forEach((key) => {
-                    if (key === "id") return;
+                    if (key === "id" || key === "headersTemplate" || key === "bodyTemplate" || key === "reasoningBodyTemplate") return;
                     if (isDeepEqual(clone[key], defaultTpl[key])) {
                         delete clone[key];
                     }
                 });
             }
 
-            if (clone.type === "chat-completions") delete clone.type;
+            if (clone.type === "chat-completions" && (!defaultTpl || defaultTpl.type === "chat-completions")) delete clone.type;
             if (clone.label && clone.id && clone.label === clone.id) delete clone.label;
             if (clone.keyLinkTitle === DEFAULT_KEY_LINK_TITLE) delete clone.keyLinkTitle;
 
@@ -8505,10 +8701,10 @@
             if (clone.roles && isDeepEqual(clone.roles, defaultRoles)) delete clone.roles;
 
             const defaultHeaders = { "Content-Type": "application/json" };
-            if (clone.headersTemplate && isDeepEqual(clone.headersTemplate, defaultHeaders)) delete clone.headersTemplate;
+            if (!isOpenAiProviderType(normalizedType) && clone.headersTemplate && isDeepEqual(clone.headersTemplate, defaultHeaders)) delete clone.headersTemplate;
 
             const defaultBody = getDefaultBodyTemplateByType(normalizedType);
-            if (clone.bodyTemplate && isDeepEqual(clone.bodyTemplate, defaultBody)) delete clone.bodyTemplate;
+            if (!isOpenAiProviderType(normalizedType) && clone.bodyTemplate && isDeepEqual(clone.bodyTemplate, defaultBody)) delete clone.bodyTemplate;
 
             const defaultStream = getDefaultStreamTemplateByType(normalizedType);
             if (clone.stream && isDeepEqual(clone.stream, defaultStream)) delete clone.stream;
@@ -8542,9 +8738,9 @@
                             const id = String(model.id || model.name || "").trim();
                             if (!id) return null;
                             const nextModel = { id: id };
-                            const modelClass = String(model.class || "").trim();
+                            nextModel.supportsReasoning = !!model.supportsReasoning;
+                            nextModel.supportsMultimodal = !!model.supportsMultimodal;
                             const modelTag = String(model.tag || "").trim();
-                            if (modelClass) nextModel.class = modelClass;
                             if (modelTag) nextModel.tag = modelTag;
                             return nextModel;
                         }).filter(Boolean);
@@ -8852,7 +9048,8 @@
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;");
 
-        const formatTemplateJson = (value) => {
+        const formatTemplateJson = (value, type) => {
+            if (isOpenAiProviderType(type) && (value === null || value === undefined)) return "";
             try {
                 return JSON.stringify(value || {}, null, 2);
             } catch (e) {
@@ -8860,11 +9057,14 @@
             }
         };
 
-        const parseTemplateJson = (text) => {
+        const parseTemplateJson = (text, type, allowDefault = false) => {
+            if ((isOpenAiProviderType(type) || allowDefault) && !String(text || "").trim()) return null;
             try {
-                return JSON.parse(text);
+                const value = JSON.parse(text);
+                if ((isOpenAiProviderType(type) || allowDefault) && (!value || typeof value !== "object" || Array.isArray(value))) return undefined;
+                return value;
             } catch (e) {
-                return null;
+                return undefined;
             }
         };
 
@@ -8945,25 +9145,7 @@
             return next;
         };
 
-        const defaultBodyTemplateForType = (type) => {
-            if (type === "openai-responses") {
-                return { model: "{{model}}", stream: true, input: "{{messages}}" };
-            }
-            if (type === "chat-parts") {
-                return { model: "{{model}}", id: "{{requestId}}", messages: "{{messages}}", trigger: "{{trigger}}" };
-            }
-            if (type === "chat-no-history") {
-                return {
-                    conversationId: "{{conversationId}}",
-                    content: "{{latestUserText}}",
-                    model: "{{model}}"
-                };
-            }
-            if (type === "ollama") {
-                return { model: "{{model}}", stream: true, messages: "{{messages}}" };
-            }
-            return { model: "{{model}}", stream: true, messages: "{{messages}}" };
-        };
+        const defaultBodyTemplateForType = getDefaultBodyTemplateByType;
 
         const isSectionExpanded = (section) => {
             if (!section) return false;
@@ -9206,7 +9388,7 @@
                 id: "",
                 label: "",
                 type: "chat-completions",
-                supportsReasoningEffort: false,
+                reasoningEnabled: false,
                 supportsModelList: false,
                 reasoningEffort: "",
                 baseUrl: "",
@@ -9215,12 +9397,9 @@
                 keyLink: "",
                 keyLinkTitle: DEFAULT_KEY_LINK_TITLE,
                 roles: { system: "system", user: "user", assistant: "assistant" },
-                headersTemplate: {
-                    "Content-Type": "application/json",
-                    "Authorization": "Bearer {{apiKey}}",
-                    "Origin": "example.com"
-                },
-                bodyTemplate: defaultBodyTemplateForType("chat-completions"),
+                headersTemplate: null,
+                bodyTemplate: null,
+                reasoningBodyTemplate: null,
                 stream: {
                     parser: "chat-completions",
                     deltaPath: "choices.0.delta.content",
@@ -9231,7 +9410,7 @@
                 },
                 supportsVision: false,
                 supportsContinuousChat: true,
-                modelGroups: [{ id: "general", label: "通用模型", type: "text", models: [] }],
+                modelGroups: [{ id: "models", label: "模型", type: "text", models: [] }],
                 display: Object.assign({}, DEFAULT_DISPLAY_FIELDS),
                 customFields: {},
                 customJsCode: "",
@@ -9305,8 +9484,9 @@
             const submitText = mode === "edit" ? "保存修改" : "保存";
             const displayCheck = (key) => displayState[key] ? "checked" : "";
             const idReadonly = "";
-            const headersJson = formatTemplateJson(baseTemplate.headersTemplate);
-            const bodyJson = formatTemplateJson(baseTemplate.bodyTemplate);
+            const headersJson = formatTemplateJson(baseTemplate.headersTemplate, baseTemplate.type);
+            const bodyJson = formatTemplateJson(baseTemplate.bodyTemplate, baseTemplate.type);
+            const reasoningBodyJson = baseTemplate.reasoningBodyTemplate == null ? "" : formatTemplateJson(baseTemplate.reasoningBodyTemplate, baseTemplate.type);
             const deltaPathVal = baseTemplate.stream && baseTemplate.stream.deltaPath ? baseTemplate.stream.deltaPath : "choices.0.delta.content";
             const reasoningPathVal = baseTemplate.stream && baseTemplate.stream.reasoningPath ? baseTemplate.stream.reasoningPath : "";
             const sessionIdPathVal = baseTemplate.stream && baseTemplate.stream.sessionIdPath ? baseTemplate.stream.sessionIdPath : "";
@@ -9379,11 +9559,11 @@
                             </label>
                         </div>
                         <select id="coolauxv-provider-form-type" class="coolauxv-setting-input coolauxv-fixed-input">
-                            <option value="chat-completions" ${baseTemplate.type === "chat-completions" ? "selected" : ""}>Chat Completions</option>
+                            <option value="chat-completions" ${baseTemplate.type === "chat-completions" ? "selected" : ""}>OpenAI Chat Completions</option>
+                            <option value="openai-responses" ${baseTemplate.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                             <option value="chat-no-history" ${baseTemplate.type === "chat-no-history" ? "selected" : ""}>No-History Chat</option>
                             <option value="ollama" ${baseTemplate.type === "ollama" ? "selected" : ""}>Ollama</option>
                             <option value="chat-parts" ${baseTemplate.type === "chat-parts" ? "selected" : ""}>Chat Parts</option>
-                            <option value="openai-responses" ${baseTemplate.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                         </select>
 
                         <div class="coolauxv-sub-label">API 模型获取（高级可选）</div>
@@ -9392,25 +9572,6 @@
                             在主界面显示“获取模型”
                         </label>
                         <div style="font-size:11px; color:#888;">默认关闭。仅适用于支持模型列表接口的 Chat Completions / Responses 提供商。</div>
-
-                        <div class="coolauxv-sub-label">Reasoning Effort（高级可选）</div>
-                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                            <input type="checkbox" id="coolauxv-provider-form-reasoning-enabled" ${baseTemplate.supportsReasoningEffort === true ? "checked" : ""}>
-                            启用推理强度参数，并在主界面显示选择器
-                        </label>
-                        <div id="coolauxv-provider-form-reasoning-controls" style="display:flex; gap:6px; flex-wrap:wrap;">
-                            ${REASONING_EFFORT_OPTIONS.map((effort) => `<button type="button" class="coolauxv-action-btn${effort === normalizeReasoningEffort(baseTemplate.reasoningEffort) ? " coolauxv-btn-primary" : ""}" data-reasoning-effort="${effort}" style="padding:4px 8px;">${effort || "默认"}</button>`).join("")}
-                        </div>
-                        <div style="font-size:11px; color:#888;">默认关闭；仅确认接口支持时启用。Chat Completions 使用 reasoning_effort，Responses 使用 reasoning.effort；选择“默认”不发送参数。</div>
-
-                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">支持识图 ({{supportsVision}})
-                            <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
-                                <input type="checkbox" data-display-key="supportsVision" ${displayCheck("supportsVision")}> 默认展示
-                            </label>
-                        </div>
-                        <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none;">
-                            <input type="checkbox" id="coolauxv-provider-form-vision" ${baseTemplate.supportsVision ? "checked" : ""}> 允许识图
-                        </label>
 
                         <div class="coolauxv-sub-label coolauxv-sub-label-inline">连续对话 ({{supportsContinuousChat}})
                             <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
@@ -9491,14 +9652,24 @@
                                 <input type="checkbox" data-display-key="headersTemplate" ${displayCheck("headersTemplate")}> 默认展示
                             </label>
                         </div>
-                        <textarea id="coolauxv-provider-form-headers" class="coolauxv-setting-input coolauxv-resizable-input" rows="4">${escapeText(headersJson)}</textarea>
+                        <textarea id="coolauxv-provider-form-headers" class="coolauxv-setting-input coolauxv-resizable-input coolauxv-request-template" rows="5" placeholder="${escapeAttr(getRequestTemplatePlaceholder(baseTemplate.type, "headersTemplate"))}">${escapeText(headersJson)}</textarea>
 
-                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">请求体模板 (JSON, {{bodyTemplate}})
+                        <div class="coolauxv-sub-label coolauxv-sub-label-inline">普通请求体模板 (JSON, {{bodyTemplate}})
                             <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
                                 <input type="checkbox" data-display-key="bodyTemplate" ${displayCheck("bodyTemplate")}> 默认展示
                             </label>
                         </div>
-                        <textarea id="coolauxv-provider-form-body-template" class="coolauxv-setting-input coolauxv-resizable-input" rows="4">${escapeText(bodyJson)}</textarea>
+                        <textarea id="coolauxv-provider-form-body-template" class="coolauxv-setting-input coolauxv-resizable-input coolauxv-request-template" rows="5" placeholder="${escapeAttr(getRequestTemplatePlaceholder(baseTemplate.type, "bodyTemplate"))}">${escapeText(bodyJson)}</textarea>
+                        <div id="coolauxv-provider-body-protocol-hint" style="font-size:11px; color:#888;"></div>
+                        <div id="coolauxv-provider-reasoning-body-section" style="display:${hasReasoningModels(baseTemplate) ? "block" : "none"};">
+                            <div class="coolauxv-sub-label coolauxv-sub-label-inline">推理请求体模板 (JSON, {{reasoningBodyTemplate}})
+                                <label class="coolauxv-toggle-label" style="margin-left:auto; width:auto; background:none; padding:0; border:none; font-weight:normal;">
+                                    <input type="checkbox" data-display-key="reasoningBodyTemplate" ${displayCheck("reasoningBodyTemplate")}> 默认展示
+                                </label>
+                            </div>
+                            <textarea id="coolauxv-provider-form-reasoning-body-template" class="coolauxv-setting-input coolauxv-resizable-input coolauxv-request-template" rows="8" placeholder="${escapeAttr(getRequestTemplatePlaceholder(baseTemplate.type, "reasoningBodyTemplate", baseTemplate.bodyTemplate))}">${escapeText(reasoningBodyJson)}</textarea>
+                            <div style="font-size:11px; color:#888;">仅模型支持推理且首页启用推理时使用。留空时在普通请求体基础上添加推理参数；填写 JSON 后整体替换。{{reasoningEffort}} 对应顶栏思考强度，“默认”为 medium。</div>
+                        </div>
 
                         <div style="font-size:12px; font-weight:700; color:#666; margin-top:2px;">模型与自定义字段</div>
                         <div class="coolauxv-sub-label coolauxv-sub-label-inline">模型配置 ({{modelGroups}})
@@ -9507,7 +9678,7 @@
                             </label>
                         </div>
                         <div id="coolauxv-provider-form-model-groups"></div>
-                        <button type="button" id="coolauxv-provider-add-group" class="coolauxv-action-btn" style="margin-top:6px;">➕ 添加分类</button>
+                        <div style="font-size:11px; color:#888;">推理：支持思考模式；多模态：支持图片等多模态输入。默认模型为列表第一项。</div>
                         <div class="coolauxv-sub-label coolauxv-sub-label-inline">自定义字段 (key => {{key}})</div>
                         <div id="coolauxv-provider-form-custom-fields"></div>
                         <button type="button" id="coolauxv-provider-add-custom-field" class="coolauxv-action-btn" style="margin-top:6px;">➕ 添加字段</button>
@@ -9559,26 +9730,30 @@
             const idInput = box.querySelector("#coolauxv-provider-form-id");
             const idWarning = box.querySelector("#coolauxv-provider-id-warning");
             const typeInput = box.querySelector("#coolauxv-provider-form-type");
-            const reasoningEnabledCheckbox = box.querySelector("#coolauxv-provider-form-reasoning-enabled");
-            const reasoningControls = box.querySelector("#coolauxv-provider-form-reasoning-controls");
-            let modalReasoningEffort = normalizeReasoningEffort(baseTemplate.reasoningEffort);
-            const refreshReasoningControls = () => {
-                const enabled = reasoningEnabledCheckbox.checked;
-                reasoningControls.style.opacity = enabled ? "1" : "0.45";
-                reasoningControls.querySelectorAll("button").forEach((button) => { button.disabled = !enabled; });
-            };
-            reasoningEnabledCheckbox.addEventListener("change", refreshReasoningControls);
-            reasoningControls.addEventListener("click", (e) => {
-                const button = e.target.closest("[data-reasoning-effort]");
-                if (!button || button.disabled) return;
-                modalReasoningEffort = normalizeReasoningEffort(button.dataset.reasoningEffort);
-                reasoningControls.querySelectorAll("button").forEach((item) => {
-                    item.classList.toggle("coolauxv-btn-primary", item === button);
-                });
-            });
-            refreshReasoningControls();
             const headersInput = box.querySelector("#coolauxv-provider-form-headers");
             const bodyInput = box.querySelector("#coolauxv-provider-form-body-template");
+            const reasoningBodyInput = box.querySelector("#coolauxv-provider-form-reasoning-body-template");
+            const reasoningBodySection = box.querySelector("#coolauxv-provider-reasoning-body-section");
+            const refreshReasoningTemplate = () => {
+                const type = normalizeProviderType(typeInput.value);
+                const normalBody = parseTemplateJson(bodyInput.value, type);
+                reasoningBodyInput.placeholder = getRequestTemplatePlaceholder(type, "reasoningBodyTemplate", normalBody);
+                reasoningBodySection.style.display = modelGroups.some((group) => (group.models || []).some((model) => model.supportsReasoning)) ? "block" : "none";
+            };
+            bodyInput.addEventListener("input", refreshReasoningTemplate);
+            const bodyProtocolHint = box.querySelector("#coolauxv-provider-body-protocol-hint");
+            const refreshBodyProtocolHint = () => {
+                const type = normalizeProviderType(typeInput.value);
+                headersInput.placeholder = getRequestTemplatePlaceholder(type, "headersTemplate");
+                bodyInput.placeholder = getRequestTemplatePlaceholder(type, "bodyTemplate");
+                refreshReasoningTemplate();
+                bodyProtocolHint.textContent = type === "openai-responses"
+                    ? "Responses 标准：input 使用 {{input}}；文字/图片分别为 input_text / input_image；思考强度为 reasoning.effort，输出上限为 max_output_tokens。留空使用上方提示的默认模板，填写 JSON 后整体替换。启用推理后使用下方“推理请求体模板”，通过 {{reasoningEffort}} 引用顶栏思考强度。"
+                    : (type === "chat-completions"
+                        ? "Chat Completions 标准：messages 使用 {{messages}}；文字/图片分别为 text / image_url；思考强度为 reasoning_effort，输出上限为 max_completion_tokens。留空使用上方提示的默认模板，填写 JSON 后整体替换。启用推理后使用下方“推理请求体模板”，通过 {{reasoningEffort}} 引用顶栏思考强度。"
+                        : "自定义协议可使用 {{reasoningEnabled}} 和 {{reasoningEffort}} 引用首页的推理设置。");
+            };
+            refreshBodyProtocolHint();
             const streamSection = box.querySelector("#coolauxv-provider-stream-section");
             const streamTip = box.querySelector("#coolauxv-provider-stream-tip");
             const closeBtn = box.querySelector("#coolauxv-provider-modal-close");
@@ -9588,7 +9763,6 @@
             const subscriptionNameInput = box.querySelector("#coolauxv-provider-subscription-name");
             const subscriptionUrlInput = box.querySelector("#coolauxv-provider-subscription-url");
             const modelGroupContainer = box.querySelector("#coolauxv-provider-form-model-groups");
-            const addGroupBtn = box.querySelector("#coolauxv-provider-add-group");
             const customFieldContainer = box.querySelector("#coolauxv-provider-form-custom-fields");
             const addCustomFieldBtn = box.querySelector("#coolauxv-provider-add-custom-field");
             const customJsInput = box.querySelector("#coolauxv-provider-form-custom-js");
@@ -9660,46 +9834,43 @@
                 idInput.addEventListener("input", updateProviderIdState);
             }
 
+            let modalProviderType = normalizeProviderType(baseTemplate.type);
             if (typeInput) {
                 typeInput.addEventListener("change", () => {
-                    if (bodyInput) {
-                        const nextType = normalizeProviderType(typeInput.value);
-                        bodyInput.value = JSON.stringify(defaultBodyTemplateForType(nextType), null, 2);
-                    }
+                    const nextType = normalizeProviderType(typeInput.value);
+                    const defaults = [
+                        [headersInput, getDefaultHeadersTemplateByType],
+                        [bodyInput, defaultBodyTemplateForType]
+                    ];
+                    defaults.forEach(([input, getDefault]) => {
+                        if (!input.value.trim() || isDeepEqual(parseTemplateJson(input.value, modalProviderType), getDefault(modalProviderType))) {
+                            input.value = isOpenAiProviderType(nextType) ? "" : JSON.stringify(getDefault(nextType), null, 2);
+                        }
+                    });
+                    modalProviderType = nextType;
+                    refreshBodyProtocolHint();
                     refreshStreamSection();
                 });
             }
 
             const renderModelGroups = () => {
                 if (!modelGroupContainer) return;
-                modelGroupContainer.innerHTML = modelGroups.map((group, groupIndex) => {
-                    const modelsHtml = (group.models || []).map((model, modelIndex) => `
-                        <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;" data-group-index="${groupIndex}" data-model-index="${modelIndex}">
-                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1;" data-field="model.id" placeholder="名称" value="${escapeAttr(model.id || model.name || "")}">
-                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1;" data-field="model.class" placeholder="子类别" value="${escapeAttr(model.class || "")}">
-                            <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1;" data-field="model.tag" placeholder="Tag" value="${escapeAttr(model.tag || "")}">
-                            <button type="button" class="coolauxv-action-btn" data-action="remove-model" style="padding:4px 8px;">×</button>
-                        </div>
-                    `).join("");
-                    const typeSelected = group.type === "vision" ? "vision" : "text";
-                    return `
-                        <div style="border:1px solid #eee; border-radius:8px; padding:8px; margin-bottom:10px;" data-group-index="${groupIndex}">
-                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                                <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1;" data-field="label" placeholder="分类名称" value="${escapeAttr(group.label || "")}">
-                                <select class="coolauxv-setting-input coolauxv-fixed-input" data-field="type" style="min-width:140px;">
-                                    <option value="text" ${typeSelected === "text" ? "selected" : ""}>通用模型</option>
-                                    <option value="vision" ${typeSelected === "vision" ? "selected" : ""}>视觉模型</option>
-                                </select>
-                                <button type="button" class="coolauxv-action-btn" data-action="remove-group" style="padding:4px 8px;">删除分类</button>
+                const group = modelGroups[0];
+                modelGroupContainer.innerHTML = `
+                    <div data-group-index="0">
+                        ${(group.models || []).map((model, modelIndex) => `
+                            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:6px;" data-model-index="${modelIndex}">
+                                <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1; min-width:120px;" data-field="model.id" placeholder="模型 ID" value="${escapeAttr(model.id || "")}">
+                                <label class="coolauxv-toggle-label" title="支持思考模式"><input type="checkbox" data-field="model.supportsReasoning" ${model.supportsReasoning ? "checked" : ""}>推理</label>
+                                <label class="coolauxv-toggle-label" title="支持多模态输入"><input type="checkbox" data-field="model.supportsMultimodal" ${model.supportsMultimodal ? "checked" : ""}>多模态</label>
+                                <input type="text" class="coolauxv-setting-input coolauxv-fixed-input" style="flex:1; min-width:80px;" data-field="model.tag" placeholder="Tag" value="${escapeAttr(model.tag || "")}">
+                                <button type="button" class="coolauxv-action-btn" data-action="remove-model" style="padding:4px 8px;">×</button>
                             </div>
-                            <div style="font-size:11px; color:#888; margin-top:6px;">默认模型为该分类的第一项</div>
-                            <div style="margin-top:6px;">
-                                ${modelsHtml || `<div style="font-size:12px; color:#999;">暂无模型，请添加</div>`}
-                            </div>
-                            <button type="button" class="coolauxv-action-btn" data-action="add-model" style="margin-top:6px; padding:4px 8px;">➕ 添加模型</button>
-                        </div>
-                    `;
-                }).join("");
+                        `).join("") || `<div style="font-size:12px; color:#999;">暂无模型，请添加</div>`}
+                        <button type="button" class="coolauxv-action-btn" data-action="add-model" style="margin-top:6px; padding:4px 8px;">➕ 添加模型</button>
+                    </div>
+                `;
+                refreshReasoningTemplate();
             };
 
             const renderCustomFields = () => {
@@ -9723,13 +9894,6 @@
                 `).join("");
             };
 
-            if (addGroupBtn) {
-                addGroupBtn.onclick = () => {
-                    modelGroups.push({ label: "通用模型", type: "text", models: [] });
-                    renderModelGroups();
-                };
-            }
-
             if (addCustomFieldBtn) {
                 addCustomFieldBtn.onclick = () => {
                     customFieldList.push({ key: "", value: "", display: true, masked: false });
@@ -9750,13 +9914,7 @@
                     if (!group) return;
                     if (action === "add-model") {
                         group.models = group.models || [];
-                        group.models.push({ id: "", class: "", tag: "" });
-                        renderModelGroups();
-                    } else if (action === "remove-group") {
-                        modelGroups.splice(groupIndex, 1);
-                        if (!modelGroups.length) {
-                            modelGroups.push({ label: "通用模型", type: "text", models: [] });
-                        }
+                        group.models.push({ id: "", supportsReasoning: false, supportsMultimodal: false, tag: "" });
                         renderModelGroups();
                     } else if (action === "remove-model") {
                         const modelEl = target.closest("[data-model-index]");
@@ -9779,14 +9937,6 @@
                     const groupIndex = Number(groupEl.dataset.groupIndex);
                     const group = modelGroups[groupIndex];
                     if (!group) return;
-                    if (field === "label") {
-                        group.label = target.value;
-                        return;
-                    }
-                    if (field === "type") {
-                        group.type = target.value === "vision" ? "vision" : "text";
-                        return;
-                    }
                     if (field.startsWith("model.")) {
                         const modelEl = target.closest("[data-model-index]");
                         if (!modelEl) return;
@@ -9797,8 +9947,9 @@
                         if (!model) return;
                         const key = field.split(".")[1];
                         if (key === "id") model.id = target.value;
-                        if (key === "class") model.class = target.value;
+                        if (key === "supportsReasoning" || key === "supportsMultimodal") model[key] = target.checked;
                         if (key === "tag") model.tag = target.value;
+                        if (key === "supportsReasoning") refreshReasoningTemplate();
                     }
                 });
             }
@@ -9859,25 +10010,12 @@
             };
 
             const buildModelGroupsPayload = () => {
-                let groups = modelGroups.map((group, idx) => {
-                    const label = String(group.label || "").trim() || `模型分类${idx + 1}`;
-                    const type = group.type === "vision" ? "vision" : "text";
-                    const models = (group.models || []).map(normalizeModelItem).filter(Boolean);
-                    let selectedModel = String(group.selectedModel || "").trim();
-                    if ((!selectedModel || !models.some((m) => m.id === selectedModel)) && models.length) {
-                        selectedModel = models[0].id;
-                    }
-                    return {
-                        id: normalizeProviderId(group.id || label),
-                        label: label,
-                        type: type,
-                        models: models,
-                        selectedModel: selectedModel
-                    };
-                }).filter(Boolean);
-                if (!groups.length) {
-                    groups = [{ id: "general", label: "通用模型", type: "text", models: [], selectedModel: "" }];
-                }
+                const models = (modelGroups[0].models || []).map(normalizeModelItem).filter(Boolean);
+                const selected = modelGroups[0].selectedModel;
+                const groups = [{
+                    id: "models", label: "模型", type: "text", models: models,
+                    selectedModel: models.some((model) => model.id === selected) ? selected : (models[0] && models[0].id || "")
+                }];
                 return groups;
             };
 
@@ -9978,7 +10116,6 @@
                     const keyLink = (box.querySelector("#coolauxv-provider-form-key-link") || {}).value || "";
                     const keyLinkTitle = (box.querySelector("#coolauxv-provider-form-key-link-title") || {}).value || "";
                     const type = normalizeProviderType(typeInput && typeInput.value);
-                    const supportsVision = !!(box.querySelector("#coolauxv-provider-form-vision") || {}).checked;
                     const supportsContinuousChat = !!(box.querySelector("#coolauxv-provider-form-continuous-chat") || {}).checked;
                     const roleSystem = (box.querySelector("#coolauxv-provider-form-role-system") || {}).value || "system";
                     const roleUser = (box.querySelector("#coolauxv-provider-form-role-user") || {}).value || "user";
@@ -9988,10 +10125,14 @@
                     const sessionIdPath = (box.querySelector("#coolauxv-provider-form-session-id-path") || {}).value || "";
                     const sessionIdKey = (box.querySelector("#coolauxv-provider-form-session-id-key") || {}).value || DEFAULT_PROVIDER_SESSION_FIELD_KEY;
                     const reasoningTag = (box.querySelector("#coolauxv-provider-form-reasoning-tag") || {}).value || "";
-                    const headersParsed = parseTemplateJson(headersInput ? headersInput.value.trim() : "");
-                    const bodyParsed = parseTemplateJson(bodyInput ? bodyInput.value.trim() : "");
+                    const headersParsed = parseTemplateJson(headersInput ? headersInput.value.trim() : "", type);
+                    const bodyParsed = parseTemplateJson(bodyInput ? bodyInput.value.trim() : "", type);
+                    let reasoningBodyParsed = parseTemplateJson(reasoningBodyInput.value.trim(), type, true);
+                    if (reasoningBodyParsed === undefined && !hasReasoningModels({ modelGroups })) {
+                        reasoningBodyParsed = baseTemplate.reasoningBodyTemplate || null;
+                    }
 
-                    if (!headersParsed || !bodyParsed) {
+                    if (headersParsed === undefined || bodyParsed === undefined || reasoningBodyParsed === undefined || (!isOpenAiProviderType(type) && (!headersParsed || !bodyParsed))) {
                         alert("JSON 解析失败，请检查请求头或请求体格式。");
                         return;
                     }
@@ -10056,9 +10197,9 @@
                         id: finalId,
                         label: finalLabel,
                         type: type,
-                        supportsReasoningEffort: reasoningEnabledCheckbox.checked,
+                        reasoningEnabled: baseTemplate.reasoningEnabled === true,
                         supportsModelList: box.querySelector("#coolauxv-provider-form-model-list-enabled").checked,
-                        reasoningEffort: modalReasoningEffort,
+                        reasoningEffort: normalizeReasoningEffort(baseTemplate.reasoningEffort),
                         baseUrl: String(baseUrl || "").trim(),
                         apiKey: apiKeyValue,
                         apiKeyPlaceholder: String(apiKeyPlaceholder || "").trim(),
@@ -10067,6 +10208,7 @@
                         roles: { system: roleSystem, user: roleUser, assistant: roleAssistant },
                         headersTemplate: headersParsed,
                         bodyTemplate: bodyParsed,
+                        reasoningBodyTemplate: reasoningBodyParsed,
                         stream: {
                             parser: type === "chat-no-history" ? "chat-completions" : type,
                             deltaPath: String(deltaPath || "").trim(),
@@ -10075,7 +10217,6 @@
                             sessionIdKey: normalizeTemplateKey(sessionIdKey || DEFAULT_PROVIDER_SESSION_FIELD_KEY) || DEFAULT_PROVIDER_SESSION_FIELD_KEY,
                             reasoningTag: String(reasoningTag || "").trim().toLowerCase()
                         },
-                        supportsVision: supportsVision,
                         supportsContinuousChat: supportsContinuousChat,
                         modelGroups: groups,
                         display: display,
@@ -10109,7 +10250,7 @@
             if (!providerRadioGroup) return;
             providerRadioGroup.innerHTML = templates.map((provider) => {
                 const isChecked = provider.id === currentProviderId ? "checked" : "";
-                const providerContext = buildTemplateContext(provider, { apiKey: provider.apiKey || "" });
+                const providerContext = buildProviderDisplayContext(provider, { apiKey: provider.apiKey || "" });
                 const resolvedProviderLabel = applyTemplateString(provider.label || provider.id || "", providerContext);
                 return `
                     <label class="coolauxv-radio-label">
@@ -10124,10 +10265,11 @@
                 const sectionId = `coolauxv-provider-section-${provider.id}`;
                 const keyInputId = `coolauxv-provider-key-${provider.id}`;
                 const typeLabel = getProviderTypeLabel(provider.type);
-                const headersJson = formatTemplateJson(provider.headersTemplate);
-                const bodyJson = formatTemplateJson(provider.bodyTemplate);
+                const headersJson = formatTemplateJson(provider.headersTemplate, provider.type);
+                const bodyJson = formatTemplateJson(provider.bodyTemplate, provider.type);
+                const reasoningBodyJson = provider.reasoningBodyTemplate == null ? "" : formatTemplateJson(provider.reasoningBodyTemplate, provider.type);
                 const display = Object.assign({}, DEFAULT_DISPLAY_FIELDS, provider.display || {});
-                const providerContext = buildTemplateContext(provider, { apiKey: provider.apiKey || "" });
+                const providerContext = buildProviderDisplayContext(provider, { apiKey: provider.apiKey || "" });
                 const resolvedProviderLabel = applyTemplateString(provider.label || provider.id || "", providerContext);
                 const resolvedKeyLink = applyTemplateString(provider.keyLink || "", providerContext);
                 const resolvedKeyLinkTitle = applyTemplateString(provider.keyLinkTitle || DEFAULT_KEY_LINK_TITLE, providerContext);
@@ -10217,23 +10359,18 @@
                     `;
                 }
 
-                if (display.type || display.supportsVision || display.supportsContinuousChat) {
+                if (display.type || display.supportsContinuousChat) {
                     fieldsHtml += `
                         <div class="coolauxv-sub-label">协议类型</div>
                         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
                             ${display.type ? `
                                 <select class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-provider-id="${provider.id}" data-provider-field="type" data-rerender="true">
-                                    <option value="chat-completions" ${provider.type === "chat-completions" ? "selected" : ""}>Chat Completions</option>
+                                    <option value="chat-completions" ${provider.type === "chat-completions" ? "selected" : ""}>OpenAI Chat Completions</option>
+                                    <option value="openai-responses" ${provider.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                                     <option value="chat-no-history" ${provider.type === "chat-no-history" ? "selected" : ""}>No-History Chat</option>
                                     <option value="ollama" ${provider.type === "ollama" ? "selected" : ""}>Ollama</option>
                                     <option value="chat-parts" ${provider.type === "chat-parts" ? "selected" : ""}>Chat Parts</option>
-                                    <option value="openai-responses" ${provider.type === "openai-responses" ? "selected" : ""}>OpenAI Responses</option>
                                 </select>
-                            ` : ""}
-                            ${display.supportsVision ? `
-                                <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none; font-weight:normal;">
-                                    <input type="checkbox" data-provider-id="${provider.id}" data-provider-field="supportsVision" ${provider.supportsVision ? "checked" : ""}>支持识图
-                                </label>
                             ` : ""}
                             ${display.supportsContinuousChat ? `
                                 <label class="coolauxv-toggle-label" style="width:auto; background:none; padding:0; border:none; font-weight:normal;">
@@ -10269,14 +10406,21 @@
                 if (display.headersTemplate) {
                     fieldsHtml += `
                         <div class="coolauxv-sub-label">请求头模板 (JSON)</div>
-                        <textarea class="coolauxv-setting-input coolauxv-resizable-input coolauxv-provider-input coolauxv-provider-json" data-provider-id="${provider.id}" data-provider-field="headersTemplate">${escapeText(headersJson)}</textarea>
+                        <textarea class="coolauxv-setting-input coolauxv-resizable-input coolauxv-provider-input coolauxv-provider-json coolauxv-request-template" data-provider-id="${provider.id}" data-provider-field="headersTemplate" rows="5" placeholder="${escapeAttr(getRequestTemplatePlaceholder(provider.type, "headersTemplate"))}">${escapeText(headersJson)}</textarea>
                     `;
                 }
 
                 if (display.bodyTemplate) {
                     fieldsHtml += `
-                        <div class="coolauxv-sub-label">请求体模板 (JSON)</div>
-                        <textarea class="coolauxv-setting-input coolauxv-resizable-input coolauxv-provider-input coolauxv-provider-json" data-provider-id="${provider.id}" data-provider-field="bodyTemplate">${escapeText(bodyJson)}</textarea>
+                        <div class="coolauxv-sub-label">普通请求体模板 (JSON)</div>
+                        <textarea class="coolauxv-setting-input coolauxv-resizable-input coolauxv-provider-input coolauxv-provider-json coolauxv-request-template" data-provider-id="${provider.id}" data-provider-field="bodyTemplate" rows="5" placeholder="${escapeAttr(getRequestTemplatePlaceholder(provider.type, "bodyTemplate"))}">${escapeText(bodyJson)}</textarea>
+                    `;
+                }
+
+                if (display.reasoningBodyTemplate && hasReasoningModels(provider)) {
+                    fieldsHtml += `
+                        <div class="coolauxv-sub-label">推理请求体模板 (JSON，启用推理时使用)</div>
+                        <textarea class="coolauxv-setting-input coolauxv-resizable-input coolauxv-provider-input coolauxv-provider-json coolauxv-request-template" data-provider-id="${provider.id}" data-provider-field="reasoningBodyTemplate" rows="8" placeholder="${escapeAttr(getRequestTemplatePlaceholder(provider.type, "reasoningBodyTemplate", provider.bodyTemplate))}">${escapeText(reasoningBodyJson)}</textarea>
                     `;
                 }
 
@@ -10359,7 +10503,7 @@
             if (!inputModelProvider) return "";
             const selected = resolveProviderId(GM_getValue("coolauxv_model_provider", fallbackProviderId), templates);
             inputModelProvider.innerHTML = templates.map((provider) => {
-                const providerContext = buildTemplateContext(provider, { apiKey: provider.apiKey || "" });
+                const providerContext = buildProviderDisplayContext(provider, { apiKey: provider.apiKey || "" });
                 const resolvedProviderLabel = applyTemplateString(provider.label || provider.id || "", providerContext);
                 return `<option value="${provider.id}">${escapeAttr(resolvedProviderLabel || provider.label)}</option>`;
             }).join("");
@@ -10376,7 +10520,7 @@
                 const isVisible = provider.id === selectedProviderId;
                 const groups = Array.isArray(provider.modelGroups) ? provider.modelGroups : [];
                 const showModels = provider.display ? provider.display.modelGroups !== false : true;
-                const providerContext = buildTemplateContext(provider, { apiKey: provider.apiKey || "" });
+                const providerContext = buildProviderDisplayContext(provider, { apiKey: provider.apiKey || "" });
                 const resolvedProviderLabel = applyTemplateString(provider.label || provider.id || "", providerContext);
                 const supportsOpenAiModelList = provider.type === "chat-completions" || provider.type === "openai-responses";
                 const openAiControls = supportsOpenAiModelList && provider.supportsModelList === true
@@ -10388,20 +10532,8 @@
                             </label>
                             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                                 <button type="button" class="coolauxv-action-btn" data-action="fetch-provider-models" data-provider-id="${provider.id}">↻ 获取模型</button>
-                                <span data-model-fetch-status="${provider.id}" style="font-size:12px; color:#888;">自动从 /v1/models 获取并填入通用模型</span>
+                                <span data-model-fetch-status="${provider.id}" style="font-size:12px; color:#888;">自动从 /v1/models 获取模型列表；能力请在高级选项中勾选</span>
                             </div>
-                        </div>
-                    `
-                    : "";
-                const reasoningControls = supportsOpenAiModelList && provider.supportsReasoningEffort === true
-                    ? `
-                        <div class="coolauxv-setting-group">
-                            <label class="coolauxv-setting-label">
-                                ${escapeAttr(resolvedProviderLabel || provider.label)} · Reasoning Effort
-                            </label>
-                            <select class="coolauxv-setting-input coolauxv-fixed-input" data-provider-reasoning-effort="${provider.id}" aria-label="推理强度">
-                                ${REASONING_EFFORT_OPTIONS.map((effort) => `<option value="${effort}" ${effort === normalizeReasoningEffort(provider.reasoningEffort) ? "selected" : ""}>${effort || "默认（不发送参数）"}</option>`).join("")}
-                            </select>
                         </div>
                     `
                     : "";
@@ -10409,12 +10541,10 @@
                     ? groups.map((group) => {
                         const selectedModel = group.selectedModel || (group.models && group.models[0] ? (group.models[0].id || group.models[0].name || "") : "");
                         const groupButtons = buildModelButtonsHTML(group, provider.id);
-                        const typeLabel = group.type === "vision" ? "视觉模型" : "通用模型";
                         return `
                             <div class="coolauxv-setting-group">
                                 <label class="coolauxv-setting-label">
-                                    ${escapeAttr(resolvedProviderLabel || provider.label)} · ${escapeAttr(group.label)}
-                                    <span class="coolauxv-sub-label" style="margin:0 0 0 6px;">${typeLabel} · model</span>
+                                    ${escapeAttr(resolvedProviderLabel || provider.label)} · 模型
                                 </label>
                                 <input type="text" class="coolauxv-setting-input coolauxv-fixed-input coolauxv-provider-input" data-clearable="true" data-provider-id="${provider.id}" data-group-id="${group.id}" data-group-field="selectedModel" placeholder="默认: ${escapeAttr(selectedModel)}" value="${escapeAttr(selectedModel)}">
                                 ${groupButtons}
@@ -10431,7 +10561,6 @@
                 return `
                     <div class="coolauxv-model-provider-section${isVisible ? " coolauxv-model-visible" : ""}" data-model-provider-section="${provider.id}">
                         ${openAiControls}
-                        ${reasoningControls}
                         ${groupBlocks}
                     </div>
                 `;
@@ -11578,8 +11707,11 @@
                     }
                     if (previousType !== nextType) {
                         const defaultBody = defaultBodyTemplateForType(previousType);
-                        if (JSON.stringify(tpl.bodyTemplate || {}) === JSON.stringify(defaultBody)) {
-                            tpl.bodyTemplate = defaultBodyTemplateForType(nextType);
+                        if (tpl.bodyTemplate === null || isDeepEqual(tpl.bodyTemplate, defaultBody)) {
+                            tpl.bodyTemplate = isOpenAiProviderType(nextType) ? null : defaultBodyTemplateForType(nextType);
+                        }
+                        if (tpl.headersTemplate === null || isDeepEqual(tpl.headersTemplate, getDefaultHeadersTemplateByType(previousType))) {
+                            tpl.headersTemplate = isOpenAiProviderType(nextType) ? null : getDefaultHeadersTemplateByType(nextType);
                         }
                     }
                     saveProviderTemplates(templates);
@@ -11588,15 +11720,19 @@
                 }
 
                 if (target.classList.contains("coolauxv-provider-json")) {
-                    const parsed = parseTemplateJson(target.value.trim());
-                    if (!parsed) {
+                    const parsed = parseTemplateJson(target.value.trim(), tpl.type, field === "reasoningBodyTemplate");
+                    if (parsed === undefined || (!isOpenAiProviderType(tpl.type) && field !== "reasoningBodyTemplate" && !parsed)) {
                         alert("JSON 解析失败，请检查格式。");
                         renderProviderUI();
                         return;
                     }
+                    if (parsed === null) target.value = "";
                     if (field === "headersTemplate") tpl.headersTemplate = parsed;
                     if (field === "bodyTemplate") tpl.bodyTemplate = parsed;
+                    if (field === "reasoningBodyTemplate") tpl.reasoningBodyTemplate = parsed;
                     saveProviderTemplates(templates);
+                    const reasoningInput = providerSectionsContainer.querySelector(`[data-provider-id="${providerId}"][data-provider-field="reasoningBodyTemplate"]`);
+                    if (reasoningInput) reasoningInput.placeholder = getRequestTemplatePlaceholder(tpl.type, "reasoningBodyTemplate", tpl.bodyTemplate);
                     return;
                 }
 
@@ -11960,15 +12096,6 @@
         }
 
         if (modelSectionsContainer) {
-            modelSectionsContainer.addEventListener("change", (e) => {
-                const target = e.target;
-                if (!target || !target.dataset || !target.dataset.providerReasoningEffort) return;
-                const templates = getProviderTemplates();
-                const provider = templates.find((item) => item.id === target.dataset.providerReasoningEffort);
-                if (!provider || provider.supportsReasoningEffort !== true) return;
-                provider.reasoningEffort = normalizeReasoningEffort(target.value);
-                saveProviderTemplates(templates);
-            });
             modelSectionsContainer.addEventListener("click", (e) => {
                 const fetchBtn = e.target.closest('[data-action="fetch-provider-models"]');
                 if (fetchBtn) {
@@ -12219,10 +12346,12 @@
         const applyBasicAnimSetting = (enabled) => {
             if (!popup) return;
             popup.classList.toggle("coolauxv-basic-anim-off", !enabled);
+            syncHeaderLayoutAnimation();
             // 重新同步折叠区状态，保证关闭基础动画时立即生效
             updateChatCollapseUI();
             updateTopSectionCollapseUI();
             setReasoningAnimatedVisibility(hasReasoning && isShowReasoning);
+            updateProviderFeatureVisibility();
             syncContinuousChatPromptSectionVisibility();
         };
 
@@ -13174,6 +13303,8 @@
                     GM_setValue("coolauxv_enable_basic_anim", true);
                     applyBasicAnimSetting(true);
                 }
+                updateProviderFeatureVisibility();
+                syncHeaderLayoutAnimation();
             });
         }
         if (inputAnimSpeed) {
@@ -13385,7 +13516,7 @@
     const getProviderLabel = (providerId) => {
         const tpl = getProviderTemplateSafe(providerId);
         if (!tpl) return providerId;
-        const context = buildTemplateContext(tpl, { apiKey: tpl.apiKey || "" });
+        const context = buildProviderDisplayContext(tpl, { apiKey: tpl.apiKey || "" });
         const resolved = applyTemplateString(tpl.label || tpl.id || "", context).trim();
         return resolved || tpl.label || providerId;
     };
@@ -13393,14 +13524,33 @@
     const getProviderKeyLink = (providerId) => {
         const tpl = getProviderTemplateSafe(providerId);
         if (!tpl || !tpl.keyLink) return "";
-        const context = buildTemplateContext(tpl, { apiKey: tpl.apiKey || "" });
+        const context = buildProviderDisplayContext(tpl, { apiKey: tpl.apiKey || "" });
         return applyTemplateString(tpl.keyLink, context).trim();
     };
 
     const isProviderSupportsVision = (providerId) => {
         const tpl = getProviderTemplateSafe(providerId);
-        return !!(tpl && tpl.supportsVision);
+        const model = getProviderSelectedModel(tpl);
+        return !!(model && model.supportsMultimodal);
     };
+
+    function isCurrentModelReasoningEnabled() {
+        const config = getActiveConfig();
+        return !!(config.supportsReasoning && config.template.reasoningEnabled);
+    }
+
+    function updateReasoningToggleVisibility() {
+        if (!popup) return false;
+        const enabled = isCurrentModelReasoningEnabled();
+        const toggle = popup.querySelector("#coolauxv-reasoning-toggle-container");
+        setHeaderControlsVisibility(toggle, enabled && headerMainControlsVisible, isMinimizeAnimEnabled());
+        if (!enabled) {
+            setReasoningAnimatedVisibility(false);
+            const separator = popup.querySelector("#coolauxv-separator");
+            if (separator) separator.style.display = "none";
+        }
+        return enabled;
+    }
 
     const isProviderSupportsContinuousChat = (providerId) => {
         const tpl = getProviderTemplateSafe(providerId);
@@ -13419,6 +13569,22 @@
         const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), getProviderTemplates());
         const supportsVision = isProviderSupportsVision(providerId);
         const supportsContinuousChat = isProviderSupportsContinuousChat(providerId);
+        const provider = getProviderTemplateSafe(providerId);
+        const selectedModel = getProviderSelectedModel(provider);
+        const supportsReasoning = !!(selectedModel && selectedModel.supportsReasoning);
+        const supportsEffort = supportsReasoning && provider.reasoningEnabled === true && (provider.type === "chat-completions" || provider.type === "openai-responses");
+        const reasoningEnable = popup.querySelector("#coolauxv-reasoning-enable");
+        const reasoningEffort = popup.querySelector("#coolauxv-reasoning-effort");
+        if (reasoningEnable) reasoningEnable.checked = !!(provider && provider.reasoningEnabled);
+        if (reasoningEffort) {
+            reasoningEffort.value = normalizeReasoningEffort(provider && provider.reasoningEffort);
+        }
+        setHeaderControlsVisibility(popup.querySelector("#coolauxv-reasoning-enable-container"), supportsReasoning && headerMainControlsVisible, isMinimizeAnimEnabled());
+        setHeaderControlsVisibility(popup.querySelector("#coolauxv-reasoning-effort-container"), supportsEffort && headerMainControlsVisible, isMinimizeAnimEnabled());
+        const showReasoning = updateReasoningToggleVisibility();
+        setReasoningAnimatedVisibility(showReasoning && hasReasoning && isShowReasoning);
+        const separator = popup.querySelector("#coolauxv-separator");
+        if (separator) separator.style.display = showReasoning && hasReasoning && isShowReasoning ? "flex" : "none";
 
         const btnShotMain = popup.querySelector("#coolauxv-btn-screenshot");
         const btnShotChat = popup.querySelector("#coolauxv-btn-screenshot-chat");
@@ -13485,7 +13651,7 @@
         if (!imageUrl) return false;
         const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), getProviderTemplates());
         if (!isProviderSupportsVision(providerId)) {
-            alert("当前提供商不支持识图，无法插入图片。");
+            alert("当前模型未勾选多模态，无法插入图片。");
             return false;
         }
         capturedImageBase64 = imageUrl;
@@ -13525,7 +13691,7 @@
         if (!imageUrl) return false;
         const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), getProviderTemplates());
         if (!isProviderSupportsVision(providerId)) {
-            alert("当前提供商不支持识图，无法插入图片。");
+            alert("当前模型未勾选多模态，无法插入图片。");
             return false;
         }
         chatCapturedImageBase64 = imageUrl;
@@ -13749,7 +13915,7 @@
         };
         const runViaNewFunction = () => {
             const allParamKeys = ["__origGMXHR__"].concat(sandboxKeys);
-            const allParamValues = [typeof GM_xmlhttpRequest === "function" ? GM_xmlhttpRequest : null].concat(sandboxValues);
+            const allParamValues = [typeof GM_xmlhttpRequest === "function" ? ((opts) => GM_xmlhttpRequest(Object.assign({}, opts, { coolauxvProviderId: providerId }))) : null].concat(sandboxValues);
             const wrapper = new Function(...allParamKeys, `
                 "use strict";
                 var GM_xmlhttpRequest = __origGMXHR__ ? function(opts) {
@@ -13798,7 +13964,7 @@
                             };
                             opts.onerror = function() { finish({}); };
                             opts.ontimeout = function() { finish({}); };
-                            GM_xmlhttpRequest(opts);
+                            GM_xmlhttpRequest(Object.assign({}, opts, { coolauxvProviderId: providerId }));
                         });
                     } catch (e) { return Promise.resolve("{}"); }
                 };
@@ -13913,8 +14079,9 @@
             apiKeyPlaceholder: template && template.apiKeyPlaceholder ? String(template.apiKeyPlaceholder) : "",
             keyLink: template && template.keyLink ? String(template.keyLink) : "",
             keyLinkTitle: template && template.keyLinkTitle ? String(template.keyLinkTitle) : "",
-            headersTemplate: template && template.headersTemplate ? template.headersTemplate : {},
-            bodyTemplate: template && template.bodyTemplate ? template.bodyTemplate : {},
+            headersTemplate: getProviderHeadersTemplate(template),
+            bodyTemplate: getProviderNormalBodyTemplate(template),
+            reasoningBodyTemplate: getProviderReasoningBodyTemplate(template),
             modelGroups: template && Array.isArray(template.modelGroups) ? template.modelGroups : [],
             roleSystem: roles.system ? String(roles.system) : "system",
             roleUser: roles.user ? String(roles.user) : "user",
@@ -13925,7 +14092,10 @@
             sessionIdPath: stream.sessionIdPath ? String(stream.sessionIdPath) : "",
             sessionIdKey: stream.sessionIdKey ? String(stream.sessionIdKey) : DEFAULT_PROVIDER_SESSION_FIELD_KEY,
             reasoningTag: stream.reasoningTag ? String(stream.reasoningTag) : "",
-            supportsVision: !!(template && template.supportsVision),
+            supportsVision: !!(getProviderSelectedModel(template) && getProviderSelectedModel(template).supportsMultimodal),
+            supportsReasoning: !!(getProviderSelectedModel(template) && getProviderSelectedModel(template).supportsReasoning),
+            reasoningEnabled: !!(getProviderSelectedModel(template) && getProviderSelectedModel(template).supportsReasoning && template.reasoningEnabled),
+            reasoningEffort: normalizeReasoningEffort(template && template.reasoningEffort),
             supportsContinuousChat: template ? template.supportsContinuousChat !== false : true
         }, custom);
     };
@@ -13963,6 +14133,17 @@
             return applyTemplateString(value, context);
         }
         return value;
+    };
+
+    const buildProviderDisplayContext = (template, extra) => {
+        const base = buildTemplateBaseContext(template);
+        const cached = template && hasNonEmptyCustomJsCode(template) ? customJsContextCache[template.id] : null;
+        const values = {};
+        Object.keys(cached || {}).forEach((key) => {
+            // Rendering a label must not run a hook or a cached JavaScript function.
+            if (typeof cached[key] !== "function") values[key] = cached[key];
+        });
+        return Object.assign({}, base, values, extra || {});
     };
 
     const buildTemplateContext = (template, extra) => {
@@ -14004,25 +14185,25 @@
     };
 
     const withCertBypass = async (template, fn) => {
-        if (!template || template.verifySsl !== false) return fn();
+        if (!template || template.verifySsl !== false || !hasNonEmptyCustomJsCode(template)) return fn();
         if (typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.sendMessage) return fn();
-        try { await chrome.runtime.sendMessage({ action: "setIgnoreCertErrors", ignore: true }); } catch (e) { /* ignore */ }
+        try { await chrome.runtime.sendMessage({ action: "setIgnoreCertErrors", providerId: template.id, ignore: true }); } catch (e) { /* ignore */ }
         try {
             return await fn();
         } finally {
-            try { await chrome.runtime.sendMessage({ action: "setIgnoreCertErrors", ignore: false }); } catch (e) { /* ignore */ }
+            try { await chrome.runtime.sendMessage({ action: "setIgnoreCertErrors", providerId: template.id, ignore: false }); } catch (e) { /* ignore */ }
         }
     };
 
     const needsCertBypass = (template) => {
-        return template && template.verifySsl === false
+        return template && hasNonEmptyCustomJsCode(template) && template.verifySsl === false
             && typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage;
     };
 
     const buildProviderHeaders = (template, context) => {
         if (!template) return { "Content-Type": "application/json" };
         const tplCtx = buildTemplateContext(template, context || {});
-        const headers = applyTemplateValue(template.headersTemplate || {}, tplCtx);
+        const headers = applyTemplateValue(getProviderHeadersTemplate(template), tplCtx);
         const cleaned = {};
         Object.keys(headers || {}).forEach((key) => {
             const value = headers[key];
@@ -14089,6 +14270,7 @@
         if (typeof GM_xmlhttpRequest !== "function") throw new Error("当前环境不支持跨域请求");
         const response = await withCertBypass(template, () => new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
+                coolauxvProviderId: template.id,
                 method: "GET",
                 url: requestUrl,
                 headers: headers,
@@ -14127,7 +14309,7 @@
             const existing = new Map((group.models || []).map((item) => [String(item.id || item.name || ""), item]));
             group.models = ids.map((id) => existing.has(id)
                 ? Object.assign({}, existing.get(id), { id: id })
-                : { id: id, class: "", tag: "" });
+                : { id: id, supportsReasoning: false, supportsMultimodal: false, tag: "" });
             if (!group.selectedModel || !ids.includes(group.selectedModel)) group.selectedModel = ids[0];
         });
     };
@@ -14207,18 +14389,10 @@
         const providerId = resolveProviderId(GM_getValue("coolauxv_default_provider", DEFAULT_PROVIDER), templates);
         const provider = getProviderTemplateSafe(providerId);
         const groups = provider && Array.isArray(provider.modelGroups) ? provider.modelGroups : [];
-        const textGroup = groups.find((group) => group.type !== "vision") || groups[0];
-        const visionGroup = groups.find((group) => group.type === "vision");
-        const resolveGroupModel = (group) => {
-            if (!group) return "";
-            if (group.selectedModel) return group.selectedModel;
-            const first = Array.isArray(group.models) && group.models.length ? group.models[0] : null;
-            return first ? (first.id || first.name || "") : "";
-        };
-        const modelName = resolveGroupModel(textGroup);
-        const modelVision = provider && provider.supportsVision
-            ? (resolveGroupModel(visionGroup) || modelName)
-            : modelName;
+        const group = groups[0];
+        const modelName = group ? (group.selectedModel || (group.models[0] && group.models[0].id) || "") : "";
+        const modelVision = modelName;
+        const selectedModel = getProviderSelectedModel(provider, modelName);
 
         return {
             provider: providerId,
@@ -14226,7 +14400,8 @@
             apiKey: provider ? provider.apiKey : "",
             modelName: modelName,
             modelVision: modelVision,
-            supportsVision: !!(provider && provider.supportsVision),
+            supportsVision: !!(selectedModel && selectedModel.supportsMultimodal),
+            supportsReasoning: !!(selectedModel && selectedModel.supportsReasoning),
             supportsContinuousChat: provider ? provider.supportsContinuousChat !== false : true,
             promptTrans: translateAction ? translateAction.systemPrompt : getDefaultActionPromptById("translate"),
             promptExplain: explainAction ? explainAction.systemPrompt : getDefaultActionPromptById("explain"),
@@ -14248,7 +14423,7 @@
     function buildOpenaiResponsesInputContent(text, imageBase64) {
         const content = [];
         if (imageBase64) {
-            content.push({ type: "input_image", image_url: imageBase64 });
+            content.push({ type: "input_image", image_url: imageBase64, detail: "auto" });
         }
         if (text) {
             content.push({ type: "input_text", text: text });
@@ -14258,7 +14433,7 @@
 
     function buildOpenaiResponsesAssistantContent(text) {
         if (!text) return [];
-        return [{ type: "output_text", text: text }];
+        return text;
     }
 
     function buildChatPartsContent(text) {
@@ -14361,16 +14536,8 @@
     function buildProviderPayload(template, model, messages) {
         if (!template) return {};
         const normalizedType = normalizeProviderType(template.type);
-        const fallback = normalizedType === "openai-responses"
-            ? { model: "{{model}}", stream: true, input: "{{messages}}" }
-            : (normalizedType === "chat-parts"
-                ? { model: "{{model}}", id: "{{requestId}}", messages: "{{messages}}", trigger: "{{trigger}}" }
-                : (normalizedType === "chat-no-history"
-                    ? { conversationId: "{{conversationId}}", content: "{{latestUserText}}", model: "{{model}}" }
-                    : { model: "{{model}}", stream: true, messages: "{{messages}}" }));
-        const bodyTemplate = template.bodyTemplate && typeof template.bodyTemplate === "object"
-            ? template.bodyTemplate
-            : fallback;
+        const usesReasoningTemplate = shouldUseReasoningBodyTemplate(template, model);
+        const bodyTemplate = getProviderBodyTemplate(template, model);
         const providerRuntimeFields = getProviderRuntimeFields(template.id);
         const latestUserInputText = getLatestUserTextFromMessages(template, messages);
         const latestSystemPromptText = getSystemPromptTextFromMessages(template, messages);
@@ -14388,6 +14555,8 @@
             : "submit-message";
         const payload = applyTemplateValue(bodyTemplate, buildTemplateContext(template, Object.assign({}, providerRuntimeFields, {
             model: model,
+            reasoningEnabled: !!(getProviderSelectedModel(template, model) && getProviderSelectedModel(template, model).supportsReasoning && template.reasoningEnabled),
+            reasoningEffort: usesReasoningTemplate ? (normalizeReasoningEffort(template.reasoningEffort) || "medium") : normalizeReasoningEffort(template.reasoningEffort),
             messages: payloadMessages,
             input: payloadInput,
             stream: true,
@@ -14403,7 +14572,10 @@
             conversationId: providerRuntimeFields[DEFAULT_PROVIDER_SESSION_FIELD_KEY] || "",
             providerRuntimeFields: providerRuntimeFields
         })));
-        return applyProviderReasoningEffort(template, normalizedType, payload);
+        // A custom reasoning template owns the whole body; only its explicit
+        // {{reasoningEffort}} references follow the toolbar selector.
+        if (usesReasoningTemplate && template.reasoningBodyTemplate !== null && template.reasoningBodyTemplate !== undefined) return payload;
+        return applyProviderReasoningEffort(template, normalizedType, payload, model);
     }
 
     function resolveTemplateStreamConfig(template) {
@@ -14645,7 +14817,7 @@
                 imageBase64: ""
             };
         }
-        if (template.supportsVision) {
+        if (isProviderSupportsVision(template.id)) {
             const hasMixedTextImage = !!String(record.displayText || "").trim();
             const textForVision = (preferImageOnlyForMixed && hasMixedTextImage) ? "" : (record.text || "");
             return {
@@ -15108,6 +15280,12 @@
         updateTopSectionCollapseUI();
     }
 
+    function collapseTopSectionAfterResponse(actionToken, assistantText) {
+        if (actionToken !== activeActionToken || ignoreIncomingOutput || streamErrorHandled) return;
+        if (!String(assistantText || "").trim()) return;
+        collapseTopSectionIfExpanded();
+    }
+
     function autoExpandChatIfEnabled(actionToken) {
         if (!popup) return;
         if (typeof actionToken === "number" && actionToken !== activeActionToken) return;
@@ -15135,6 +15313,7 @@
                 recordId: assistantRecordId
             });
             chatDisplayBuffer += buildChatAssistantBlock(chatAssistantBuffer, chatAssistantLabel, assistantRecordId);
+            collapseTopSectionAfterResponse(actionToken, chatAssistantBuffer);
         }
         chatAssistantBuffer = "";
         chatPendingAssistantPrefix = "";
@@ -15291,13 +15470,12 @@
         const resultDiv = popup.querySelector("#coolauxv-result");
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
-        const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle-container");
         const separator = popup.querySelector("#coolauxv-separator");
 
         if (resultDiv) resultDiv.innerHTML = "";
         if (reasoningDiv) reasoningDiv.innerHTML = "";
         if (reasoningWrapper) reasoningWrapper.style.display = "none";
-        if (reasoningToggle) reasoningToggle.style.display = "none";
+        updateReasoningToggleVisibility();
         if (separator) separator.style.display = "none";
         updateChatEditModeUI();
     }
@@ -15446,13 +15624,12 @@
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
         const separator = popup.querySelector("#coolauxv-separator");
-        const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle-container");
 
         if (!resultDiv) return;
 
         // 1. 处理推理框显示逻辑
-        if (hasReasoning) {
-            reasoningToggle.style.display = "flex";
+        const reasoningEnabled = updateReasoningToggleVisibility();
+        if (hasReasoning && reasoningEnabled) {
             if (isShowReasoning) {
                 setReasoningAnimatedVisibility(true);
                 separator.style.display = "flex";
@@ -15462,13 +15639,12 @@
                 separator.style.display = "none";
             }
         } else {
-            reasoningToggle.style.display = "none";
             setReasoningAnimatedVisibility(false);
             separator.style.display = "none";
         }
 
         // 2. 渲染推理内容
-        if (hasReasoning && isShowReasoning) {
+        if (hasReasoning && reasoningEnabled && isShowReasoning) {
             reasoningDiv.className = isShowRaw ? "coolauxv-scroll-box coolauxv-raw-text" : "coolauxv-scroll-box coolauxv-markdown";
             updateScroll(reasoningDiv, streamReasoningBuffer, isShowRaw);
         }
@@ -15710,6 +15886,7 @@
     }
 
     function setReasoningAnimatedVisibility(visible) {
+        visible = visible && isCurrentModelReasoningEnabled();
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
         if (!reasoningWrapper) return;
         const isCollapsed = reasoningWrapper.classList.contains("coolauxv-reasoning-collapsed");
@@ -15845,6 +16022,7 @@
     }
 
     const performQuit = () => {
+        if (popup._coolauxvHeaderLayout) popup._coolauxvHeaderLayout.dispose();
         popup.style.display = "none";
         floatBall.style.display = "none";
         cursorBtn.style.display = "none";
@@ -15871,6 +16049,18 @@
         const docOriginInfoBtn = popup.querySelector("#coolauxv-doc-origin-info");
         const rawToggle = popup.querySelector("#coolauxv-raw-toggle");
         const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle");
+        const reasoningEnable = popup.querySelector("#coolauxv-reasoning-enable");
+        const reasoningEffort = popup.querySelector("#coolauxv-reasoning-effort");
+        const saveReasoningPreference = (field, value) => {
+            const config = getActiveConfig();
+            const templates = getProviderTemplates();
+            const provider = templates.find((item) => item.id === config.provider);
+            if (!provider || !config.supportsReasoning) return;
+            provider[field] = value;
+            saveProviderTemplates(templates);
+        };
+        if (reasoningEnable) reasoningEnable.onchange = (e) => saveReasoningPreference("reasoningEnabled", e.target.checked);
+        if (reasoningEffort) reasoningEffort.onchange = (e) => saveReasoningPreference("reasoningEffort", normalizeReasoningEffort(e.target.value));
         const mainActionButtons = popup.querySelector("#coolauxv-main-action-buttons");
         const btnStop = popup.querySelector("#coolauxv-btn-stop");
         const btnChatHistory = popup.querySelector("#coolauxv-chat-history-btn");
@@ -15932,26 +16122,6 @@
             isShowReasoning = e.target.checked;
             renderContent();
 
-            // 新增需求：非输出状态下，联动连续对话框的收起与展开
-            if (!isRendering) {
-                const chatBar = popup.querySelector("#coolauxv-chat-bar");
-                // 仅当连续对话功能启用且显示时才执行
-                if (chatBar && chatBar.style.display !== "none") {
-                    if (isShowReasoning) {
-                        // 展开推理 -> 收起连续对话
-                        if (!isChatCollapsed) {
-                            isChatCollapsed = true;
-                            updateChatCollapseUI();
-                        }
-                    } else {
-                        // 收起推理 -> 展开连续对话
-                        if (isChatCollapsed) {
-                            isChatCollapsed = false;
-                            updateChatCollapseUI();
-                        }
-                    }
-                }
-            }
         };
 
         if (mainActionButtons) {
@@ -16503,7 +16673,7 @@
         const lastVer = GM_getValue("coolauxv_installed_version", "0.0");
 
         if (currentVer && currentVer !== lastVer) {
-            showModal(`🎉 更新日志 ${currentVer}`, LATEST_CHANGELOG);
+            showModal(`🎉 更新日志 ${currentVer}`, CHANGELOG);
             GM_setValue("coolauxv_installed_version", currentVer);
         }
     }
@@ -16554,12 +16724,11 @@
 
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
-        const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle-container");
 
         streamTextBuffer = ""; streamReasoningBuffer = ""; lastRenderedText = ""; lastRenderedReasoning = ""; hasReasoning = false;
         resetStreamParsingState();
         resultDiv.innerHTML = "<span style='color:#888'>⏳ AI 思考中...</span>";
-        reasoningDiv.innerHTML = ""; reasoningWrapper.style.display = "none"; reasoningToggle.style.display = "none";
+        reasoningDiv.innerHTML = ""; reasoningWrapper.style.display = "none"; updateReasoningToggleVisibility();
 
         if (abortController) abortController.abort();
         if (gmRequest && gmRequest.abort) gmRequest.abort();
@@ -16671,6 +16840,7 @@
                 historyEntry.assistantText = streamTextBuffer;
                 logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
                 recordHistoryEntry(historyEntry);
+                collapseTopSectionAfterResponse(actionToken, historyEntry.assistantText);
                 autoExpandChatIfEnabled(actionToken);
                 return;
 
@@ -16747,6 +16917,7 @@
             historyEntry.assistantText = streamTextBuffer;
             logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
             recordHistoryEntry(historyEntry);
+            collapseTopSectionAfterResponse(actionToken, historyEntry.assistantText);
             autoExpandChatIfEnabled(actionToken);
         };
 
@@ -16932,6 +17103,7 @@
                             historyEntry.assistantText = streamTextBuffer;
                             logAiResponse(provider, config.modelName, resolvedActionId, streamTextBuffer);
                             recordHistoryEntry(historyEntry);
+                            collapseTopSectionAfterResponse(actionToken, historyEntry.assistantText);
                             autoExpandChatIfEnabled(actionToken);
                         } else {
                             resultDiv.innerHTML += "<br><small style='color:red'>(流式兼容失败，请检查网络)</small>";
@@ -16974,7 +17146,7 @@
             if (typeof currentAttempt.fetchMode === "boolean") {
                 requestOptions.fetch = currentAttempt.fetchMode;
             }
-            gmRequest = GM_xmlhttpRequest(requestOptions);
+            gmRequest = GM_xmlhttpRequest(Object.assign({}, requestOptions, { coolauxvProviderId: providerTemplate.id }));
         };
 
         startSingleActionGmRequest();
@@ -17648,6 +17820,8 @@
                 openaiStreamHasDelta = true;
                 const isChatMode = streamMode === "chat";
                 appendTaggedContentChunk(template, delta, isChatMode);
+            } else if (data.type === "response.reasoning_summary_text.delta" || data.type === "response.reasoning_text.delta") {
+                appendReasoningChunk(data.delta || "");
             } else if (data.type === "response.output_text.done" && data.text) {
                 if (openaiStreamHasDelta || openaiStreamHasFull) return;
                 const isChatMode = streamMode === "chat";
@@ -18208,9 +18382,9 @@
         streamMode = "single";
 
         const providerTemplate = config.template;
-        if (!providerTemplate || !providerTemplate.supportsVision) {
+        if (!providerTemplate || !config.supportsVision) {
             if (resultDiv) {
-                resultDiv.innerHTML = "<span style='color:#e65100; font-weight:bold;'>⚠️ 当前提供商未启用识图能力，请在设置中开启。</span>";
+                resultDiv.innerHTML = "<span style='color:#e65100; font-weight:bold;'>⚠️ 当前模型未勾选多模态，请在提供商的高级选项中开启。</span>";
             }
             return;
         }
@@ -18274,17 +18448,16 @@
         resultDiv.innerHTML = loadingHTML;
         reasoningDiv.innerHTML = loadingHTML;
 
-        const hasReasoningSupport = !!(providerTemplate && providerTemplate.stream && providerTemplate.stream.reasoningPath);
+        const hasReasoningSupport = isCurrentModelReasoningEnabled() && isShowReasoning;
         if (!hasReasoningSupport) {
             if (reasoningWrapper) reasoningWrapper.style.display = "none";
-            const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle-container");
-            if (reasoningToggle) reasoningToggle.style.display = "none";
+            updateReasoningToggleVisibility();
             const separator = popup.querySelector("#coolauxv-separator");
             if (separator) separator.style.display = "none";
         } else {
             // 强制显示推理框
             setReasoningAnimatedVisibility(true);
-            popup.querySelector("#coolauxv-reasoning-toggle-container").style.display = "flex";
+            updateReasoningToggleVisibility();
             popup.querySelector("#coolauxv-separator").style.display = "flex";
         }
 
@@ -18310,6 +18483,7 @@
         }));
 
         gmRequest = GM_xmlhttpRequest({
+            coolauxvProviderId: providerTemplate.id,
             method: "POST",
             url: url,
             headers: headers,
@@ -18372,6 +18546,7 @@
                             historyEntry.assistantText = streamTextBuffer;
                             logAiResponse(provider, config.modelVision, resolvedActionId, streamTextBuffer);
                             recordHistoryEntry(historyEntry);
+                            collapseTopSectionAfterResponse(actionToken, historyEntry.assistantText);
                             autoExpandChatIfEnabled(actionToken);
                         }
                     })();
@@ -18501,11 +18676,10 @@
 
         const reasoningDiv = popup.querySelector("#coolauxv-reasoning-box");
         const reasoningWrapper = popup.querySelector("#coolauxv-reasoning-wrapper");
-        const reasoningToggle = popup.querySelector("#coolauxv-reasoning-toggle-container");
         const separator = popup.querySelector("#coolauxv-separator");
         if (reasoningDiv) reasoningDiv.innerHTML = "";
         if (reasoningWrapper) reasoningWrapper.style.display = "none";
-        if (reasoningToggle) reasoningToggle.style.display = "none";
+        updateReasoningToggleVisibility();
         if (separator) separator.style.display = "none";
 
         if (abortController) abortController.abort();
@@ -18881,7 +19055,7 @@
             if (typeof currentAttempt.fetchMode === "boolean") {
                 requestOptions.fetch = currentAttempt.fetchMode;
             }
-            gmRequest = GM_xmlhttpRequest(requestOptions);
+            gmRequest = GM_xmlhttpRequest(Object.assign({}, requestOptions, { coolauxvProviderId: providerTemplate.id }));
         };
 
         startChatGmRequest();
@@ -18906,7 +19080,7 @@
             }
         }
         const missingLabel = missingItems.length ? missingItems.join(" 与 ") : "配置";
-        const needsApiKey = tpl && JSON.stringify(tpl.headersTemplate || {}).includes("{{apiKey}}");
+        const needsApiKey = tpl && JSON.stringify(getProviderHeadersTemplate(tpl)).includes("{{apiKey}}");
         const showKeyLink = needsApiKey && tpl && !String(tpl.apiKey || "").trim();
         return `
             <div style="color:#e65100; font-weight:bold; padding:10px;">⚠️ 请配置 ${missingLabel}</div>
@@ -18989,7 +19163,10 @@
     };
 
     setupBridgeServer();
-    startMainTimer = setTimeout(() => {
+    startMainTimer = setTimeout(async () => {
+        // Restored PDF tabs can load before chrome.storage finishes reading.
+        // Do not initialize providers from defaults while the saved selection is pending.
+        if (globalThis.__coolauxv_storage_ready) await globalThis.__coolauxv_storage_ready;
         if (!extensionDetected) {
             startMain();
         }
